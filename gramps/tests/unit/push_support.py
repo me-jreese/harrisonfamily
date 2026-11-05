@@ -625,7 +625,8 @@ class MediaPushTree(PushTree):
 
     def media_files(self):
         from hfygramps.addon import mediafile
-        return mediafile.collect([o for o in self.data.values() if o["_class"] == "Media"], self.media_base)
+        return mediafile.collect([o for o in self.data.values() if o["_class"] == "Media"], self.media_base,
+                                 strip_location=bool(getattr(self, "strip_location", False)))
 
 
 class PullView:

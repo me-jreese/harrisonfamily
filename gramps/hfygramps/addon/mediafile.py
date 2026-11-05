@@ -22,12 +22,21 @@ A file is one of these ``state`` values; only ``ok`` can be uploaded:
 
 ``exif_gps`` fails closed: EXIF that is present but cannot be read counts as a position, like the website's own check
 (``api/src/upload-guard.js``, ``tiffHasGpsPosition``), which this ports.
+
+Strip mode (HFY-TSK-374; ``inspect(path, strip_location=True)``, the per-tree setting ``strip_location`` of config.json, default off): a
+JPEG or PNG that is ``gps`` only because of a position is read again as a COPY without it (``locstrip``; the file on disk and the
+Gramps database are never written). Its info then says what the website will hold: ``state`` ``ok``, ``exif_gps`` False, and the
+``md5``, ``sha256`` and ``size`` of the copy, with ``location_stripped`` True and the original's numbers in ``local_md5``,
+``local_sha256`` and ``local_size``. The copy itself is not kept: the upload builds it again from the file and checks it. A TIFF, or a
+file the strip cannot take with certainty, stays ``gps`` (held) and carries ``strip_refused`` (a code word).
 """
 import hashlib
 import os
 import struct
 import sys
 import zlib
+
+from . import locstrip
 
 MAX_BYTES = 25 * 1024 * 1024  # MAX_MEDIA_BYTES of api/src/sync/media.js
 CHUNK = 1024 * 1024
@@ -242,6 +251,26 @@ def exif_gps(data, content_type=None):
     return False
 
 
+def strip_copy(data, content_type=None):
+    """``(bytes, "")``: a copy of a JPEG or PNG without its GPS location, checked twice (this module's own detector and
+    ``locstrip.has_location_residue``), or ``(None, reason)`` and the file stays held. Never raises."""
+    try:
+        ct = content_type or sniff(data[:16])
+        out, reason = locstrip.strip(data, ct)
+        if out is None:
+            return None, reason
+        if exif_gps(out, ct) or locstrip.has_location_residue(out, ct):
+            return None, locstrip.VERIFY_FAILED
+        return out, ""
+    except Exception:  # noqa: BLE001 - fail closed: nothing escapes
+        return None, locstrip.UNPARSEABLE
+
+
+def stripped_count(files):
+    """How many Media of ``files`` ({handle: info}) go to the website without their location (a count, nothing more)."""
+    return sum(1 for info in (files or {}).values() if isinstance(info, dict) and info.get("location_stripped"))
+
+
 def hold_for_bytes(data):
     """The hold rule for the bytes of a downloaded blob (nothing is written when it is not None): empty, or a position in the EXIF."""
     if not data:
@@ -306,9 +335,10 @@ def resolve(path, base):
     return os.path.normpath(os.path.join(os.path.expanduser(base or ""), path))
 
 
-def inspect(path):
+def inspect(path, strip_location=False):
     """What the file at ``path`` is. Returns {state, path, size, readable, md5, sha256, content_type, exif_gps}; the hashes are '' unless
-    they could be computed. Reads the whole file only when it is an uploadable size; never raises."""
+    they could be computed. Reads the whole file only when it is an uploadable size; never raises. With ``strip_location`` a JPEG or
+    PNG held only for its GPS position reports the numbers of its location-free copy (see the module docstring); the file is only read."""
     info = {"state": "missing", "path": path, "size": 0, "readable": False, "md5": "", "sha256": "", "content_type": "", "exif_gps": False}
     if not path:
         return info
@@ -347,15 +377,23 @@ def inspect(path):
     info["content_type"] = ct or ""
     info["exif_gps"] = exif_gps(data, ct)
     info["state"] = "gps" if info["exif_gps"] else ("ok" if ct else "unsupported")
+    if info["exif_gps"] and strip_location:
+        copy, reason = strip_copy(data, ct)
+        if copy is None:
+            info["strip_refused"] = reason
+            return info
+        info.update(location_stripped=True, local_md5=info["md5"], local_sha256=info["sha256"], local_size=info["size"],
+                    md5=hashlib.md5(copy).hexdigest(), sha256=hashlib.sha256(copy).hexdigest(), size=len(copy),
+                    exif_gps=False, state="ok")
     return info
 
 
-def collect(media_objects, base):
+def collect(media_objects, base, strip_location=False):
     """``{media handle: inspect(...)}`` for raw Gramps Media objects (``_class`` Media, ``path``), paths resolved against ``base``.
-    The projection reads ``exif_gps``, ``md5`` and ``readable``; the push reads the rest."""
+    The projection reads ``exif_gps``, ``md5`` and ``readable``; the push reads the rest. ``strip_location`` is the tree's setting."""
     out = {}
     for obj in media_objects:
         handle = obj.get("handle")
         if isinstance(handle, str) and handle:
-            out[handle] = inspect(resolve(obj.get("path"), base))
+            out[handle] = inspect(resolve(obj.get("path"), base), strip_location=bool(strip_location))
     return out

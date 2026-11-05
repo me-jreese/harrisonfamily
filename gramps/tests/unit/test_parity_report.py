@@ -253,7 +253,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(sorted(rules.RULES), sorted(["excluded-place", "media-held-mime", "birth-date-scrub",
                                                       "place-coordinates-rounded", "place-code-local", "note-newly-visible",
                                                       "text-gate-withheld", "tree-svg-frozen", "merged-person-stub",
-                                                      "media-held-binary", "held-object"]))
+                                                      "media-held-binary", "held-object", "media-location-stripped"]))
 
     def test_excluded_place(self):
         legacy, shadow = build_site(), build_site()
@@ -612,6 +612,124 @@ class MediaHeldBinary(unittest.TestCase):
         code, doc = report(legacy, shadow)
         self.assertEqual((code, doc["unexplained_by_area"]), (20, {"place": 1}))
         self.assertNotIn("media-held-binary", doc["rules"])
+
+
+STRIPPED_CHECKSUM = "c" * 64
+
+
+def strip_photo(site, key=MEDIA_PHOTO, grampsid="O9001", checksum=STRIPPED_CHECKSUM, size=None, **overrides):
+    """The shadow side of a photo sent without its location: another checksum (and, when ``size`` is given, another size) on the media file,
+    the index entry and both person fields."""
+    new = dict(checksum=checksum)
+    if size is not None:
+        new["size"] = size
+    new.update(overrides)
+
+    def index(doc):
+        for e in doc:
+            if e["grampsId"] == grampsid:
+                e.update(new)
+    edit(site, key, lambda d: d.update(new))
+    if key == MEDIA_PHOTO:
+        edit(site, PERSON1, lambda d: (d["primaryPhoto"].update(new), d["mediaGallery"][0].update(new)))
+    edit(site, "media/index.json", index)
+
+
+def pair_with_stripped_photo(**kw):
+    legacy, shadow = build_site(), build_site()
+    with_photo_users(legacy)
+    with_photo_users(shadow)
+    strip_photo(shadow, **kw)
+    return legacy, shadow
+
+
+class MediaLocationStripped(unittest.TestCase):
+    """HFY-TSK-374: a photo sent as a copy without its GPS location has another checksum on the website; explained only up to --expect-stripped."""
+
+    def test_the_file_the_index_entry_and_the_person_fields_are_explained_up_to_the_count(self):
+        for size in (None, 1234):                 # the copy is as long as the original, or shorter
+            legacy, shadow = pair_with_stripped_photo(size=size)
+            code, doc = report_with(legacy, shadow, "--expect-stripped", "1")
+            self.assertEqual((code, doc["unexplained"], doc["verdict"]), (10, 0, "explained"), size)
+            row = doc["rules"]["media-location-stripped"]
+            self.assertEqual((row["changed"], row["only_in_legacy"], row["only_in_render"]), (3, 0, 0))
+            self.assertEqual(row["areas"], {"person": 1, "media": 1, "index": 1})
+            self.assertEqual(list(doc["rules"]), ["media-location-stripped"])
+            self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+
+    def test_without_the_option_nothing_changes(self):
+        legacy, shadow = pair_with_stripped_photo()
+        code, doc = report_with(legacy, shadow)
+        self.assertEqual((code, doc["verdict"]), (20, "unexplained"))
+        self.assertNotIn("stripped", doc)
+        self.assertNotIn("media-location-stripped", doc["rules"])
+        self.assertEqual(set(doc["unexplained_by_field"]), {"checksum"})
+
+    def test_more_media_than_the_count_stay_unexplained(self):
+        legacy, shadow = pair_with_stripped_photo()
+        other = sorted(k for k in shadow if k.startswith("media/") and k.endswith(".json") and k not in (MEDIA_PHOTO, "media/index.json")
+                       and isinstance(load(shadow, k).get("checksum"), str) and load(shadow, k).get("checksum"))[0]
+        edit(shadow, other, lambda d: d.update(checksum="d" * 64))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "1")
+        self.assertEqual(code, 20)
+        self.assertEqual(doc["stripped"], {"allowed": 1, "explained": 1})
+        self.assertIn(doc["rules"]["media-location-stripped"]["changed"], (2, 3), "the first handle in sorted order is the one explained")
+        self.assertEqual(set(doc["unexplained_by_field"]), {"checksum"})
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "2")
+        self.assertEqual((code, doc["stripped"]), (10, {"allowed": 2, "explained": 2}))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "0")
+        self.assertEqual((code, doc["stripped"]), (20, {"allowed": 0, "explained": 0}))
+
+    def test_the_pattern_needs_a_checksum_and_a_size_on_both_sides_that_differ(self):
+        for label, legacy_edit, shadow_edit in (
+                ("no legacy checksum", {"checksum": None}, {}),
+                ("no shadow checksum", {}, {"checksum": None}),
+                ("no legacy size", {"size": None}, {}),
+                ("no shadow size", {}, {"size": None}),
+                ("a missing shadow", {}, {"missing": True}),
+                ("the same checksum", {}, {"checksum": "REPLACED"})):
+            legacy, shadow = pair_with_stripped_photo()
+            edit(legacy, MEDIA_PHOTO, lambda d: d.update(legacy_edit))
+            if shadow_edit.get("checksum") == "REPLACED":
+                shadow_edit = {"checksum": load(legacy, MEDIA_PHOTO)["checksum"]}
+            edit(shadow, MEDIA_PHOTO, lambda d: d.update(shadow_edit))
+            code, doc = report_with(legacy, shadow, "--expect-stripped", "5")
+            self.assertEqual(doc["stripped"]["explained"] if "stripped" in doc else None, 0 if label != "the same checksum" else 0, label)
+            self.assertEqual(code, 20, label)
+
+    def test_a_size_that_changed_alone_or_another_field_is_not_explained(self):
+        legacy, shadow = build_site(), build_site()
+        with_photo_users(legacy)
+        with_photo_users(shadow)
+        edit(shadow, MEDIA_PHOTO, lambda d: d.update(size=load(shadow, MEDIA_PHOTO)["size"] + 1))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5")
+        self.assertEqual((code, set(doc["unexplained_by_field"])), (20, {"size"}))
+        legacy, shadow = pair_with_stripped_photo()
+        edit(shadow, MEDIA_PHOTO, lambda d: d.update(mime="image/png"))
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5")
+        self.assertEqual((code, set(doc["unexplained_by_field"])), (20, {"mime"}))
+
+    def test_a_held_binary_keeps_its_own_rule(self):
+        legacy, shadow = pair_with_held_photo()
+        code, doc = report_with(legacy, shadow, "--expect-stripped", "5")
+        self.assertEqual((code, list(doc["rules"]), doc["stripped"]), (10, ["media-held-binary"], {"allowed": 5, "explained": 0}))
+
+    def test_a_bad_count_is_a_usage_error_that_never_echoes_it(self):
+        legacy, shadow = pair_with_stripped_photo()
+        for bad in ("-1", "abc", "1.5", " 1", "1 ", "\u0663", "secret-count-7", ""):
+            code, cap = run_cli(legacy, shadow, ["--expect-stripped", bad])
+            self.assertEqual(code, 64, repr(bad))
+        code, cap = run_cli(legacy, shadow, ["--expect-stripped", "secret-count-7"])
+        self.assertNotIn("secret-count-7", cap.out.getvalue() + cap.err.getvalue())
+
+    def test_the_text_report_shows_the_rule_and_the_allowance(self):
+        legacy, shadow = pair_with_stripped_photo()
+        code, cap = run_cli(legacy, shadow, ["--expect-stripped", "1"])
+        text = cap.out.getvalue()
+        self.assertEqual(code, 10)
+        self.assertIn("media-location-stripped", text)
+        self.assertIn("media sent without their location: allowed 1, media explained 1", text)
+        self.assertNotIn(hid("O9001"), text)
 
 
 class HeldObjects(unittest.TestCase):

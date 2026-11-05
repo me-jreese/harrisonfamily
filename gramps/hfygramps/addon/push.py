@@ -449,7 +449,7 @@ class _Push:
                 o["gramps_id"] = gid
         doc = {
             "schema": 1, "run_id": self.run_id, "action": "push", "created_at": self.now(), "cloud_seq": snap.seq,
-            "counts": dict(plan.counts(), media_up=plan.media_up), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
+            "counts": dict(plan.counts(), media_up=plan.media_up, media_location_stripped=plan.media_stripped), "ops": ops, "holds": plan.holds, "warnings": plan.warnings, "blocked": plan.blocked, "pull_pending": plan.pull_pending,
             "step_up_fresh": bool(self.step_up), "sticky": sorted(plan.sticky), "mass_delete": bool(plan.mass_delete),
             "conflicts": [{"id": c["id"], "class": c["class"], "handle": c["handle"], "path": c["path"], "kind": c["kind"]} for c in plan.conflicts],
             "plan_sha256": hashlib.sha256(json.dumps(ops, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
@@ -460,6 +460,7 @@ class _Push:
         paths_.atomic_write_json(path, doc)
         self.counts["pushed"] = plan.counts()
         self.counts["media_up"] = plan.media_up
+        self.counts["media_location_stripped"] = plan.media_stripped
         self.counts["conflicts_open"] = len(plan.conflicts)
         self.counts["holds"] = len(plan.holds)
         self.counts["blocked"] = len(plan.blocked)
@@ -598,6 +599,9 @@ class _Push:
             info = self.plan.uploads.get(op["handle"]) if self.plan is not None else None
             path = (info or self.files.get(op["handle"]) or {}).get("path") or ""
             mediaup.record(self.side, op["handle"], path, blob["md5"], blob["sha256"], blob["size"], origin="up")
+            seen = info or self.files.get(op["handle"]) or {}
+            if seen.get("location_stripped") and seen.get("sha256") == blob["sha256"]:
+                mediaup.record_stripped(self.side, op["handle"], seen["local_sha256"], blob["sha256"])
             self.counts["media_up"] += 1
 
     def _hold(self, op, rule, blocked=False, path=""):
@@ -746,6 +750,7 @@ class _Push:
                 holds = pushplan._unique(plan.holds + plan.blocked + self.extra_holds + self.extra_blocked)
                 pushstate.sync_holds(con, holds, self.now(), self.pathless)
                 self.counts["conflicts_open"] = len(pushstate.open_conflicts(con))
+                self.counts["media_location_stripped"] = plan.media_stripped
                 self.counts["holds"] = len(pushplan._unique(plan.holds + self.extra_holds))
                 self.counts["blocked"] = len(pushplan._unique(plan.blocked + self.extra_blocked))
                 if sum(self.counts["pushed"].values()):

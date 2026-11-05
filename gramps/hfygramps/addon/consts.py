@@ -143,8 +143,19 @@ HOLD_MESSAGES.update({
     "media_upload_refused": "The website refused the file for this photo or document, so it was not sent.",
     "media_file_changed": "The file for this photo or document changed while the sync ran, so it was not sent. Run the push again.",
     "media_cloud_copy_differs": "The file for this photo or document changed on this Mac and can no longer be sent, so the website keeps the copy it has. Check the file, then sync again.",
+    "media_location_not_removed": "The location could not be removed from a copy of this photo with certainty, so it was not sent. Nothing on this Mac changed.",
     "media_dependency_deferred": "This record refers to a photo or document whose file could not be uploaded, so it was not sent. Run the push again.",
 })
+
+# A photo that is held for its GPS position while the per-tree setting `strip_location` is on (TIFF, or a file the strip cannot take with certainty).
+LOCATION_NOT_STRIPPED_MESSAGES = {
+    "tiff": "This TIFF photo has a location in it. The website copy cannot be made without it (TIFF is not rewritten), so the photo was not sent. "
+            "Remove the location info from the file, then sync.",
+    "*": "This photo has a location in it and the add-on could not remove it from a copy with certainty, so the photo was not sent. "
+         "Remove the location info from the file, then sync.",
+}
+# config.json key (per tree, default off): send a copy of a JPEG or PNG without its GPS location instead of holding it (HFY-TSK-374)
+STRIP_LOCATION_KEY = "strip_location"
 
 # The holds only a real run finds (the dry `check` and `push` that the Gramps window reads cannot): the pull reads the bytes of a media file
 # it downloads (so a photo with a position, or an empty file, is held there), and the push finds out that a file or a record could not be

@@ -37,6 +37,8 @@ class TreeAccess:
         raise NotImplementedError
 
     dbdir = ""  # the tree's folder (backups read sqlite.db there)
+    strip_location = False  # config.json's per-tree setting (the runner sets it for each run): media_files() sends a GPS photo's location-free copy
+
 
     def objects(self):
         """{handle: raw `json_data` dict (with `_class` and `handle`)} of every primary object, read without changing anything."""
@@ -203,6 +205,9 @@ def _decide(tree, mode, options, tp, log, argv, environ, outcome, services):
         outcome["bound"] = verdict.bound
         if verdict.code:
             return _refused(verdict.code)
+        tree.strip_location = bool(verdict.bound and binding.strip_location_setting(config, tree.dbid))
+        if tree.strip_location:
+            log.line("strip_location is on for this tree")
         if options.action == "status":
             return (consts.OK, consts.EXIT_OK, "none", None)
         if options.action == "bind":

@@ -21,7 +21,8 @@ def new_run_id(now=None):
 
 def zero_counts():
     return {"pulled": {"create": 0, "update": 0, "delete": 0}, "pushed": {"create": 0, "update": 0, "delete": 0},
-            "conflicts_open": 0, "holds": 0, "blocked": 0, "media_up": 0, "media_down": 0}
+            "conflicts_open": 0, "holds": 0, "blocked": 0, "media_up": 0, "media_down": 0,
+            "media_location_stripped": 0}
 
 
 def build(run_id, action, mode, dbid, bound, result, exit_code, started_at, finished_at, *, dry_run=False, error=None,
@@ -114,6 +115,9 @@ def summary_line(doc):
         if fields:
             bits.append("POST /api/sync/bind %s: %s" % ("sent" if cb.get("sent") else "would send",
                         ", ".join("%s (%d bytes)" % (k, fields[k]) for k in ("dbid", "fingerprint", "tree_name_sha256") if isinstance(fields.get(k), int))))
+    sent_clean = (doc.get("counts") or {}).get("media_location_stripped") or 0
+    if sent_clean and doc.get("action") in consts.PULL_ACTIONS + ("push",):
+        bits.append("photos sent without their location: %d" % sent_clean)  # a count; no coordinate, name or path is ever printed
     if doc.get("action") in consts.PULL_ACTIONS:
         # What io needs to act on the run: the run id (`sync --yes --plan <run id>` names it) and the counts. Never a value.
         c = doc.get("counts") or {}

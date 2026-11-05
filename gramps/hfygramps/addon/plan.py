@@ -259,6 +259,7 @@ class Plan:
         self.expunge_holds = {}  # handle -> pointers (persisted + new)
         self.local_ids = {}      # handle -> (class, gramps_id) for the summary lines
         self.plan_hash = ""
+        self.media_stripped = 0  # Media whose file goes to the website without its location (strip_location; a count)
         self.counts = {}
         self.fingerprints = {}   # handle -> fingerprint of the local object the plan was made from
         self.base_objs = {}      # handle -> the base object the plan was made against (after expunge refreshes)
@@ -331,6 +332,7 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
     files = files or {}
     pulled = pulled or {}
     plan = Plan()
+    plan.media_stripped = sum(1 for i in files.values() if isinstance(i, dict) and i.get("location_stripped"))
     plan.fingerprints = {h: fingerprint(o) for h, o in local.items()}
 
     base = {h: row["obj"] for h, row in base_rows.items() if not row["deleted"] and isinstance(row["obj"], dict)}
@@ -474,7 +476,7 @@ def _build_once(local, base_rows, heads, *, pins=None, sticky=(), released=(), m
             if op is not None:
                 plan.push_ops.append(op)
         if a == "update" and r.cls == "Media" and head is not None and not head.deleted:
-            if _blob_changed(local.get(h), head.obj):
+            if _blob_changed(local.get(h), head.obj, files.get(h)):
                 plan.media.append(h)
         if a == "create_local" and r.cls == "Media" and head is not None and not head.deleted:
             plan.media.append(h)
@@ -497,7 +499,12 @@ def sticky_held(local, sticky, policy):
     return out
 
 
-def _blob_changed(local_obj, cloud_obj):
+def _blob_changed(local_obj, cloud_obj, info=None):
+    """True when the website's file is not the one this Mac has. A photo the desktop sends without its location (strip_location) is on the
+    website as its copy: that copy's MD5 is the website's checksum and is NOT Gramps' checksum of the original, so it is not a change, and
+    the pull never downloads it over the original or points Media.path at it (HFY-TSK-374)."""
+    if isinstance(info, dict) and info.get("location_stripped") and cloud_obj.get("checksum") == info.get("md5"):
+        return False
     return bool(cloud_obj.get("checksum")) and (not isinstance(local_obj, dict) or local_obj.get("checksum") != cloud_obj.get("checksum"))
 
 
@@ -541,7 +548,7 @@ def status_counts(plan):
             pulled[row["kind"]] += 1
     return {"pulled": pulled, "pushed": {"create": 0, "update": 0, "delete": 0}, "conflicts_open": len(plan.conflicts),
             "holds": len(plan.holds), "blocked": len(plan.blocked) + len(plan.parked) + len(plan.deferred), "media_up": 0, "media_down": 0,
-            "privacy_incidents": len(plan.incidents), "push_pending": sum(plan.planned_push.values())}
+            "media_location_stripped": plan.media_stripped, "privacy_incidents": len(plan.incidents), "push_pending": sum(plan.planned_push.values())}
 
 
 def plan_hash(plan):

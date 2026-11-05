@@ -42,6 +42,13 @@ def new_config(tree_name, dbid, client_instance_id=None, server=None):
     }
 
 
+def strip_location_setting(config, dbid):
+    """The per-tree setting ``strip_location`` of config.json (HFY-TSK-374): True only for a JSON ``true`` in the config of THIS tree
+    (its ``dbid``). Absent, ``false`` or anything else is off, which is today's behaviour: a photo with a GPS position is held. The
+    setting stays on this Mac: nothing sends config.json, and no request carries this key."""
+    return isinstance(config, dict) and config.get("dbid") == dbid and config.get(consts.STRIP_LOCATION_KEY) is True
+
+
 class Verdict:
     """The outcome of `check`: `code` is None (bound or not yet bound) or a catalog id (D03, D12, D13)."""
 
