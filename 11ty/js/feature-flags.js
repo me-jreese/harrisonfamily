@@ -936,6 +936,14 @@
     }
   });
 
+  // HFY-TSK-388-0D: lifeDatesV1 mounts the Life dates block on the person page (island life-dates; it creates a [data-slot="life-dates"] host after the
+  // hero's .person-lifespan line and listens to hfy:person-rendered). Only the person page, never /me/dates/ (that is the queue island, below).
+  // With the flag off the bundle is not requested and the page keeps its plain lifespan line.
+  resolveFlags().then((flags) => {
+    if (flags.lifeDatesV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("life-dates", { onError() { /* the page keeps its plain lifespan line */ } });
+  });
+
   // HFY-TSK-388-0E: lifeDatesV1 mounts the Life dates rapid-entry queue on the static /me/dates/ page (island life-dates-queue). With the flag off
   // the bundle is not requested and the page keeps its "isn't available yet" note.
   resolveFlags().then((flags) => {
