@@ -1,7 +1,7 @@
 // "add a photo" in the person page's photos section (HFY-TSK-388-0A pass 3, flag mediaAddV1; BRD 5.4, D-05, D-09, D-12; board B8). A signed-in member opens the kit's
 // AddPhotoFlow in place: pick (choose or take a photo), a form (title, year with "about", what's happening), upload and commit through the HFY adapter, then "tag people
 // now?". The new Media is appended to the person's photos, never made the portrait. On someone else's page a banner says who looks first and the photo is a proposal.
-// Signed out: no control. The "tag people" link goes to the person's photos on this page (the photo tag editor opens from a photo in its lightbox; the /media/ page
+// Signed out: no control. The "tag people" link goes to the person's photos on this page (the photo tag editor opens from a photo in its lightbox; the /all-media/ page
 // does not exist yet). The host ([data-slot="add-photo"]) sits before the photo grid, outside the markup the page rebuilds.
 import "@io-kit/media/media.css";
 import "./person-add-photo.css";
