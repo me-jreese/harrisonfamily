@@ -75,6 +75,14 @@ describe("TEMPLATE_REGISTRY contract", () => {
     expect(rest).toEqual([]);
     expect(only).toMatchObject({ type: "comment_on_my_record", group: "thread:person:P1", count: 2 });
   });
+  it("a media thread links to /media/?id=, notifies repliers, and has no owner notice (D-35)", async () => {
+    const { notifier, inbox } = await setup();
+    const c = { threadId: "media:O0001", body: "a remark", author: { id: "P2", label: "Eve" } };
+    await notifier.onComment(c, {}, { earlierCommenters: ["P3"], postAuthorId: "P1" });
+    expect(await types(inbox, "P3")).toEqual(["reply_to_me"]);
+    expect((await items(inbox, "P3"))[0]).toMatchObject({ navigate: "/media/?id=O0001", group: "thread:media:O0001" });
+    expect(await items(inbox, "P1")).toEqual([]);
+  });
 });
 
 describe("proposal producers", () => {
