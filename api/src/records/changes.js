@@ -658,7 +658,7 @@ export async function commit(c, req, planned, nowMs, extra = {}) {
   }
   const applied = direct ? appliedOf(direct) : null;
   if (!direct && !proposal) return { status: 200, body: { applied: null, proposal: null, summary: [], unchanged: true } };
-  const body = { applied, proposal: proposal ? proposalView(proposal, actor) : null, summary: planned.summary };
+  const body = { applied, proposal: proposal ? proposalView(proposal, actor) : null, summary: planned.summary, ...(extra.body ?? {}) }; // extra.body: fields a compiling route adds to the reply and so to its idempotency receipt (life-dates.js)
   const result = { status: 201, body };
 
   const puts = [idemPut({ principal: actor.id, key: req.key, requestHash, result, at, nowMs })];

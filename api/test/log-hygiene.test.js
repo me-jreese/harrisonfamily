@@ -62,6 +62,7 @@ const SHAPES = {
   "relationships.post": { intent: { type: "spouse", person: { ref: "I9001" }, other: { new: { first_name: NOTE, surname: PHONE, birth: DOB, note: NOTE } } }, confirmDistinct: [NOTE] },
   "changes.post": { base_versions: { [NOTE]: 1 }, ops: OPS, dry_run: false },
   "adminDeletes.post": { target: { class: "Person", handle: NOTE }, remove_references: true, reason: `${NOTE} ${DOB}` },
+  "lifeDates.post": { target: "Person:abc", birth: { year: 1890 }, reason: `${NOTE} ${DOB}` },
   "proposals.amend": { ops: OPS, note: `${NOTE} ${PHONE}` },
   "proposals.decide": { decision: "approve", note: `${NOTE} ${PHONE} ${DOB}`, edits: OPS },
   "accessRequests.decide": { decision: "link", grampsId: "I0001", version: 1, confirmedOutside: true, note: `${NOTE} ${PHONE} ${DOB}` },
@@ -95,7 +96,7 @@ export const FAMILIES = {
   ],
   chat: ["chat.directory", "chat.push", "chat.archive"],
   records: ["records.byGrampsId", "records.get", "edit.schema", "edit.get"],
-  changes: ["changes.post", "adminDeletes.post", "adminDuplicates.list"],
+  changes: ["changes.post", "adminDeletes.post", "adminDuplicates.list", "lifeDates.post"],
   relationships: ["relationships.preview", "relationships.post"],
   proposals: ["proposals.list", "proposals.get", "proposals.amend", "proposals.withdraw", "proposals.decide"],
   accessRequests: [
