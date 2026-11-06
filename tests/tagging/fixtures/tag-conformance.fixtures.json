@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "about": "Tag conformance fixtures (HFY-TSK-387-0A, plan HFY-PLN-004). One file for the HFY suite (tests/tagging/tag-conformance.test.mjs, gramps/tests/unit/test_tag_rect_conformance.py) and for the kit suite to reuse. Synthetic rects only: no family data. Derived from the normalizeRect spec (DOC-E61934196E75 section 2) and re-ruled by architect ruling P4-R16.",
+  "ruling": "P4-R16",
+  "rulingText": "normalizeRect for READ/COMPARE is Gramps-exact: null only for the full frame (0,0,100,100) and for a point (x1==x2 and y1==y2); a box with one zero-extent axis is kept as typed. validateNewRect (authoring) rejects zero-area, inverted and smaller than 2x2 (D-07). The web editor emits only integers on the 1% grid (D-02).",
+  "grampsVersions": "6.0.5 (G/version.py:22) and 6.0.6 (A/version.py:21) source read; not 5.2",
+  "rectUnit": { "kind": "int-percent", "min": 0, "max": 100, "snap": 1 },
+  "minTagUnits": 2,
+  "numSentinel": "An array element written as {\"$num\": \"NaN\" | \"Infinity\" | \"-Infinity\"} is revived to that number by the loader.",
+
+  "normalizeRect": {
+    "about": "READ/COMPARE contract. in -> out. ms2 = meetsMinSize(out, 2). t = the BRD conformance row the fixture belongs to.",
+    "rows": [
+      { "id": "whole-image", "t": "T-3", "in": [0, 0, 100, 100], "out": null },
+      { "id": "whole-image-by-clamp", "t": "T-3", "in": [-5, -5, 105, 105], "out": null },
+      { "id": "rounds-to-full", "t": "T-3", "in": [0.4, 0.4, 99.6, 99.6], "out": null },
+      { "id": "all-zero", "t": "T-4", "in": [0, 0, 0, 0], "out": null },
+      { "id": "point", "t": "T-4", "in": [40, 40, 40, 40], "out": null },
+      { "id": "point-nonzero", "t": "T-4", "in": [5, 5, 5, 5], "out": null },
+      { "id": "rounds-to-point", "t": "T-4", "in": [10.2, 10.2, 10.4, 10.4], "out": null },
+      { "id": "line-zero-width", "t": "T-4", "in": [10, 10, 10, 50], "out": [10, 10, 10, 50], "ms2": false, "note": "P4-R16: kept as typed; the Gramps editor stores it" },
+      { "id": "line-zero-height", "t": "T-4", "in": [10, 30, 60, 30], "out": [10, 30, 60, 30], "ms2": false },
+      { "id": "fully-outside", "t": "T-4", "in": [120, 10, 150, 50], "out": [100, 10, 100, 50], "ms2": false, "note": "clamps to a line on the right edge, which is kept" },
+      { "id": "rounds-to-zero-area", "t": "T-4", "in": [10.2, 10.2, 10.4, 50], "out": [10, 10, 10, 50], "ms2": false },
+      { "id": "reversed-both", "t": "T-4", "in": [58, 93, 12, 7], "out": [12, 7, 58, 93], "ms2": true },
+      { "id": "reversed-x-only", "t": "T-4", "in": [58, 7, 12, 93], "out": [12, 7, 58, 93], "ms2": true },
+      { "id": "out-of-range-low", "t": "T-4", "in": [-20, -3, 40, 50], "out": [0, 0, 40, 50], "ms2": true },
+      { "id": "out-of-range-high", "t": "T-4", "in": [60, 70, 140, 101], "out": [60, 70, 100, 100], "ms2": true },
+      { "id": "one-unit-box", "t": "T-5", "in": [10, 10, 11, 11], "out": [10, 10, 11, 11], "ms2": false },
+      { "id": "two-unit-box", "t": "T-5", "in": [10, 10, 12, 12], "out": [10, 10, 12, 12], "ms2": true },
+      { "id": "two-by-one-box", "t": "T-5", "in": [10, 10, 12, 11], "out": [10, 10, 12, 11], "ms2": false },
+      { "id": "edge-two-unit", "t": "T-5", "in": [98, 98, 100, 100], "out": [98, 98, 100, 100], "ms2": true },
+      { "id": "tie_half_up", "t": "T-2", "in": [12.5, 7.5, 58.5, 93.5], "out": [13, 8, 59, 94], "note": "half up; Python half-even would give 12,8,58,94" },
+      { "id": "below-tie", "t": "T-2", "in": [12.4, 7.49, 58.51, 93.6], "out": [12, 7, 59, 94] },
+      { "id": "full-width-partial", "t": "T-1", "in": [0, 20, 100, 80], "out": [0, 20, 100, 80], "ms2": true },
+      { "id": "almost-full", "t": "T-1", "in": [0, 0, 100, 99], "out": [0, 0, 100, 99], "ms2": true },
+      { "id": "grid-basic", "t": "T-1", "in": [30, 47, 34, 54], "out": [30, 47, 34, 54], "ms2": true },
+      { "id": "negative-zero", "t": "T-1", "in": [-0, 0, 50, 50], "out": [0, 0, 50, 50], "note": "Object.is(out[0], 0) must hold" },
+      { "id": "null-input", "t": "T-1", "in": null, "out": null }
+    ],
+    "throwsRectInvalid": [
+      { "id": "short-array", "in": [1, 2, 3] },
+      { "id": "nan", "in": [{ "$num": "NaN" }, 0, 10, 10] },
+      { "id": "infinity", "in": [0, 0, { "$num": "Infinity" }, 10] },
+      { "id": "string-element", "in": ["1", 2, 3, 4] },
+      { "id": "not-an-array", "in": "not-an-array" }
+    ]
+  },
+
+  "emit": {
+    "about": "WRITE contract for a drawn rect in percent (T-1, T-2): the integer rect the editor must emit. Nearest, half up, clamped, ordered (spec step 3-5). The shipped editor rounds outward instead (islands/src/lib/photo-tag-edit.js:32-45).",
+    "rows": [
+      { "id": "grid-basic", "t": "T-1", "drawn": [30, 47, 34, 54], "emit": [30, 47, 34, 54] },
+      { "id": "round-half-end", "t": "T-2", "drawn": [60, 70, 98.5, 90], "emit": [60, 70, 99, 90], "note": "a drag ending at 98.5 percent" },
+      { "id": "tie_half_up", "t": "T-2", "drawn": [12.5, 7.5, 58.5, 93.5], "emit": [13, 8, 59, 94] },
+      { "id": "below-tie", "t": "T-2", "drawn": [12.4, 7.49, 58.51, 93.6], "emit": [12, 7, 59, 94] },
+      { "id": "nearest-vs-outward", "t": "T-2", "drawn": [10.6, 10.6, 40.4, 40.4], "emit": [11, 11, 40, 40] },
+      { "id": "reversed-drag", "t": "T-1", "drawn": [58, 93, 12, 7], "emit": [12, 7, 58, 93] },
+      { "id": "clamped-drag", "t": "T-1", "drawn": [-20, -3, 40, 50], "emit": [0, 0, 40, 50] }
+    ]
+  },
+
+  "authoring": {
+    "about": "validateNewRect(rect) -> { ok: true, rect } | { ok: false, code }. Checked in this order: shape, NOT_INTEGER, OUT_OF_RANGE, INVERTED, ZERO_AREA, TOO_SMALL (D-07). A full frame is ok and its rect is null (T-3, whole image).",
+    "rows": [
+      { "id": "grid-basic", "t": "T-1", "rect": [30, 47, 34, 54], "ok": true, "rect_out": [30, 47, 34, 54] },
+      { "id": "two-unit-box", "t": "T-5", "rect": [10, 10, 12, 12], "ok": true, "rect_out": [10, 10, 12, 12] },
+      { "id": "edge-two-unit", "t": "T-5", "rect": [98, 98, 100, 100], "ok": true, "rect_out": [98, 98, 100, 100] },
+      { "id": "full-frame", "t": "T-3", "rect": [0, 0, 100, 100], "ok": true, "rect_out": null },
+      { "id": "one-unit-box", "t": "T-5", "rect": [10, 10, 11, 11], "ok": false, "code": "TOO_SMALL" },
+      { "id": "two-by-one-box", "t": "T-5", "rect": [10, 10, 12, 11], "ok": false, "code": "TOO_SMALL" },
+      { "id": "point", "t": "T-4", "rect": [40, 40, 40, 40], "ok": false, "code": "ZERO_AREA" },
+      { "id": "line-zero-width", "t": "T-4", "rect": [10, 10, 10, 50], "ok": false, "code": "ZERO_AREA" },
+      { "id": "line-zero-height", "t": "T-4", "rect": [10, 30, 60, 30], "ok": false, "code": "ZERO_AREA" },
+      { "id": "reversed-both", "t": "T-4", "rect": [58, 93, 12, 7], "ok": false, "code": "INVERTED" },
+      { "id": "reversed-x-only", "t": "T-4", "rect": [58, 7, 12, 93], "ok": false, "code": "INVERTED" },
+      { "id": "fractional", "t": "T-2", "rect": [12.5, 7, 58, 93], "ok": false, "code": "NOT_INTEGER" },
+      { "id": "negative", "t": "T-4", "rect": [-1, 0, 50, 50], "ok": false, "code": "OUT_OF_RANGE" },
+      { "id": "over-100", "t": "T-4", "rect": [0, 0, 100, 101], "ok": false, "code": "OUT_OF_RANGE" }
+    ]
+  },
+
+  "deskTwin": {
+    "about": "A MediaRef as the Gramps desktop stores one for the grid-basic tag (same key set the Gramps JSON export gives; synthetic handle). The web-drawn tag must be field-for-field equal (T-1, T-11).",
+    "mediaRef": { "_class": "MediaRef", "private": false, "citation_list": [], "note_list": [], "attribute_list": [], "ref": "m0000000001", "rect": [30, 47, 34, 54] }
+  },
+
+  "geometry": {
+    "about": "T-8: the same pointer position over the same contained box gives the same percent whatever the pixel size of the image file (4000x3000 original, 2560x1920 cloud copy).",
+    "box": { "w": 800, "h": 600 },
+    "originals": [ { "w": 4000, "h": 3000 }, { "w": 2560, "h": 1920 } ],
+    "pointer": { "from": [200, 150], "to": [272, 324] },
+    "expectDrawn": [25, 25, 34, 54]
+  }
+}
