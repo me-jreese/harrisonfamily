@@ -11,16 +11,17 @@ printf '%s\n' "$*" >> "$MOD_CALLS"
 case "$1 $2" in
   "dynamodb query")
     if printf '%s\n' "$*" | grep -q -- '--exclusive-start-key'; then cat "$MOD_ITEMS2"; else cat "$MOD_ITEMS"; fi ;;
-  "lambda get-function-configuration") cat "$MOD_RMODE" ;;
-  "s3api delete-object") ;;
+  "lambda get-function-configuration") if [ "$(cat "$MOD_RMODE")" = "FAIL" ]; then echo denied >&2; exit 254; fi; cat "$MOD_RMODE" ;;
+  "s3api delete-object") if [ -f "$MOD_DELFAIL" ]; then echo "AccessDenied arn:aws:s3:::b/note/aaaa.json" >&2; exit 254; fi ;;
   "s3api head-object")
     key=""; while [ $# -gt 0 ]; do [ "$1" = "--key" ] && key=$2; shift; done
+    if [ -f "$MOD_HEADERR" ]; then echo "403 Forbidden" >&2; exit 254; fi
     grep -qxF "$key" "$MOD_SERVED" 2>/dev/null || { echo "404" >&2; exit 254; } ;;
   *) echo "unexpected aws call: $*" >&2; exit 99 ;;
 esac
 STUB
 chmod +x "$MODSTUB/aws"
-export MOD_ITEMS2="$T/mod-items2.json" MOD_CALLS="$T/mod-calls.log" MOD_ITEMS="$T/mod-items.json" MOD_SERVED="$T/mod-served.txt" MOD_RMODE="$T/mod-rmode.txt"
+export MOD_ITEMS2="$T/mod-items2.json" MOD_CALLS="$T/mod-calls.log" MOD_ITEMS="$T/mod-items.json" MOD_SERVED="$T/mod-served.txt" MOD_RMODE="$T/mod-rmode.txt" MOD_DELFAIL="$T/mod-delfail" MOD_HEADERR="$T/mod-headerr"
 echo off > "$MOD_RMODE"
 jq -n '{Items: [
   {PK: {S: "MOD#note:aaaa"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}},
@@ -94,3 +95,28 @@ jq '. + {LastEvaluatedKey: {PK: {S: "MOD#note:aaaa"}}}' "$MOD_ITEMS" > "$MOD_ITE
 jq -n '{Items: [{PK: {S: "MOD#note:onpagetwo"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}}]}' > "$MOD_ITEMS2"
 mod_run --table t --site-bucket b --dry-run
 contains "a hide on the second GSI1 page is found" "$OUT" "would delete: 3 file(s)"
+
+# fail-closed and error paths
+echo FAIL > "$MOD_RMODE"
+mod_run --table t --site-bucket b --confirm-reapply --break-glass
+eq "an apply is refused (2) when the render mode cannot be read" "$RC" 2
+contains "...saying unreadable" "$OUT" "RENDER_MODE is 'unreadable'"
+lacks "...deleting nothing and not even paging the queue" "$(cat "$MOD_CALLS")" "delete-object"
+echo off > "$MOD_RMODE"
+mod_run --table t --site-bucket b --confirm-reapply --dry-run --break-glass
+lacks "--dry-run after --confirm-reapply deletes nothing (last flag wins)" "$(cat "$MOD_CALLS")" "delete-object"
+mod_run --table t --site-bucket b --confirm-reapply --break-glass --breakglass-profile bgp
+contains "the deletes run under the break-glass profile" "$(cat "$MOD_CALLS")" "delete-object --profile bgp"
+lacks "...and the queue read does not" "$(grep dynamodb "$MOD_CALLS")" "bgp"
+: > "$MOD_DELFAIL"
+mod_run --table t --site-bucket b --confirm-reapply --break-glass
+eq "a failed delete exits 1, not 3" "$RC" 1
+contains "...with a failed count" "$OUT" "failed: 3"
+lacks "...and no AWS error text (it can carry an ARN)" "$OUT" "arn:"
+contains "...and a result line" "$OUT" "result: INCOMPLETE"
+rm -f "$MOD_DELFAIL"
+: > "$MOD_HEADERR"
+mod_run --table t --site-bucket b --verify
+eq "verify with a 403 is unverifiable, exit 1, never a false clean" "$RC" 1
+contains "...counted" "$OUT" "UNVERIFIABLE: 3 file(s)"
+rm -f "$MOD_HEADERR"
