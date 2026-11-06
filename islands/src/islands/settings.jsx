@@ -21,6 +21,8 @@ export const ROWS = [
   { id: "review", label: "suggestions", href: "/me/review/", line: "changes you've suggested, and ones about your page", anyFlag: ["recordEdit", "proposalReview"] },
   // admins with accessRequests (HFY-TSK-264): the dim line is the count GET /api/me gives (badges.accessRequests)
   { id: "requests", label: "family requests", href: "/me/requests/", line: "nobody waiting", admin: true, flag: "accessRequests" },
+  // admins with moderationV1 (HFY-TSK-192): the moderation queue
+  { id: "moderation", label: "moderation", href: "/me/moderation/", line: "what's hidden, and what's been asked of its author", admin: true, flag: "moderationV1" },
   { id: "sign-in", label: "sign-in and devices", href: "/auth/link", line: "google, password, face or fingerprint" }
 ];
 export const SIGN_OUT = "sign out";
@@ -52,10 +54,10 @@ export const visibleRows = (rows, flags, me) => rows.filter((row) => {
 /** The row's dim line: the count for "family requests", else its own. */
 export const lineOf = (row, me) => (row.id === "requests" ? waitingLine(waitingCount(me)) : row.line);
 
-/** GET /api/me for the admin rows, asked only when a flag-gated admin row could show (accessRequests on), so the hub costs nothing more otherwise. */
+/** GET /api/me for the admin rows, asked only when a flag-gated admin row could show (accessRequests or moderationV1 on), so the hub costs nothing more otherwise. */
 function useAdminMe(flags) {
   const [me, setMe] = useState(undefined);
-  const need = flags.accessRequests === true;
+  const need = flags.accessRequests === true || flags.moderationV1 === true;
   useEffect(() => {
     if (!need) return undefined;
     let live = true;
