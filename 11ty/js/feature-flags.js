@@ -960,6 +960,15 @@
     }
   });
 
+  // HFY-TSK-192: the moderation-queue island fills the static /me/moderation/ page (the admins' queue of hidden and asked-about items). With moderationV1 off the
+  // bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island asks /api/me itself and shows a non-admin one line.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true) return;
+    if (/^\/me\/moderation\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("moderation-queue", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
   // HFY-TSK-279: the admin-sync island fills the static /admin/sync/ page (sync status and conflict decisions for hfy-admin and gramps-owner). With syncStatusV1
   // off the bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island shows anyone else the standard not-allowed line.
   resolveFlags().then((flags) => {
