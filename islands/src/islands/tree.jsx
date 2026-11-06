@@ -106,15 +106,18 @@ const loadHourglass = () => (hourglassImport ||= import("../lib/tree-hourglass-b
 /** The big hourglass tree: the chunk draws into the host; `go` is its way to put a new middle person in the address and the page's state. */
 function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
   const host = useRef(null);
-  const first = useRef({ focus, from, notice, links, sync, onFailed });
+  // The newest props, read when the chunk mounts: a graph that reloads remounts on whoever is in the middle now, not on the first person.
+  const now = useRef(null);
+  now.current = { focus, from, notice, links, sync, onFailed };
   useEffect(() => {
     let live = true;
     let api = null;
-    const o = first.current;
-    loadHourglass().then(
-      (m) => { if (live) api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, links: o.links, notice: o.notice, sync: o.sync }); },
-      () => { if (live) { console.error("HFY tree: HOURGLASS_CHUNK_FAILED"); o.onFailed(); } }
-    );
+    const fail = (e) => { if (live) { console.error("HFY tree: HOURGLASS_CHUNK_FAILED", e); now.current.onFailed(); } };
+    loadHourglass().then((m) => {
+      if (!live) return;
+      const o = now.current;
+      api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, links: o.links, notice: o.notice, sync: o.sync });
+    }).catch(fail);
     return () => { live = false; api?.destroy(); };
   }, [graph]);
   return <div ref={host} className="hfy-bt-host" data-tree-hourglass />;

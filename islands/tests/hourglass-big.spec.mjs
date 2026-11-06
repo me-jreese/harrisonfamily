@@ -438,6 +438,8 @@ test("'how are we related?' opens the relationship panel for this person", async
   await bt(page).getByRole("link", { name: "how are we related?" }).click();
   await expect(page).toHaveURL(new RegExp(`view=cards&focus=${a}&kin=1$`));
   await expect(page.locator("[data-kin-panel]")).toBeVisible();
+  // the panel is about the person in the middle, not about the visitor (who is another person)
+  await expect(page.locator("[data-kin-panel]")).toContainText(NAME[a]);
 });
 
 test("flag off: ?view=tree is an unknown view and the page is what it always was", async ({ page }) => {
@@ -452,6 +454,14 @@ test("flag off: ?view=tree is an unknown view and the page is what it always was
 
 test("a big tree chunk that will not load drops the page to the cards, with a line that says so", async ({ page }) => {
   await page.route(/\/js\/islands\/chunks\/tree-hourglass-big-/, (r) => r.abort());
+  await open(page, "full", { width: 768 });
+  await expect(page.locator("[data-tree-hourglass-failed]")).toHaveText("the big tree didn't load. the cards below have everyone.");
+  await expect(page.locator("[data-tree-views]")).toBeVisible();
+  await expect(bt(page)).toHaveCount(0);
+});
+
+test("a big tree chunk that throws while it draws drops the page to the cards too, with the same line", async ({ page }) => {
+  await page.route(/\/js\/islands\/chunks\/tree-hourglass-big-/, (r) => r.fulfill({ contentType: "text/javascript", body: 'export function mountBig() { throw new Error("synthetic draw failure"); }' }));
   await open(page, "full", { width: 768 });
   await expect(page.locator("[data-tree-hourglass-failed]")).toHaveText("the big tree didn't load. the cards below have everyone.");
   await expect(page.locator("[data-tree-views]")).toBeVisible();

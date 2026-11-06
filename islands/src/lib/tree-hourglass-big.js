@@ -36,7 +36,7 @@ export function mountBig(host, { graph, focus, from, links = {}, notice = "", sy
   const tools = h("div", "hfy-bt__tools", { role: "group", "aria-label": "zoom and view" });
   const size = h("span", "hfy-bt__size");
   const canvas = h("div", "hfy-bt__canvas");
-  const stage = h("div", "hfy-bt__stage", { role: "group", "aria-label": "the family tree" }, canvas);
+  const stage = h("div", "hfy-bt__stage", { role: "group", "aria-label": "the people" }, canvas);
   const status = h("p", "hfy-bt__status", { role: "status" });
   const bar = h("div", "hfy-bt__bar", { role: "group", "aria-label": "who is in the middle" });
   root.append(h("div", "hfy-bt__top", null, back, h("h2", null, null, "the family tree")), tools, h("div", "hfy-bt__main", null, stage, status), bar);
@@ -72,8 +72,10 @@ export function mountBig(host, { graph, focus, from, links = {}, notice = "", sy
   const shown = (t) => { draw(); stage.querySelector("[aria-current]").focus({ preventScroll: true }); say(`now centred on ${first(t)}`); };
   // After "back to" (the start of the stack reached) or a step back or forward: the address says who is in the middle.
   function settle() {
-    const id = new URLSearchParams(location.search).get("focus");
-    if (!has(id)) return;
+    const q = new URLSearchParams(location.search);
+    const id = q.get("focus");
+    if (q.get("view") !== "tree") return; // history went out of the big tree to an earlier entry of the page: the page's own views draw that
+    if (!has(id)) return void (resetting = false);
     st.f = id;
     st.sibs = false;
     if (resetting) {
