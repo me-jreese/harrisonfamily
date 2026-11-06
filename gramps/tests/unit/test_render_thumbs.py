@@ -15,7 +15,7 @@ SHA_B = "e5f6a7b8" + "1" * 56
 
 
 def sidecar(records):
-    return (json.dumps({"version": 1, "thumbs": records}, sort_keys=True) + "\n").encode()
+    return (json.dumps({"version": thumbs.SIDECAR_VERSION, "thumbs": records}, sort_keys=True) + "\n").encode()
 
 
 def published(rig):
@@ -31,15 +31,16 @@ def published(rig):
 class SidecarContract(unittest.TestCase):
     def test_keys_are_derived_from_the_handle_and_the_checksum(self):
         # pinned to the same values as graph/test/cloud-thumbs.test.mjs: the two languages must agree on the scheme
-        self.assertEqual(thumbs.thumb_key("hndl_01", SHA_A, 320), "media/thumb/hndl_01-a1b2c3d4-320.jpg")
-        self.assertEqual(thumbs.thumb_key("hndl_01", SHA_A, 800), "media/thumb/hndl_01-a1b2c3d4-800.jpg")
+        # handle and hash are letters only (hndl_01 -> gigogegmfpdadb, a1b2c3d400 -> kblcmdneaa): the only digits are the 320 or 800 (HFY-TSK-402)
+        self.assertEqual(thumbs.thumb_key("hndl_01", SHA_A, 320), "media/thumb/gigogegmfpdadb-kblcmdneaa-s320.jpg")
+        self.assertEqual(thumbs.thumb_key("hndl_01", SHA_A, 800), "media/thumb/gigogegmfpdadb-kblcmdneaa-s800.jpg")
         self.assertEqual(thumbs.SIDECAR_KEY, "media/thumb/index.json")
         self.assertEqual(thumbs.SIZES, (320, 800))
 
     def test_field_shape(self):
         field = thumbs.thumb_field("hndl_01", SHA_A, {"checksum": SHA_A, "w": 4000, "h": 3000})
         self.assertEqual(field, {
-            "s320": "media/thumb/hndl_01-a1b2c3d4-320.jpg", "s800": "media/thumb/hndl_01-a1b2c3d4-800.jpg", "w": 4000, "h": 3000,
+            "s320": "media/thumb/gigogegmfpdadb-kblcmdneaa-s320.jpg", "s800": "media/thumb/gigogegmfpdadb-kblcmdneaa-s800.jpg", "w": 4000, "h": 3000,
         })
 
     def test_a_record_from_another_checksum_gives_no_field(self):
@@ -49,7 +50,7 @@ class SidecarContract(unittest.TestCase):
         self.assertIsNone(thumbs.thumb_field("../x", SHA_A, {"checksum": SHA_A, "w": 10, "h": 10}))
 
     def test_a_malformed_sidecar_reads_as_empty(self):
-        for raw in (None, b"", b"not json", b"[]", b'{"version": 2, "thumbs": {}}', b'{"version": 1, "thumbs": []}', b"\xff\xfe"):
+        for raw in (None, b"", b"not json", b"[]", b'{"version": 3, "thumbs": {}}', b'{"version": 1, "thumbs": {}}', b'{"version": 1, "thumbs": []}', b"\xff\xfe"):
             self.assertEqual(thumbs.parse_sidecar(raw), {}, raw)
 
     def test_bad_records_are_dropped_and_good_ones_kept(self):
@@ -80,7 +81,7 @@ class RenderedFiles(unittest.TestCase):
         self.assertEqual(out["status"], "rendered")
         self.assertEqual(sorted(rig.site.puts[before:]), sorted(["media/index.json", f"media/{handle}.json"]))
         expected = {
-            "s320": f"media/thumb/{handle}-{checksum[:8]}-320.jpg", "s800": f"media/thumb/{handle}-{checksum[:8]}-800.jpg", "w": 640, "h": 480,
+            "s320": thumbs.thumb_key(handle, checksum, 320), "s800": thumbs.thumb_key(handle, checksum, 800), "w": 640, "h": 480,
         }
         files = rig.site_files()
         entry = [e for e in json.loads(files["media/index.json"]) if e["handle"] == handle][0]
@@ -99,6 +100,20 @@ class RenderedFiles(unittest.TestCase):
         rig.site.objects[thumbs.SIDECAR_KEY] = sidecar({handle: {"checksum": SHA_B, "w": 640, "h": 480}})
         rig.run()
         self.assertNotIn("thumb", json.loads(rig.site_files()[f"media/{handle}.json"]))
+
+    def test_a_first_scheme_sidecar_is_stale_and_adds_no_thumb(self):
+        # HFY-TSK-402: a version 1 sidecar names thumbnails under the first key scheme; until hfy-graph-render writes a version 2 sidecar no
+        # entry points at a key that does not exist yet, and the pass does not fail
+        rig = sup.Rig("live")
+        rig.run()
+        handle, checksum, _ = published(rig)
+        old = (json.dumps({"version": 1, "thumbs": {handle: {"checksum": checksum, "w": 640, "h": 480}}}) + "\n").encode()
+        rig.site.objects[thumbs.SIDECAR_KEY] = old
+        rig.run()
+        self.assertNotIn("thumb", json.loads(rig.site_files()[f"media/{handle}.json"]))
+        rig.site.objects[thumbs.SIDECAR_KEY] = sidecar({handle: {"checksum": checksum, "w": 640, "h": 480}})
+        self.assertEqual(rig.run()["status"], "rendered")
+        self.assertIn("thumb", json.loads(rig.site_files()[f"media/{handle}.json"]))
 
     def test_removing_the_sidecar_removes_the_field_again(self):
         rig = sup.Rig("live")

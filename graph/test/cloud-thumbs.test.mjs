@@ -2,9 +2,11 @@
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { fakeSite } from './cloud-helpers.mjs';
-import { MIN_BUDGET_MS, SIDECAR_KEY, THUMB_PREFIX, parseSidecar, renderThumbnails, thumbKey } from '../cloud/thumbs.mjs';
+import { MIN_BUDGET_MS, SIDECAR_KEY, SIDECAR_VERSION, THUMB_PREFIX, parseSidecar, renderThumbnails, thumbKey } from '../cloud/thumbs.mjs';
 
 const quiet = { info() {}, error() {} };
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -36,8 +38,9 @@ const sidecarOf = (site) => parseSidecar(site.files.get(SIDECAR_KEY));
 describe('thumbnail step', () => {
   it('pins the key scheme that gramps/hfygramps/render/thumbs.py computes too', () => {
     const checksum = `a1b2c3d4${'0'.repeat(56)}`;
-    assert.equal(thumbKey('hndl_01', checksum, 320), 'media/thumb/hndl_01-a1b2c3d4-320.jpg');
-    assert.equal(thumbKey('hndl_01', checksum, 800), 'media/thumb/hndl_01-a1b2c3d4-800.jpg');
+    // handle and hash are letters only (hndl_01 -> gigogegmfpdadb, a1b2c3d400 -> kblcmdneaa): the only digits are the 320 or 800 (HFY-TSK-402)
+    assert.equal(thumbKey('hndl_01', checksum, 320), 'media/thumb/gigogegmfpdadb-kblcmdneaa-s320.jpg');
+    assert.equal(thumbKey('hndl_01', checksum, 800), 'media/thumb/gigogegmfpdadb-kblcmdneaa-s800.jpg');
     assert.equal(SIDECAR_KEY, 'media/thumb/index.json');
   });
 
@@ -122,7 +125,7 @@ describe('thumbnail step', () => {
     site.files.set('media/index.json', JSON.stringify(index));
     const out = await renderThumbnails(deps(site));
     assert.equal(out.pruned, 2);
-    assert.ok(![...site.files.keys()].some((k) => k.startsWith('media/thumb/b-')));
+    assert.ok(![...site.files.keys()].some((k) => k.startsWith(thumbKey('b', sha(b), 320).replace(/-s320\.jpg$/, '-'))));
     assert.deepEqual([...sidecarOf(site).keys()], ['a']);
   });
 
@@ -184,5 +187,67 @@ describe('thumbnail step', () => {
     const d = deps(site);
     await assert.rejects(renderThumbnails(d), (e) => e.message === 'hfy-graph-render thumbnails failed: THUMB_INDEX_UNREADABLE');
     assert.deepEqual(d.emitted, ['RenderError']);
+  });
+});
+
+describe('thumbnail keys and the first key scheme (HFY-TSK-402)', () => {
+  const REPO = fileURLToPath(new URL('../..', import.meta.url));
+  const pairs = Array.from({ length: 5000 }, (_, i) => {
+    const hex = createHash('sha256').update(`handle-${i}`).digest('hex');
+    // hex handles of 20-30 chars, every 5th ending in digits; checksums every 7th opening with digits
+    const handle = i % 5 === 0 ? `${hex.slice(0, 20 + (i % 11))}1234567` : hex.slice(0, 20 + (i % 11));
+    const checksum = createHash('sha256').update(`checksum-${i}`).digest('hex');
+    return [handle, i % 7 === 0 ? `5678901234${checksum.slice(10)}` : checksum];
+  });
+
+  it('every key is letters only apart from the size, whatever the handle and the checksum hold', () => {
+    for (const [handle, checksum] of pairs) {
+      for (const size of [320, 800]) {
+        const key = thumbKey(handle, checksum, size);
+        assert.match(key, /^media\/thumb\/[a-p]{2,128}-[a-p]{10}-s(320|800)\.jpg$/);
+        assert.equal(key.replace(/s(320|800)\.jpg$/, '').match(/\d/g), null);
+      }
+    }
+  });
+
+  it('the privacy detectors of hfy-sync-render (the REAL Python ones) read none of 5000 keys as a phone number or anything else', (t) => {
+    const keys = pairs.flatMap(([h, c]) => [thumbKey(h, c, 320), thumbKey(h, c, 800)]);
+    const script = [
+      'import sys, json',
+      'sys.path[:0] = [sys.argv[1] + "/gramps"]',
+      'from hfygramps import scanner',
+      'from hfygramps.render import text_scan',
+      'keys = json.load(sys.stdin)',
+      'print(json.dumps([k for k in keys if scanner.scan_text(k) or text_scan.blocking_hits(k)][:5]))',
+    ].join('\n');
+    const res = spawnSync('python3', ['-I', '-c', script, REPO], { input: JSON.stringify(keys), encoding: 'utf8' });
+    if (res.error || res.status !== 0) return t.skip('python3 with the repository detectors is not available');
+    assert.equal(res.stdout.trim(), '[]');
+  });
+
+  it('a first-scheme sidecar (version 1) reads as empty, so nothing is reused under the new keys', () => {
+    const v1 = Buffer.from(JSON.stringify({ version: 1, thumbs: { a: { checksum: 'a'.repeat(64), w: 10, h: 10 } } }));
+    assert.equal(parseSidecar(v1).size, 0);
+    const v2 = Buffer.from(JSON.stringify({ version: SIDECAR_VERSION, thumbs: { a: { checksum: 'a'.repeat(64), w: 10, h: 10 } } }));
+    assert.equal(parseSidecar(v2).size, 1);
+  });
+
+  it('the next pass derives again under the new keys and prunes every first-scheme thumbnail, published or not, and nothing else', async () => {
+    const a = await jpeg(900, 600);
+    const legacy = (handle, sum, size) => `${THUMB_PREFIX}${handle}-${sum.slice(0, 8)}-${size}.jpg`;
+    const old = [legacy('a', sha(a), 320), legacy('a', sha(a), 800), legacy('gone', 'deadbeef'.repeat(8), 320)];
+    const { site } = siteWith([{ handle: 'a', bytes: a }], {
+      ...Object.fromEntries(old.map((k) => [k, Buffer.from('old jpeg')])),
+      [SIDECAR_KEY]: JSON.stringify({ version: 1, thumbs: { a: { checksum: sha(a), w: 900, h: 600 } } }),
+      [`${THUMB_PREFIX}notes.txt`]: Buffer.from('not a thumbnail'),
+    });
+    const out = await renderThumbnails(deps(site));
+    assert.deepEqual([out.derived, out.reused, out.pruned, out.sidecar_written], [1, 0, 3, true]);
+    for (const k of old) assert.ok(!site.files.has(k), k);
+    assert.ok(site.files.has(thumbKey('a', sha(a), 320)) && site.files.has(thumbKey('a', sha(a), 800)));
+    assert.ok(site.files.has(`${THUMB_PREFIX}notes.txt`), 'only thumbnail objects are pruned');
+    assert.equal(JSON.parse(site.files.get(SIDECAR_KEY).toString()).version, SIDECAR_VERSION);
+    const again = await renderThumbnails(deps(site));
+    assert.deepEqual([again.derived, again.reused, again.pruned, again.sidecar_written], [0, 1, 0, false]);
   });
 });
