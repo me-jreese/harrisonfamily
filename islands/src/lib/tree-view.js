@@ -18,7 +18,13 @@ export const TABLE_VIEW = "table";
 export const FAMILY_VIEW = "family";
 // The faces tab (HFY-TSK-308, familyVizFaces): a mosaic of face crops grouped by photo. Offered only with the flag on; otherwise it reads as the cards.
 export const FACES_VIEW = "faces";
+// The big hourglass tree (HFY-TSK-379, flag familyVizHourglass): `?view=tree`. Not a view the toggle or the remembered choice knows: it is asked for by the address
+// alone and only while the flag is on, so with the flag off `?view=tree` is an unknown view and reads as it always did (normalizeView gives null).
+export const TREE_VIEW = "tree";
 export const DEFAULT_VIEW = "cards";
+
+/** Whether the address asks for the big tree (`?view=tree`); the page decides whether it is on offer. */
+export const treeAsked = (search) => new URLSearchParams(search).get("view") === TREE_VIEW;
 
 /** "cards" | "outline" | "lifelines" | "table" | "family" for a raw value (`chart` is an alias of `cards`), else null. */
 export function normalizeView(value) {

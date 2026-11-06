@@ -8,36 +8,10 @@
 //   mountHourglass(host, {graph, id, from, links})   draws the tree of `id` into `host` and returns its root; null when the person has nobody to
 //                                                    draw (the caller then lets the page keep what it has). `graph` is the parsed graph.json (FamilyGraph or body), `from` the person
 //                                                    page the visitor is on (the big tree's "back to"), `links` {table} says whether the table view is on.
-//   bigHref(id, from, extra)                         the big tree's address, or null for an id the tree page would not take
 import { COPY, familyModel, indexGraph } from "./hourglass-model.js";
 import { smallLayout } from "./hourglass-layout.js";
-
-// The tree page's id pattern (lib/tree-link.js treeLinkHref, lib/merged-person.js): an id outside it is never put in an address.
-const ID = /^[A-Za-z0-9_-]{1,32}$/;
-const ok = (x) => typeof x === "string" && ID.test(x);
-
-/** The big tree centred on `id`; `from` (the person page the visitor came from) is what its "back to" returns to. */
-export const bigHref = (id, from, extra = "") => (ok(id) ? `/tree/?view=tree&focus=${id}${ok(from) ? `&from=${from}` : ""}${extra}` : null);
-
-const h = (tag, cls, attrs, ...kids) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  for (const k in attrs) if (attrs[k] != null && attrs[k] !== false) e.setAttribute(k, attrs[k]);
-  e.append(...kids.flat().filter(Boolean));
-  return e;
-};
-const px = (n) => `${n}px`;
-const page = (id) => (ok(id) ? `/person/?id=${id}` : null);
-
-function avatar(c) {
-  const a = h("span", "hfy-tree__av", { "aria-hidden": true }, c.initials);
-  if (c.face) {
-    const i = h("img", null, { src: c.face, alt: "", loading: "lazy", decoding: "async" });
-    i.onerror = () => i.remove();
-    a.append(i);
-  }
-  return a;
-}
+import { avatar, h, px, strip } from "./hourglass-dom.js";
+import { bigHref, listHref, ok, page } from "./hourglass-links.js";
 
 export function mountHourglass(host, { graph, id, from = id, links = {} }) {
   const model = familyModel(indexGraph(graph), id);
@@ -100,11 +74,7 @@ export function mountHourglass(host, { graph, id, from = id, links = {} }) {
       if (r.kind === "note") return h("div", "hfy-tree__note", null, h("span", null, null, r.text), big && h("a", "hfy-tree__lk", { href: bigHref(id, from, "&ggp=1") }, r.button));
       if (r.kind === "cards") return grid(eq(r.cols), r.cells, `hfy-tree__row${r.sides ? " is-cap" : ""}`);
       if (r.kind === "gap") {
-        const g = h("div", "hfy-tree__gap", { "aria-hidden": true }, r.strips.map((s) => {
-          const i = h("i", `hfy-tree__ln ${s.w > s.h ? "is-h" : "is-v"}${s.dashed ? " is-dash" : ""}${s.rep ? " is-rep" : ""}`);
-          Object.assign(i.style, { left: px(s.x), top: px(s.y), width: px(s.w), height: px(s.h) });
-          return i;
-        }));
+        const g = h("div", "hfy-tree__gap", { "aria-hidden": true }, r.strips.map(strip));
         g.style.height = px(r.h);
         return g;
       }
@@ -119,10 +89,9 @@ export function mountHourglass(host, { graph, id, from = id, links = {} }) {
       if (r.more) faces.push(big ? h("a", "hfy-tree__face is-more", { href: big, "aria-label": r.more.aria }, r.more.text) : h("div", "hfy-tree__face is-more", null, r.more.text));
       return h("div", null, null, h("div", "hfy-tree__faces", { role: "group", "aria-label": "grandchildren" }, faces), h("p", "hfy-tree__names", null, r.names));
     });
-    const list = (v) => `/tree/?view=${v}&focus=${id}`;
-    out.push(h("div", "hfy-tree__foot", null,
+        out.push(h("div", "hfy-tree__foot", null,
       big && h("a", "hfy-tree__btn", { href: big, "aria-label": COPY.openBigAria(model.focus.name) }, COPY.openBig),
-      h("p", "hfy-tree__alt", null, COPY.prefer, " ", h("a", "hfy-tree__lk", { href: list("outline") }, COPY.outline), links.table && [" · ", h("a", "hfy-tree__lk", { href: list("table") }, COPY.table)])));
+      h("p", "hfy-tree__alt", null, COPY.prefer, " ", h("a", "hfy-tree__lk", { href: listHref("outline", id) }, COPY.outline), links.table && [" · ", h("a", "hfy-tree__lk", { href: listHref("table", id) }, COPY.table)])));
     // A redraw (rotation, a scrollbar appearing) must not drop a keyboard user's place: the element that had focus is found again by what names it.
     const sig = (e) => (e && root.contains(e) ? [e.dataset.k, e.getAttribute("href"), e.getAttribute("aria-label")].join("|") : null);
     const was = sig(document.activeElement);

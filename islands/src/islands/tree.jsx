@@ -16,7 +16,7 @@ import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
-import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, initialView, treeAsked, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
 import { useMedia } from "../lib/use-media.js";
@@ -29,7 +29,8 @@ export const COPY = {
   notFound: "we couldn't find that person, so here is someone to start from.",
   chartFailed: "the chart didn't load. the outline below has everything.",
   bigTreePrepared: "the whole-family view is being prepared.",
-  bigTreeFailed: "the whole-family view didn't load. the outline below has everything."
+  bigTreeFailed: "the whole-family view didn't load. the outline below has everything.",
+  treeFailed: "the big tree didn't load. the cards below have everyone."
 };
 
 // The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element (the chunk
@@ -58,7 +59,8 @@ const loadKinship = () => (kinshipImport ||= import("../lib/tree-kinship.jsx").c
 
 /** The pill and, once opened, the panel. Rendered only for a signed-in member who is in the graph, with familyVizKinship on. */
 export function KinshipSlot({ graph, viewer, focus, onFocus }) {
-  const [open, setOpen] = useState(false);
+  // `?kin=1` (the big hourglass tree's "how are we related?") opens the panel at once, for the person in the address.
+  const [open, setOpen] = useState(() => new URLSearchParams(location.search).get("kin") === "1");
   const [Panel, setPanel] = useState(null);
   const [failed, setFailed] = useState(false);
   const pill = useRef(null);
@@ -95,6 +97,28 @@ const loadBigTree = () => (bigTreeImport ||= import("../lib/tree-bigtree.jsx"));
 let facesImport = null;
 const loadFaces = () => (facesImport ||= import("../lib/tree-faces.jsx"));
 const BIGTREE_QUERY = "(min-width: 64rem)";
+// The big hourglass tree (HFY-TSK-379, familyVizHourglass, ?view=tree) is a plain-DOM lazy chunk too (lib/tree-hourglass-big.js), loaded only when that view
+// is asked for with the flag on. It draws a full-screen view of its own, so the page's toggle, navigator and outline are not rendered beside it; a chunk that
+// will not load drops the page to the cards (the same people), with a line that says so.
+let hourglassImport = null;
+const loadHourglass = () => (hourglassImport ||= import("../lib/tree-hourglass-big.js"));
+
+/** The big hourglass tree: the chunk draws into the host; `go` is its way to put a new middle person in the address and the page's state. */
+function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
+  const host = useRef(null);
+  const first = useRef({ focus, from, notice, links, sync, onFailed });
+  useEffect(() => {
+    let live = true;
+    let api = null;
+    const o = first.current;
+    loadHourglass().then(
+      (m) => { if (live) api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: o.sync }); },
+      () => { if (live) { console.error("HFY tree: HOURGLASS_CHUNK_FAILED"); o.onFailed(); } }
+    );
+    return () => { live = false; api?.destroy(); };
+  }, [graph]);
+  return <div ref={host} className="hfy-bt-host" data-tree-hourglass />;
+}
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
@@ -280,9 +304,15 @@ export function TreeApp() {
   const timeOn = flags?.familyVizTime === true;
   const [Lifelines, setLifelines] = useState(null);
   const [lifelinesFailed, setLifelinesFailed] = useState(false);
+  // familyVizHourglass (HFY-TSK-379): `?view=tree` is the big tree. With the flag off it is an unknown view (view above is then what it always was);
+  // while the flags are on their way it holds a placeholder rather than flashing the cards.
+  const [treeAskedNow] = useState(() => treeAsked(location.search));
+  const [treeFailed, setTreeFailed] = useState(false);
+  const treeOn = treeAskedNow && flags?.familyVizHourglass === true && !treeFailed;
+  const treePending = treeAskedNow && flags === undefined;
   const [FacesTab, setFacesTab] = useState(null);
   const [facesFailed, setFacesFailed] = useState(false);
-  const shown = view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW || view === TABLE_VIEW ? (lifelinesFailed ? "cards" : timeOn ? view : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
+  const shown = treeOn ? "tree" : treePending ? "treePending" : view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW || view === TABLE_VIEW ? (lifelinesFailed ? "cards" : timeOn ? view : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -440,9 +470,15 @@ export function TreeApp() {
   }
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
+  if (shown === "treePending") return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
+  if (shown === "tree") {
+    const links = { kin: flags.familyVizKinship === true && Boolean(sub) && graph.has(sub), poster: bigOffered && hasLayout, table: timeOn };
+    return <HourglassView graph={graph} focus={resolved.id} from={new URLSearchParams(location.search).get("from")} notice={resolved.fellBack ? COPY.notFound : ""} links={links} sync={setFocus} onFailed={() => setTreeFailed(true)} />;
+  }
   return (
     <div className="hfy-tree hfy-tree--ready" data-tree-mode={shown === FAMILY_VIEW ? FAMILY_VIEW : chartFailed ? "outline" : shown}>
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
+      {treeFailed ? <p className="hfy-tree__notice" role="status" data-tree-hourglass-failed>{COPY.treeFailed}</p> : null}
       {chartFailed && shown !== FAMILY_VIEW ? (
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (

@@ -9,8 +9,8 @@
 //   bigModel(index, id)                        the model of hourglass-model.js plus what only the big tree draws: the parents' other
 //                                              partners (`sides[i].others`), the great-grandparents (`ggp`, a grandparent's `up`) and `focus.ariaBig`
 import { COPY, card, familyModel, parentUnion, partnersOf, relWord } from "./hourglass-model.js";
-import { LINE } from "./hourglass-layout.js";
 
+const LINE = 2; // the one line weight (px), as hourglass-layout.js: the big tree does not import the small tree's layout
 const RING = 10;
 const PAD = 24;
 

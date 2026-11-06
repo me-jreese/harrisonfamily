@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VIEW_KEY, readView } from "../src/lib/hourglass-ui.js";
-import { bigHref } from "../src/lib/tree-hourglass.js";
+import { bigHref } from "../src/lib/hourglass-links.js";
 import { cachedGraph } from "../src/lib/tree-data.js";
 import { hourglassLinks, treeLinkHref } from "../src/lib/tree-link.js";
 import { GRAPH } from "./fixtures/hourglass-cases.mjs";
@@ -36,7 +36,7 @@ test("bigHref names the big tree for the person and the page they came from, and
   for (const bad of ["", "a b", "../x", "x".repeat(33), "I1&focus=I2", null, undefined, 7]) assert.equal(bigHref(bad, "I9007"), null, String(bad));
   // the same pattern as the tree page's own link (lib/tree-link.js): both accept and refuse the same ids
   for (const id of ["I9007", "a_b-c", "x".repeat(32), "x".repeat(33), "a b", "a/b", "é", ""]) assert.equal(bigHref(id, id) !== null, treeLinkHref(id) !== null, JSON.stringify(id));
-  assert.match(lib("tree-hourglass.js"), /const ID = \/\^\[A-Za-z0-9_-\]\{1,32\}\$\/;/);
+  assert.match(lib("hourglass-links.js"), /const ID = \/\^\[A-Za-z0-9_-\]\{1,32\}\$\/;/);
   assert.match(lib("tree-link.js"), /\/\^\[A-Za-z0-9_-\]\{1,32\}\$\/\.test\(id\)/);
 });
 

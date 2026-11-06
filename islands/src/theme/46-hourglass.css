@@ -1,5 +1,6 @@
 /* The hourglass tree (HFY-TSK-379, flag familyVizHourglass; DIGEST sections 1 and 2). Serves /person/ and /tree/ like 45-person.css: the person page's small tree
-   (lib/tree-hourglass.js) and the tree/cards switch (lib/hourglass-ui.js); the big tree's rules join them in a later pass. TOKENS ONLY: no literal colour, font
+   (lib/tree-hourglass.js), the tree/cards switch (lib/hourglass-ui.js) and the big tree (lib/tree-hourglass-big.js, `.hfy-bt`, the last section; its cards, strips and
+   links reuse the small tree's `.hfy-tree__*` rules). TOKENS ONLY: no literal colour, font
    family, radius or length (npm run lint:css). The rows are CSS grids (a cell names its column in JS); the connectors are 2 px <i> strips placed in JS from the
    same column maths, so a name that wraps never breaks a line. Dark and daylight both come from the tokens, which flip with the theme: nothing here names a mode. */
 
@@ -13,7 +14,7 @@
      ring        space-2 + the ring     10 px, the marriage ring (8 + 2)
      gap-col     space-3 (12), gap-row space-7 (32): the defaults; the small tree's own gap is 8 under 600 px of its width (space-2) and 12 from there
      --io-tree-dash is documentation only: dashes are the browser's dashed border at the line weight, never a property here. */
-.hfy-tree {
+.hfy-tree, .hfy-bt {
   --hfy-tree-edge: var(--io-color-semantic-tree-edge, var(--io-color-semantic-border-strong));
   --hfy-tree-line: var(--io-color-semantic-tree-line, var(--io-color-semantic-border-strong));
   --hfy-tree-repeat: var(--io-color-semantic-tree-repeat, var(--io-color-semantic-accent-secondary));
@@ -46,8 +47,8 @@
 
 /* ---- the small tree ---- */
 .hfy-tree { display: flex; flex-direction: column; max-width: calc(var(--io-space-9) * 11); color: var(--io-color-semantic-text); font-size: var(--io-typography-size-md); line-height: var(--io-typography-leading-normal); }
-.hfy-tree, .hfy-tree * { box-sizing: border-box; }
-.hfy-tree :focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-tree, .hfy-tree *, .hfy-bt, .hfy-bt * { box-sizing: border-box; }
+.hfy-tree :focus-visible, .hfy-bt :focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
 .hfy-tree__row { display: grid; align-items: stretch; column-gap: var(--io-space-2); row-gap: var(--io-space-2); }
 .hfy-tree.is-wide .hfy-tree__row { column-gap: var(--hfy-tree-gap-col); }
 .hfy-tree__cap { padding-bottom: var(--io-space-1); color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); text-align: center; }
@@ -121,3 +122,69 @@
 .hfy-tree__alt .hfy-tree__lk { padding: 0 var(--io-space-2); }
 .hfy-tree__status { margin: var(--io-space-2) 0 0; color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); text-align: center; }
 .hfy-tree__status:empty { display: none; }
+
+/* ---- the big tree (/tree/?view=tree) ----
+   Phone: a full-screen view (fixed, over the page) of four rows: top bar, toolbar, the stage (its own scroll region; the page never scrolls sideways) and the bar.
+   From 1100 px (JS sets .is-pane from the same media query it redraws on): a page with the 320 px panel (space-9 x 5) beside the tools and the stage. Card
+   sizes, the canvas and every line are placed in JS as inline px from hourglass-big.js, and the tree is never scaled. */
+.hfy-bt {
+  position: fixed; inset: 0; z-index: 1040; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "tools" "main" "bar";
+  background: var(--io-color-semantic-surface); color: var(--io-color-semantic-text); font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal);
+}
+.hfy-bt.is-pane {
+  position: relative; inset: auto; z-index: auto; height: 80vh; min-height: calc(var(--io-space-9) * 8); grid-template-columns: calc(var(--io-space-9) * 5) minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top top" "bar tools" "bar main"; overflow: hidden; border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-lg);
+}
+.hfy-bt__top { grid-area: top; display: flex; align-items: center; gap: var(--io-space-3); padding: var(--io-space-2) var(--io-space-3); border-bottom: 1px solid var(--io-color-semantic-border); background: var(--io-color-semantic-surface-raised); }
+.hfy-bt__top h2 { margin: 0; font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-bold); line-height: var(--io-typography-leading-snug); }
+.hfy-bt__back, .hfy-bt__tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--io-space-2); min-width: var(--io-control-tap-min); min-height: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-3);
+  border: var(--hfy-tree-edge-w) solid var(--hfy-tree-edge); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
+  font: inherit; font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); cursor: pointer;
+}
+.hfy-bt__back::before { content: ""; width: var(--io-space-2); height: var(--io-space-2); border: solid currentcolor; border-width: 0 0 var(--hfy-tree-line-w) var(--hfy-tree-line-w); transform: translateX(25%) rotate(45deg); }
+.hfy-bt__tool[hidden] { display: none; }
+.hfy-bt__tool[aria-pressed="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); }
+.hfy-bt__tool[aria-disabled="true"] { border-style: dashed; color: var(--io-color-semantic-text-dim); cursor: default; }
+.hfy-bt__tool.is-out, .hfy-bt__tool.is-in { font-size: var(--io-typography-size-lg); }
+.hfy-bt__tools { grid-area: tools; display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-2); padding: var(--io-space-2) var(--io-space-3); }
+.hfy-bt__size { display: none; margin-inline-start: auto; color: var(--io-color-semantic-text-dim); }
+.hfy-bt.is-pane .hfy-bt__size { display: inline; }
+.hfy-bt__main { grid-area: main; position: relative; display: flex; min-height: 0; }
+.hfy-bt__stage { flex: 1 1 auto; min-width: 0; overflow: auto; overscroll-behavior: contain; scroll-behavior: auto; background: var(--hfy-tree-ground); }
+.hfy-bt__canvas { position: relative; margin: 0 auto; }
+.hfy-bt__canvas.fa { animation: hfy-bt-a var(--io-motion-duration-base) var(--io-motion-easing-enter) both; }
+.hfy-bt__canvas.fb { animation: hfy-bt-b var(--io-motion-duration-base) var(--io-motion-easing-enter) both; }
+@keyframes hfy-bt-a { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hfy-bt-b { from { opacity: 0; } to { opacity: 1; } }
+.hfy-bt__lines { position: absolute; inset: 0; pointer-events: none; }
+.hfy-bt__ring { position: absolute; display: block; width: var(--hfy-tree-ring); height: var(--hfy-tree-ring); border: var(--hfy-tree-line-w) solid var(--hfy-tree-line); border-radius: var(--io-radius-pill); background: var(--hfy-tree-ground); }
+.hfy-bt__lab { position: absolute; color: var(--io-color-semantic-text-dim); white-space: nowrap; }
+.hfy-bt__status { position: absolute; inset: auto var(--io-space-3) var(--io-space-3); margin: 0; padding: var(--io-space-2) var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); pointer-events: none; }
+.hfy-bt__status:empty { display: none; }
+.hfy-bt__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* The cards of the big tree: the small tree's look, placed absolutely; sizes and text steps by the level the view is at (data-level 0 faces only, 1 small, 2 medium, 3 large). */
+.hfy-bt__canvas .hfy-tree__card { position: absolute; justify-content: flex-start; margin: 0; font: inherit; cursor: pointer; }
+.hfy-bt__canvas .hfy-tree__card.is-ghost { cursor: default; }
+.hfy-bt__canvas .hfy-tree__card.is-chip { justify-content: center; font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-bt[data-level="2"] .hfy-tree__nm { font-size: var(--io-typography-size-md); }
+.hfy-bt[data-level="3"] .hfy-tree__nm { font-size: var(--io-typography-size-lg); }
+.hfy-bt[data-level="3"] .hfy-tree__yr { font-size: var(--io-typography-size-md); }
+.hfy-bt[data-level="0"] .hfy-tree__card { align-items: center; justify-content: center; padding: 0; border-radius: var(--io-radius-pill); text-align: center; }
+.hfy-bt[data-level="0"] .hfy-tree__av { border: 0; }
+.hfy-bt[data-level="0"] .hfy-tree__card.is-ghost { padding: 0; }
+.hfy-bt__canvas .hfy-tree__av { border-width: var(--hfy-tree-line-w); }
+.hfy-bt .hfy-tree__card .hfy-tree__lk { color: inherit; }
+
+/* The bar (phone, under the stage) and the panel (from 1100 px, beside it): who is in the middle, the ways on, and the other views of the family. */
+.hfy-bt__bar { grid-area: bar; display: flex; flex-direction: column; gap: var(--io-space-2); padding: var(--io-space-3); border-top: 1px solid var(--io-color-semantic-border); background: var(--io-color-semantic-surface); overflow: auto; }
+.hfy-bt.is-pane .hfy-bt__bar { gap: var(--io-space-3); padding: var(--io-space-4); border-top: 0; border-right: 1px solid var(--io-color-semantic-border); }
+.hfy-bt__who { display: flex; align-items: center; gap: var(--io-space-3); }
+.hfy-bt__who h3 { margin: 0; font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-bold); line-height: var(--io-typography-leading-snug); }
+.hfy-bt__who p, .hfy-bt__see, .hfy-bt__help { margin: 0; color: var(--io-color-semantic-text-dim); }
+.hfy-bt__see { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-1) var(--io-space-3); }
+.hfy-bt__acts { display: flex; flex-wrap: wrap; gap: var(--io-space-2); }
+.hfy-bt.is-pane .hfy-bt__acts { flex-direction: column; }
+.hfy-bt__btn { display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-h-md); padding: 0 var(--io-space-4); border: 1px solid var(--io-color-semantic-accent); border-radius: var(--io-radius-md); background: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); font-weight: var(--io-typography-weight-semibold); text-decoration: none; }
+.hfy-bt__btn.is-alt { border-color: var(--io-color-semantic-border-strong); background: var(--io-color-semantic-surface); color: var(--io-color-semantic-text); }
