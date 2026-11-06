@@ -3,12 +3,17 @@
 //
 //   read media/index.json (what hfy-sync-render published: the privacy and moderation decisions are already made there)
 //   -> for each published image, two JPEGs (320 and 800 px on the long edge, quality 80, EXIF and ICC stripped, never upscaled,
-//      orientation applied) at media/thumb/<handle>-<sha8 of the original's checksum>-<size>.jpg
+//      orientation applied) at media/thumb/<handle>-<10 letters>-s<size>.jpg with the handle and the hash written as letters only: the
+//      handle's UTF-8 bytes and the first 10 hex digits of the original's checksum, each hex digit written as a letter (0 -> a ... f -> p).
+//      HFY-TSK-402: the first scheme (<handle>-<sha8>-<size>.jpg) put digit runs beside dashes, and the privacy gate of hfy-sync-render read
+//      some of them (the handle's own digits included) as a phone number and withheld media/index.json. The only digits left in a key are
+//      the 320 or 800 after an "s", so no handle or checksum can make one.
 //   -> media/thumb/index.json (the sidecar hfy-sync-render reads to add `thumb` to media/index.json and media/<handle>.json)
 //   -> prune thumbnails that no published image references any more (a media made private or deleted loses its thumbnails).
 //
 // Idempotent by source checksum: a handle whose sidecar record has the entry's checksum and whose two files exist is not read again. The
-// key scheme is mirrored in gramps/hfygramps/render/thumbs.py. Originals are only read. A failure on one image gives that image no thumb and
+// sidecar is version 2; a version 1 sidecar (first key scheme) reads as empty, so every image is derived again under the new keys, and the
+// first-scheme JPEGs are pruned with the rest of the thumbnails that no published image references. The key scheme is mirrored in gramps/hfygramps/render/thumbs.py. Originals are only read. A failure on one image gives that image no thumb and
 // a counted warning; only an unreadable index fails the step. Only counts and error codes are logged, never a handle or a path.
 import { createHash } from 'node:crypto';
 
@@ -16,6 +21,8 @@ export const INDEX_KEY = 'media/index.json';
 export const THUMB_PREFIX = 'media/thumb/';
 export const SIDECAR_KEY = 'media/thumb/index.json';
 export const SIZES = Object.freeze([320, 800]);
+export const SIDECAR_VERSION = 2;
+const DIGEST_LETTERS = 10;
 export const QUALITY = 80;
 /** Stop deriving when less than this is left of the invocation; the next pass continues (the step is idempotent). */
 export const MIN_BUDGET_MS = 45_000;
@@ -23,10 +30,16 @@ export const MIN_BUDGET_MS = 45_000;
 const HANDLE = /^[A-Za-z0-9_-]{1,64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const SOURCE_KEY = /^media\/([A-Za-z0-9_-]{1,64})\.(jpe?g|png|gif|tiff?|webp)$/i;
-const THUMB_FILE = /^[A-Za-z0-9_-]{1,64}-[0-9a-f]{8}-(320|800)\.jpg$/;
+// A thumbnail object under media/thumb/: the current scheme or the first one (HFY-TSK-393, <handle>-<sha8>-<size>.jpg), which is pruned.
+const THUMB_FILE = /^(?:[a-p]{2,128}-[a-p]{10}-s|[A-Za-z0-9_-]{1,64}-[0-9a-f]{8}-)(?:320|800)\.jpg$/;
 const MAX_SIDE = 100_000;
 
-export const thumbKey = (handle, checksum, size) => `${THUMB_PREFIX}${handle}-${checksum.slice(0, 8)}-${size}.jpg`;
+/** Hex digits as letters a-p (0 -> a ... f -> p): a segment with no digit in it. */
+const hexLetters = (hex) => Array.from(hex, (c) => String.fromCharCode(97 + parseInt(c, 16))).join('');
+/** The handle (injective: its UTF-8 bytes in hex) and the first 10 hex digits of the checksum, both as letters. */
+export const handleLetters = (handle) => hexLetters(Buffer.from(handle, 'utf8').toString('hex'));
+export const digestLetters = (checksum) => hexLetters(checksum.slice(0, DIGEST_LETTERS));
+export const thumbKey = (handle, checksum, size) => `${THUMB_PREFIX}${handleLetters(handle)}-${digestLetters(checksum)}-s${size}.jpg`;
 const fail = (code) => Object.assign(new Error(code), { code });
 const isDim = (v) => Number.isInteger(v) && v > 0 && v <= MAX_SIDE;
 
@@ -40,7 +53,7 @@ export function parseSidecar(raw) {
   } catch {
     return out;
   }
-  if (!doc || doc.version !== 1 || !doc.thumbs || typeof doc.thumbs !== 'object' || Array.isArray(doc.thumbs)) return out;
+  if (!doc || doc.version !== SIDECAR_VERSION || !doc.thumbs || typeof doc.thumbs !== 'object' || Array.isArray(doc.thumbs)) return out;
   for (const [handle, rec] of Object.entries(doc.thumbs)) {
     if (HANDLE.test(handle) && rec && SHA256.test(rec.checksum ?? '') && isDim(rec.w) && isDim(rec.h)) out.set(handle, { checksum: rec.checksum, w: rec.w, h: rec.h });
   }
@@ -54,7 +67,7 @@ export function sidecarText(records) {
     const { checksum, w, h } = records.get(handle);
     thumbs[handle] = { checksum, w, h };
   }
-  return `${JSON.stringify({ version: 1, thumbs })}\n`;
+  return `${JSON.stringify({ version: SIDECAR_VERSION, thumbs })}\n`;
 }
 
 /** The published images of media/index.json: present originals with a plain handle, a sha-256 and an image file key. */
