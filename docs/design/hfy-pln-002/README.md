@@ -13,6 +13,7 @@ The live dispatch catalog is the docstore document DOC-981BF41F2443. io's verbat
 | `addenda.json` | Plan key → the orchestrator's notes for that task, which `make_batch.py` appends to the task pack. |
 | `requirements.md` | Requirement trace R-01..R-42, D-01..D-03. |
 | `viz-adr.md`, `chat-adr.md` | Research-intake decisions. The viz approach is approved; chat runs on Cloudflare Durable Objects. |
+| `viz-hourglass-addendum.md` | P2-R117 (2026-11-05): the person page keeps a small, expandable visual tree (the hourglass), beside the cards. It amends `viz.md` and `viz-adr.md` on the person page and the Graphviz retirement. |
 
 Gramps ids of real people are redacted as `<gramps-id>`.
 

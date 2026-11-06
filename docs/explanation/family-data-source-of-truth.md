@@ -36,6 +36,6 @@ The family-tree pictures on the old person pages are SVG files that a Graphviz s
 
 - **The SVGs are frozen.** They stopped changing at the cutover, because the script that makes them belongs to the retired publish.
 - **A person created in the cloud has none.** Nothing draws a picture for them. With the `familyViz` flag on, their page shows the **see in the family tree** link, which opens the `/tree/` page, and that page draws the tree from `person/graph.json`, which covers every person, however they were created. With `familyViz` off, the link is absent and `/tree/` says the tree is not turned on yet.
-- **They will go.** The task `viz-v2-retire-graphviz` retires the SVGs, and the link, once `familyViz` is on, becomes the only tree entry point.
+- **They stay for now.** io decided on 2026-11-05 (P2-R117) that the person page keeps a visual tree: a small, expandable one, drawn from the same graph file, beside the card views ([the design addendum](../design/hfy-pln-002/viz-hourglass-addendum.md)). The retirement of the SVGs waits until that tree has shipped and io approves.
 
 This is an interim state. Until the SVGs are retired, a page may show an old picture for a person who has changed since the cutover. With `familyViz` on, the tree behind the link is drawn from the graph file that `hfy-graph-render` rebuilds after each live pass, so it is current.
