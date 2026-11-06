@@ -27,7 +27,7 @@ export const FLAGS_RETRY_MS = 5_000;
 export const FLAGS_TIMEOUT_MS = 3_000;
 export const PREVIEW_HEADER = "x-hfy-preview";
 /** The stack switches a PLN-002 route may declare instead of a feature (api-feature-gate AC3). */
-export const SERVER_SWITCHES = Object.freeze(["HFY_EDITING", "ACCESS_REQUESTS", "CHAT_SERVICE_AUTH", "SYNC_API_ENABLED"]);
+export const SERVER_SWITCHES = Object.freeze(["HFY_EDITING", "ACCESS_REQUESTS", "CHAT_SERVICE_AUTH", "SYNC_API_ENABLED", "HFY_WEB_UPLOAD"]);
 
 /** A flag name as flags.json and ?hfy_flags spell it (camelCase word characters). */
 const FLAG_NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;

@@ -151,7 +151,7 @@ describe("declarations", () => {
     expect(requireFeature("inboxV1")).toEqual({ type: "feature", name: "inboxV1" });
     expect(Object.isFrozen(requireFeature("inboxV1"))).toBe(true);
     for (const bad of ["", "-inboxV1", "inbox V1", 7, undefined, "x".repeat(65)]) expect(() => requireFeature(bad)).toThrow(TypeError);
-    expect(SERVER_SWITCHES).toEqual(["HFY_EDITING", "ACCESS_REQUESTS", "CHAT_SERVICE_AUTH", "SYNC_API_ENABLED"]);
+    expect(SERVER_SWITCHES).toEqual(["HFY_EDITING", "ACCESS_REQUESTS", "CHAT_SERVICE_AUTH", "SYNC_API_ENABLED", "HFY_WEB_UPLOAD"]);
     expect(serverSwitch("HFY_EDITING", () => true)).toMatchObject({ type: "switch", name: "HFY_EDITING" });
     expect(() => serverSwitch("HFY_EDITING")).toThrow(/check function/); // a declared switch is always enforced
     expect(() => serverSwitch("RENDER_MODE", () => true)).toThrow(/unknown switch/);

@@ -10,6 +10,8 @@ import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
 import { lifeDatesGet, lifeDatesPost } from "./records/life-dates.js";
+import { webUploadGate, webUploadOn } from "./web-upload.js";
+import { WEB_PURPOSES } from "./uploads.js";
 import { adminDeletesPost, adminDuplicatesList } from "./records/admin-delete.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
@@ -247,6 +249,18 @@ export const ROUTES = defineRoutes([
     summary: "One media item by gramps_id (or pa-<upload id> for a post photo not yet graduated), with ?section and ?filter for previous/next: {card, imageUrl, description?, origin: gramps|upload|post, originRef?, originBy?, tags: [{personId, mediaId, rect, index, state, person: {displayName, living}}], version, commentsSubject, previousId, nextId}; living names are redacted; 404 when not in the person gallery",
     gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.get(c.params.id, c.query)),
   },
+  // HFY-TSK-388-0A (BRD D-05, D-09, D-11, D-12, D-34; ruling P4-R26): member web uploads. Behind the HFY_WEB_UPLOAD server switch (default off, 404 while off). No MCP tool, no policy row.
+  // A refusal of the bytes answers 400 photo_has_location (the R-18 guard, upload-guard.js). Shapes and rules: src/web-upload.js.
+  {
+    name: "mediaUpload.commit", method: "POST", path: "/media/uploads",
+    summary: "Commit pending photo uploads {items: [{uploadId, purpose: portrait|item, subject, title?, year?, about?, description?}]} (1-10): each graduates to a Gramps Media with the Tag hfy-web-upload and the Attributes hfy:source=upload and hfy:added-by; purpose item also appends a MediaRef to the subject (your own page now, another person's as a proposal): 200 {items: [{uploadId, mediaId, purpose, state: graduated|applied|pending-proposal, proposal?}]}; 400 photo_has_location | upload_missing | validation, 404, 422 unsupported_type | too_large, 503. Idempotent per upload.",
+    gate: webUploadGate(), handler: async (c) => ok(await c.webUpload.commit(c, c.body)),
+  },
+  {
+    name: "mediaUpload.portrait", method: "POST", path: "/media/portrait",
+    summary: "Set a person's portrait {personId, mediaId, crop: [x1, y1, x2, y2] whole percent | null}: one submission that adds the MediaRef with the crop (null for the full frame) and moves it to index 0; the previous portrait stays behind it. Your own page saves now, another person's becomes a proposal: 200 {state: applied|pending-proposal, tags: [{personId, mediaId, rect, index, state}], proposal?}.",
+    gate: webUploadGate(), handler: async (c) => ok(await c.webUpload.portrait(c, c.body)),
+  },
   {
     name: "posts.list", method: "GET", path: "/posts", summary: "List posts newest first (cursor; filters type, author, subject, visibility)",
     handler: async (c) => {
@@ -291,7 +305,8 @@ export const ROUTES = defineRoutes([
     name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a photo (purpose post, the default: jpeg/png/webp/heic at uploads/posts/<ulid>/photo.<ext>; purpose comment: jpeg/png/webp at uploads/comments/<ulid>/photo.<ext>, needs commentPhotosV1), <= 10 MB, name chosen by the server, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
     handler: async (c) => {
       if (c.body.purpose === "comment") await commentPhotos(c); // purpose comment: uploads/comments/<ulid>/photo.<ext>, jpeg/png/webp only
-      return ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size, purpose: c.body.purpose }), 201);
+      if (WEB_PURPOSES.includes(c.body.purpose) && !webUploadOn()) throw new HttpError(404, "not_found", "no such route"); // portrait and item: dark until HFY_WEB_UPLOAD=on
+      return ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size, purpose: c.body.purpose, subject: c.body.subject }), 201);
     },
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.

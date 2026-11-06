@@ -8,6 +8,7 @@ import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGI
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
+import { createWebUpload } from "./web-upload.js";
 import { createGuard } from "./guard.js";
 import { uploadPhotosFor } from "./comment-photos.js";
 import { checkLocation } from "./upload-guard.js";
@@ -157,6 +158,11 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: () => deps.postGraduate === true, now, log,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
+    // HFY-TSK-388-0A: member portrait and new-media uploads (web-upload.js), behind the HFY_WEB_UPLOAD route gate.
+    const webUpload = createWebUpload({
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, now, log,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
+    });
     const graduatePostPhotos = (post) => afterCommit("post photo graduation", () => postGraduation.graduate(post));
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
     const moderation = createModeration({
@@ -172,7 +178,7 @@ export function createHandler(deps) {
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, webUpload, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
