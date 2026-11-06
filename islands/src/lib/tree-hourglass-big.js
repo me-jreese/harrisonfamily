@@ -3,12 +3,11 @@
 // row names come from bigModel/bigLayout (hourglass-big.js), which hold every rule; this file draws them and owns the toolbar, the history and the bar.
 // Its strings are inline literals (T-Copy: lower case, names keep their capitals); tests/hourglass-copy.test.mjs reads them from this source.
 //
-//   mountBig(host, {graph, focus, from, ggp, links, notice, sync})   draws the tree of `focus` into `host`; returns {destroy}.
+//   mountBig(host, {graph, focus, from, links, notice, sync})   draws the tree of `focus` into `host`; returns {destroy}.
 //     links {kin, poster, table}  which of the "how are we related?", poster and table links exist for this visitor;
 //     sync(id)                    tells the page (TreeApp) the new middle person after a tap, so its own state and address checks agree.
 // The history is the browser's: a tap pushes `?focus=<id>` with history.state {hg: [the people before]}, popstate retraces it, "back to" goes to the start
-// of that stack (history.go) and the stack's first entry is the start. The size and the open brothers and sisters are the view's own state; only the
-// great-grandparents are in the address (&ggp=1), so a reload keeps them.
+// of that stack (history.go) and the stack's first entry is the start. The size and the open brothers and sisters are the view's own state, not in the address.
 import { COPY, firstName, indexGraph } from "./hourglass-model.js";
 import { bigLayout, bigModel, defaultLevel } from "./hourglass-big.js";
 import { avatar, box, h, strip } from "./hourglass-dom.js";
@@ -17,13 +16,13 @@ import { listHref, ok, page } from "./hourglass-links.js";
 const hg = () => (history.state && history.state.hg) || [];
 const clamp = (n) => Math.max(0, Math.min(3, n));
 
-export function mountBig(host, { graph, focus, from, ggp = false, links = {}, notice = "", sync = () => {} }) {
+export function mountBig(host, { graph, focus, from, links = {}, notice = "", sync = () => {} }) {
   const idx = indexGraph(graph);
   const has = (x) => idx.people.has(x);
   const first = (x) => firstName(idx.people.get(x));
   const paneMq = matchMedia("(min-width: 1100px)");
   const calm = matchMedia("(prefers-reduced-motion: reduce)");
-  const st = { f: focus, lv: defaultLevel(innerWidth), sibs: false, ggp, n: 0 };
+  const st = { f: focus, lv: defaultLevel(innerWidth), sibs: false, n: 0 };
   let timer;
   let resetting = false;
   let seen = false;
@@ -51,14 +50,12 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
   const url = (id) => {
     const q = new URLSearchParams(location.search);
     q.set("focus", id);
-    st.ggp ? q.set("ggp", "1") : q.delete("ggp");
     return `${location.pathname}?${q}`;
   };
   const setLevel = (n) => { if (clamp(n) !== st.lv) { st.lv = clamp(n); draw(); } };
   // One table drives the toolbar: key, text, accessible name, action. Buttons stay in the DOM (aria-disabled, never disabled) so a focused one keeps focus at its limit.
   const BT = {};
-  [["out", "−", "zoom out", () => setLevel(st.lv - 1)], ["in", "+", "zoom in", () => setLevel(st.lv + 1)], ["all", "see all", null, () => setLevel(0)], ["to", null, null, () => reset()],
-    ["ggp", "great-grandparents", null, () => { st.ggp = !st.ggp; history.replaceState(history.state, "", url(st.f)); draw(); }]].forEach(([k, text, aria, act]) => {
+  [["out", "−", "zoom out", () => setLevel(st.lv - 1)], ["in", "+", "zoom in", () => setLevel(st.lv + 1)], ["all", "see all", null, () => setLevel(0)], ["to", null, null, () => reset()]].forEach(([k, text, aria, act]) => {
     const b = (BT[k] = h("button", `hfy-bt__tool is-${k}`, { type: "button", "aria-label": aria }, text));
     b.onclick = () => b.getAttribute("aria-disabled") === "true" || act();
     tools.append(b);
@@ -118,7 +115,7 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
   function draw(centre = true) {
     const wide = paneMq.matches;
     const m = bigModel(idx, st.f);
-    const L = bigLayout(m, st.lv, { sibsOpen: st.sibs, ggp: st.ggp });
+    const L = bigLayout(m, st.lv, { sibsOpen: st.sibs });
     const key = (document.activeElement && stage.contains(document.activeElement) && document.activeElement.dataset.k) || null;
     root.classList.toggle("is-pane", wide);
     root.dataset.level = st.lv;
@@ -129,9 +126,8 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
     if (key) canvas.querySelector(`[data-k="${key}"]`)?.focus({ preventScroll: true });
     // toolbar: aria-disabled at the limits, aria-pressed on the two toggles
     const lim = { out: st.lv === 0, in: st.lv === 3, to: atStart() };
-    for (const k in BT) { if (k in lim) BT[k].setAttribute("aria-disabled", String(lim[k])); if (k === "all" || k === "ggp") BT[k].setAttribute("aria-pressed", String(k === "all" ? st.lv === 0 : st.ggp)); }
+    for (const k in BT) { if (k in lim) BT[k].setAttribute("aria-disabled", String(lim[k])); if (k === "all") BT[k].setAttribute("aria-pressed", String(st.lv === 0)); }
     BT.to.textContent = `back to ${first(home())}`;
-    BT.ggp.hidden = !L.canShowGgp;
     size.textContent = `size: ${L.size.name}`;
     const prev = hg().at(-1);
     back.setAttribute("aria-label", prev ? `back to ${first(prev)}` : came() ? `back to ${first(came())}'s page` : "back");

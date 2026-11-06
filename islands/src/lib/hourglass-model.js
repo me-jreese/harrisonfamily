@@ -42,7 +42,7 @@ export const COPY = {
   also: "also with",
   bothSides: "both sides",
   bothAria: "on both sides of the family",
-  seeBig: "see them in the big tree",
+  seeOutline: "see them in the outline",
   openBig: "open the big tree",
   prefer: "prefer a list?",
   outline: "outline",
@@ -58,12 +58,12 @@ export const COPY = {
 
 // kind -> "male|female|neutral"
 const WORDS = {
-  parent: "father|mother|parent", gp: "grandfather|grandmother|grandparent", ggp: "great-grandfather|great-grandmother|great-grandparent",
+  parent: "father|mother|parent", gp: "grandfather|grandmother|grandparent",
   sib: "brother|sister|sibling", half: "half brother|half sister|half sibling", child: "son|daughter|child", gk: "grandson|granddaughter|grandchild",
-  wed: "husband|wife|spouse", step: "stepfather|stepmother|step-parent"
+  wed: "husband|wife|spouse"
 };
 
-/** The relationship word for a kind (parent, gp, ggp, sib, half, child, gk, wed, step) and a sex ("m", "f", else neutral). */
+/** The relationship word for a kind (parent, gp, sib, half, child, gk, wed) and a sex ("m", "f", else neutral). */
 export const relWord = (kind, sex) => WORDS[kind].split("|").at([..."mf"].indexOf(sex)); // -1 reads the last: the neutral word
 
 /** "husband" / "wife" / "spouse" for a married union, "partner" for every other type. `sex` is the partner's. */
@@ -285,7 +285,7 @@ export function familyModel(idx, id) {
     noParents: !pu,
     parentsGhost: pu ? null : ghost(COPY.parentsNotKnown),
     sides: pu ? sides : null,
-    both: { ids: [...bothIds], shared, note: shared.length ? { text: sharedText(idx, idx.unions.get(shared[0].unionId), shared[0].kids), button: COPY.seeBig } : null },
+    both: { ids: [...bothIds], shared, note: shared.length ? { text: sharedText(idx, idx.unions.get(shared[0].unionId), shared[0].kids), button: COPY.seeOutline } : null },
     siblings: { list: siblings, text: sibText(siblings), count: siblings.length },
     partners,
     blocks,

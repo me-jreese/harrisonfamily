@@ -112,7 +112,7 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
     let api = null;
     const o = first.current;
     loadHourglass().then(
-      (m) => { if (live) api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: o.sync }); },
+      (m) => { if (live) api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, links: o.links, notice: o.notice, sync: o.sync }); },
       () => { if (live) { console.error("HFY tree: HOURGLASS_CHUNK_FAILED"); o.onFailed(); } }
     );
     return () => { live = false; api?.destroy(); };

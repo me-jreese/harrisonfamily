@@ -59,9 +59,9 @@ test("the strings include the ones the copy list names, built from the fixture's
   for (const s of [
     "father's side", "mother's side", "parents not known yet.", "father not known yet.", "her parents not known yet.", "his parents not known yet.", "not known yet.",
     "1 brother", "6 brothers and sisters", "+5 more children", "show fewer", "grandchildren: Ivy, Jory and Kit", "grandchildren: Arlo, Briar, Cyril, Dove, Ezra and 4 more",
-    "see them in the big tree", "wife", "partner", "stepmother", "father's partner", "mother's partner", "half brother, father's side", "half sister, mother's side",
-    "half sibling, mother's side", "great-grandfather", "great-grandmother", "grandchild", "4 more grandchildren. open the big tree", "hide brothers and sisters",
-    "great-grandparents", "grandparents", "parents", "children", "grandchildren", "b. 1950", "1920–1990",
+    "see them in the outline", "wife", "partner", "half brother, father's side", "half sister, mother's side",
+    "half sibling, mother's side", "grandchild", "4 more grandchildren. open the big tree", "hide brothers and sisters",
+    "grandparents", "parents", "children", "grandchildren", "b. 1950", "1920–1990",
     "Delphine Eastlake, grandmother, father's side, on both sides of the family", "Tamsin Alder, this person. open the big tree", "Tamsin Alder, in the middle now", "Rowan Alder, father",
     "Kit Larkspur, grandchild, Orrin's child", "2 more of Olwen's children. put Olwen in the middle", "6 brothers and sisters. show them"
   ]) assert.ok(all.has(s), `no string reads ${JSON.stringify(s)}`);
@@ -97,4 +97,27 @@ test("the banned-word check itself catches each banned word (and not 'graduated'
   for (const w of ["node", "graph", "chart", "pedigree", "collapse", "focus", "re-centre", "living", "deceased", "unknown", "N/A"]) assert.match(`the ${w} here`, BANNED, w);
   assert.doesNotMatch("grandparents and a brother", BANNED);
   assert.doesNotMatch("Wystan Dunmere, son with Alma", BANNED);
+});
+
+// The big tree's own strings are inline literals in lib/tree-hourglass-big.js (no copy object: the keys cost bytes under the 25 KB budget), so the same two
+// checks read the literals from the source: every quoted or template string of it, comments gone, is lower case and has no banned word. Strings that are
+// code, not words (the `focus` address parameter, the Escape key name), are named here.
+test("the big tree's inline strings are lower case and have no banned word", async () => {
+  const { transform } = await import("esbuild");
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/lib/tree-hourglass-big.js", import.meta.url), "utf8");
+  const { code } = await transform(src, { loader: "js" });
+  const CODE = new Set(["focus", "Escape", "popstate", "ggp"]);
+  const found = [...code.matchAll(/"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)].map((m) => (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, "x").replace(/\\(?:x([0-9A-Fa-f]{2})|u([0-9A-Fa-f]{4}))/g, (_, a, b) => String.fromCharCode(parseInt(a || b, 16)))).filter((s) => s && !CODE.has(s));
+  assert.ok(found.length > 40, `only ${found.length} literals were read`);
+  for (const s of found) {
+    assert.doesNotMatch(s, BANNED, `a banned word in ${JSON.stringify(s)}`);
+    assert.equal(s, s.toLowerCase(), `capitals in ${JSON.stringify(s)}`);
+  }
+  for (const s of ["the family tree", "zoom in", "zoom out", "see all", "great-grandparents", "already in the middle", "how are we related?", "see this as", "see this family as", "the whole-family poster", "whose page you came from", "the person whose page you came from",
+    "tap someone to put them in the middle. the buttons zoom. the back button takes you to who you had before."]) {
+    if (s === "great-grandparents") assert.ok(!found.includes(s), "the great-grandparents button is cut");
+    else assert.ok(found.includes(s), `the big tree has no string ${JSON.stringify(s)}`);
+  }
+  for (const s of ["now centred on x", "open x's page", "back to x", "back to x's page", "size: x", "from x's page"]) assert.ok(found.includes(s), `the big tree has no string ${JSON.stringify(s)}`);
 });

@@ -20,7 +20,7 @@ const FACE_GAP = 4;
 const rowsOf = (layout, kind) => layout.rows.filter((r) => r.kind === kind);
 const kinds = (layout) => layout.rows.map((r) => r.kind);
 const cellsOf = (row) => (row.cells || []).filter((c) => c.item);
-const stripKey = (s) => `${s.x},${s.y},${s.w},${s.h}${s.dashed ? ",dashed" : ""}${s.rep ? ",rep" : ""}`;
+const stripKey = (s) => `${s.x},${s.y},${s.w},${s.h}${s.dashed ? ",dashed" : ""}`;
 
 function assertNoOverlap(cells, W, label) {
   const byRow = new Map();
@@ -66,7 +66,7 @@ test("comb: stems, one bar and drops, 2 px strips centred on their x", () => {
   const c = comb([40], [20, 60], 28);
   assert.deepEqual(c.map(stripKey), ["19,13,42,2", "39,0,2,14", "19,14,2,14", "59,14,2,14"]);
   assert.deepEqual(comb([50], [50], 28).map(stripKey), ["49,0,2,14", "49,14,2,14"], "no bar for a straight line");
-  assert.ok(comb([40], [20], 28, true, true).every((s) => s.dashed && s.rep));
+  assert.ok(comb([40], [20], 28, true).every((s) => s.dashed));
 });
 
 test("the small tree at 375: four columns of 79.75 with 8 px gaps, parents span two, the person's row is 1 : 1.4 : 1", () => {
@@ -214,7 +214,7 @@ test("case: the same ancestors on both sides. the note is the first row, and the
   const L = smallLayout(model("pedigree"), { width: 343 });
   assert.equal(L.rows[0].kind, "note");
   assert.match(L.rows[0].text, /^Delphine and Everett were sister and brother, so /);
-  assert.equal(L.rows[0].button, "see them in the big tree");
+  assert.equal(L.rows[0].button, "see them in the outline");
   assert.deepEqual(L.rows[2].cells.filter((c) => c.item.both).map((c) => c.item.name), ["Delphine Eastlake", "Everett Eastlake"]);
   assert.equal(kinds(smallLayout(model("full"), { width: 343 }))[0], "cards", "no note for a family that is not on both sides");
 });
@@ -339,15 +339,9 @@ test("text: names are short below medium and full from medium; faces only has no
   assert.deepEqual([names(0).showBoth, names(1).showBoth, names(2).showBoth], [false, true, true]);
 });
 
-test("the parents' other partners show from medium up, never below", () => {
+test("the parents' other partners are cut (the budget, io's order): the parents' row holds the parents at every size", () => {
   const m = model("partners");
-  const others = (lv) => bigLayout(m, lv, {}).nodes.filter((n) => n.g === -1).map((n) => n.card?.name);
-  assert.deepEqual(others(1), ["Edric Dunmere", "Marta Fennick"]);
-  assert.deepEqual(others(2), ["Fern Oakley", "Edric Dunmere", "Marta Fennick", "Rolf Cobbler"]);
-  assert.deepEqual(others(3), others(2));
-  const L = bigLayout(m, 2, {});
-  assert.equal(L.nodes.find((n) => n.card?.name === "Fern Oakley").card.word, "stepmother");
-  assert.equal(L.nodes.find((n) => n.card?.name === "Rolf Cobbler").card.word, "mother's partner");
+  for (let lv = 0; lv <= 3; lv += 1) assert.deepEqual(bigLayout(m, lv, {}).nodes.filter((n) => n.g === -1).map((n) => n.card?.name), ["Edric Dunmere", "Marta Fennick"], `level ${lv}`);
 });
 
 test("all partners sit in the person's row: the first right beside the person, each union with its own bracket, 7 px lower each time", () => {
@@ -361,15 +355,15 @@ test("all partners sit in the person's row: the first right beside the person, e
   assert.equal(ys[0] - (me.top + me.height), 10);
 });
 
-test("half brothers and sisters hang dashed; full ones solid; the dashed line leaves the shared parent's other union at medium and up", () => {
+test("half brothers and sisters hang dashed from the shared parent; full ones solid", () => {
   const m = model("siblings");
   const dashedAt = (lv, sibsOpen) => bigLayout(m, lv, { sibsOpen }).strips.filter((s) => s.dashed).length;
   assert.ok(dashedAt(2, true) > dashedAt(2, false), "opened: the half brothers and sisters add dashed lines");
-  assert.ok(dashedAt(1, true) > dashedAt(1, false), "below medium the other partner is not shown, the dashed line leaves the parent's card");
+  assert.ok(dashedAt(1, true) > dashedAt(1, false), "the dashed line leaves the shared parent's card at every size");
   const full = model("full");
   assert.equal(bigLayout(full, 2, { sibsOpen: true }).strips.filter((s) => s.dashed).length, 0, "full brothers and sisters hang solid from the parents' bracket");
   const L = bigLayout(m, 2, { sibsOpen: true });
-  assert.ok(L.rings.length >= 4, "the parents' bracket, a dashed bracket to each other partner, grandparents");
+  assert.ok(L.rings.length >= 2, "the parents' bracket and the father's parents' bracket");
   // full siblings are on the left of the person with the father's half siblings; the mother's half siblings after the partners
   const row0 = L.nodes.filter((n) => n.g === 0 && n.kind === "person").map((n) => n.card.name);
   assert.deepEqual(row0, ["Cecily Kestrel", "Emrys Kestrel", "Gareth Kestrel", "Hilda Kestrel", "Dorian Kestrel", "Jessamy Rowanford", "Kai Rowanford"]);
@@ -402,48 +396,16 @@ test("a child with no grandchildren is one card wide; grandchildren sit under th
   for (let i = 1; i < kids.length; i += 1) assert.ok(kids[i] - kids[i - 1] >= L.size.nw + L.size.gx - EPS);
 });
 
-test("great-grandparents: off by default, drawn once with gold lines to both grandparents when shared", () => {
+test("great-grandparents are cut (the budget, io's order): no row, no gold line, no button; the both-sides tags stay", () => {
   const m = model("pedigree");
-  const off = bigLayout(m, 2, {});
-  assert.equal(off.nodes.filter((n) => n.g === -3).length, 0);
-  assert.equal(off.canShowGgp, true, "shared ancestors offer the button");
-  assert.equal(bigLayout(model("full"), 2, {}).canShowGgp, false);
-  assert.equal(bigLayout(model("full"), 2, { ggp: true }).canShowGgp, true);
-  const on = bigLayout(m, 2, { ggp: true });
-  const gg = on.nodes.filter((n) => n.g === -3);
-  assert.deepEqual(gg.map((n) => [n.card.name, n.card.word, n.showBoth]), [["Gideon Eastlake", "great-grandfather", true], ["Ottoline Juniper", "great-grandmother", true]]);
-  const gold = on.strips.filter((s) => s.rep);
-  assert.ok(gold.length >= 4, "a bracket and a comb to both children");
-  assert.equal(off.strips.filter((s) => s.rep).length, 0);
-  assert.ok(on.rings.length > off.rings.length);
-  assert.ok(on.labels.some((l) => l.text === "great-grandparents"));
-  assert.equal(off.labels.some((l) => l.text === "great-grandparents"), false);
-  // The pair sits above the middle of its two children.
-  const kids = on.nodes.filter((n) => n.g === -2 && n.card.both);
-  assert.ok(Math.abs((gg[0].cx + gg[1].cx) / 2 - (kids[0].cx + kids[1].cx) / 2) < EPS);
-});
-
-test("great-grandparents of unrelated grandparents are pushed apart so no two cards overlap", () => {
-  const g = indexGraph({
-    schemaVersion: 1,
-    people: [["f", "m"], ["m", "f"], ["x", "u"], ["gp1", "m"], ["gp2", "f"], ["gp3", "m"], ["gp4", "f"], ["g1", "m"], ["g2", "f"], ["g3", "m"], ["g4", "f"], ["g5", "m"], ["g6", "f"], ["g7", "m"], ["g8", "f"]].map(([id, sex]) => ({ id, name: `${id} Sample`, given: id, surname: "Sample", sex })),
-    unions: [
-      { id: "uf", type: "married", partners: ["f", "m"], children: [{ id: "x", rel: {} }] },
-      { id: "ua", type: "married", partners: ["gp1", "gp2"], children: [{ id: "f", rel: {} }] },
-      { id: "ub", type: "married", partners: ["gp3", "gp4"], children: [{ id: "m", rel: {} }] },
-      { id: "u1", type: "married", partners: ["g1", "g2"], children: [{ id: "gp1", rel: {} }] },
-      { id: "u2", type: "married", partners: ["g3", "g4"], children: [{ id: "gp2", rel: {} }] },
-      { id: "u3", type: "married", partners: ["g5", "g6"], children: [{ id: "gp3", rel: {} }] },
-      { id: "u4", type: "married", partners: ["g7", "g8"], children: [{ id: "gp4", rel: {} }] }
-    ]
-  });
-  const m = familyModel(g, "x");
-  assert.deepEqual(m.both, { ids: [], shared: [], note: null });
-  for (let lv = 0; lv <= 3; lv += 1) {
-    const L = bigLayout(m, lv, { ggp: true });
-    assert.equal(L.nodes.filter((n) => n.g === -3).length, 8);
-    assertBigGeometry(L, `eight great-grandparents at ${lv}`);
+  for (const opts of [{}, { ggp: true }]) {
+    const L = bigLayout(m, 2, opts);
+    assert.equal(L.nodes.filter((n) => n.g === -3).length, 0);
+    assert.equal(L.canShowGgp, undefined);
+    assert.equal(L.labels.some((l) => l.text === "great-grandparents"), false);
+    assert.deepEqual(L.nodes.filter((n) => n.showBoth).map((n) => n.card.name), ["Delphine Eastlake", "Everett Eastlake"]);
   }
+  assert.equal(m.ggp, undefined);
 });
 
 test("a parent with no recorded parents: a dashed ghost one row up and a dashed line to the parent; no parents: a dashed card and a dashed stub", () => {
@@ -498,7 +460,7 @@ test("every viewport of the boards: the default size lays out, scrolls to the pe
 
 test("the big tree has the model's copy for chips and ghosts, and row labels come from COPY", () => {
   const L = bigLayout(model("pedigree"), 2, { ggp: true });
-  assert.deepEqual(L.labels.map((l) => l.text), [BIG_COPY.rows[-3], BIG_COPY.rows[-2], BIG_COPY.rows[-1]]);
+  assert.deepEqual(L.labels.map((l) => l.text), [BIG_COPY.rows[-2], BIG_COPY.rows[-1]]);
 });
 
 // Review fixes (pass 1, round 2): unique connectors, the closed chip's line, offsets that fit the gap, see all and the scroll target, the ggp rule.
@@ -538,7 +500,7 @@ test("no connector is drawn twice: strips and rings are unique in every case at 
   }
 });
 
-test("half brothers and sisters of one other union share one bracket and one comb: a second one adds a drop, not a bracket", () => {
+test("half brothers and sisters of one shared parent share one comb: a second one adds a drop, not a bracket", () => {
   const withHalves = (n) => {
     const kids = Array.from({ length: n }, (_, i) => `h${i}`);
     return familyModel(indexGraph({
@@ -552,8 +514,8 @@ test("half brothers and sisters of one other union share one bracket and one com
   };
   const one = bigLayout(withHalves(2), 2, { sibsOpen: true });
   const open = bigLayout(withHalves(3), 2, { sibsOpen: true });
-  assert.equal(open.rings.length, one.rings.length, "the parents' bracket and one for the father's other partner, however many half brothers there are");
-  assert.equal(open.rings.length, 2);
+  assert.equal(open.rings.length, one.rings.length, "the parents' bracket only, however many half brothers there are");
+  assert.equal(open.rings.length, 1);
   assert.equal(open.strips.length - one.strips.length, 1, "each extra half brother adds one drop");
   assert.equal(new Set(open.strips.map(stripKey)).size, open.strips.length);
   for (let lv = 0; lv <= 3; lv += 1) assertBigGeometry(bigLayout(withHalves(3), lv, { sibsOpen: true }), `three half brothers at ${lv}`);
@@ -629,30 +591,4 @@ test("scroll target: the person is centred, and the offsets clamp to the canvas 
     assert.ok(t.left >= 0 && t.left <= Math.max(0, L.width - vp.width) && t.top >= 0 && t.top <= Math.max(0, L.height - vp.height), `${name}: inside the canvas`);
     if (t.left > 0 && t.left < L.width - vp.width) assert.ok(Math.abs(t.left + vp.width / 2 - L.centre.x) < EPS, `${name}: centred sideways when it can be`);
   }
-});
-
-test("canShowGgp: offered when the great-grandparents are shared (brother and sister grandparents, or one grandparent under both parents) and recorded", () => {
-  assert.equal(bigLayout(model("pedigree"), 2, {}).canShowGgp, true);
-  // One grandparent (gx) under both parents, and that grandparent's own parents recorded: the rule is the shared great-grandparents, not both.shared.
-  const g = indexGraph({
-    schemaVersion: 1,
-    people: [["x", "u"], ["f", "m"], ["m", "f"], ["gx", "m"], ["ga", "f"], ["gb", "f"], ["z1", "m"], ["z2", "f"]].map(([id, sex]) => ({ id, name: `${id} Sample`, given: id, surname: "Sample", sex })),
-    unions: [
-      { id: "u0", type: "married", partners: ["f", "m"], children: [{ id: "x", rel: {} }] },
-      { id: "ua", type: "married", partners: ["gx", "ga"], children: [{ id: "f", rel: {} }] },
-      { id: "ub", type: "married", partners: ["gx", "gb"], children: [{ id: "m", rel: {} }] },
-      { id: "uz", type: "married", partners: ["z1", "z2"], children: [{ id: "gx", rel: {} }] }
-    ]
-  });
-  const both = familyModel(g, "x");
-  assert.equal(both.both.shared.length, 0, "no brother and sister pair among the grandparents");
-  assert.equal(both.both.note, null);
-  assert.deepEqual(both.ggp.map((z) => z.shared), [true], "but the grandparent's own parents are on both sides");
-  assert.equal(bigLayout(both, 2, {}).canShowGgp, true);
-  const on = bigLayout(both, 2, { ggp: true });
-  assert.equal(on.nodes.filter((n) => n.g === -3).length, 2);
-  assertBigGeometry(on, "one grandparent under both parents, great-grandparents on");
-  // Under both parents with no recorded parents of their own, there is nothing to offer; so for unshared families.
-  assert.equal(bigLayout(model("bothSides"), 2, {}).canShowGgp, false);
-  for (const c of ["full", "oneParent", "noParents", "large", "alone"]) assert.equal(bigLayout(model(c), 2, {}).canShowGgp, false, c);
 });

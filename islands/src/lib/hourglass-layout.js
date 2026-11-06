@@ -1,12 +1,12 @@
 // The hourglass tree's small-tree rows (HFY-TSK-379, flag familyVizHourglass; DIGEST sections 2, 6 and 7). PURE: numbers and plain records in, plain
 // records out; no DOM, no fetch. A plain-DOM renderer reads these records and the model from hourglass-model.js and draws them, so no pass
 // re-derives a relationship or a line. CSS grid places the cards (a cell names its column and span), so the rows carry no pixel extents; the
-// connectors are 2 px strips, {x, y, w, h, dashed, rep}, drawn under the cards (never SVG) from the same column maths the grid uses, so names
-// can wrap without breaking a line. `dashed` means "not known yet" or a half-brother's or half-sister's other marriage, `rep` (gold) means
-// "the same people on both sides".
+// connectors are 2 px strips, {x, y, w, h, dashed}, drawn under the cards (never SVG) from the same column maths the grid uses, so names
+// can wrap without breaking a line. `dashed` means "not known yet" or a half-brother's or half-sister's other marriage. (T-Spec's gold "same people on
+// both sides" line belonged to the big tree's great-grandparents, which are cut; the tag says it.)
 //
 //   smallLayout(model, {width, kidsOpen, sibsOpen})   the small tree's rows for one content width (343 at a 375 phone, 288 at 320)
-//   comb(tops, drops, h, dashed, rep)                 the stem, bar and drops between two rows
+//   comb(tops, drops, h, dashed)                      the stem, bar and drops between two rows
 //
 // The big tree (bigLayout, seeAll, scrollTarget, SIZES, defaultLevel) is in hourglass-big.js, so the person page's chunk never carries it.
 //
@@ -25,12 +25,12 @@ export const BAND_INSET = 9;
  * A comb between two rows `h` apart: a stem down from each x in `tops` to the middle, one bar across them and `drops`, and a drop from the
  * middle to each x in `drops`. Strips are centred on their x. Returns [] when there is nothing to join.
  */
-export function comb(tops, drops, h, dashed = false, rep = false) {
+export function comb(tops, drops, h, dashed = false) {
   const xs = [...tops, ...drops];
   const ym = Math.round(h / 2);
   const mn = Math.min(...xs);
   const mx = Math.max(...xs);
-  const s = (x, y, w, h2) => ({ x, y, w, h: h2, dashed, rep });
+  const s = (x, y, w, h2) => ({ x, y, w, h: h2, dashed });
   return xs.length ? [...(mx - mn > 1 ? [s(mn - 1, ym - 1, mx - mn + 2, LINE)] : []), ...tops.map((x) => s(x - 1, 0, LINE, ym)), ...drops.map((x) => s(x - 1, ym, LINE, h - ym))] : [];
 }
 

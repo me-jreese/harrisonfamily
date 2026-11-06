@@ -2,13 +2,16 @@
 // plain records out; no DOM, no fetch. It lives apart from hourglass-layout.js so the person page's chunk, which draws only the small tree,
 // never carries the big tree (the chunk budget is about 25 KB; see the size evidence in the pass report): the big tree's chunk imports this file.
 //
-//   bigLayout(model, level, {sibsOpen, ggp})   the big tree: nodes, strips, rings, row labels, canvas size, the centre
+//   bigLayout(model, level, {sibsOpen})        the big tree: nodes, strips, rings, row labels, canvas size, the centre
 //   seeAll(model, opts, viewport)              "see all": the faces-only layout and whether it fits the viewport
 //   scrollTarget(layout, viewport)             where to scroll so the person sits in the middle of the viewport
 //   defaultLevel(viewportWidth), SIZES         the four big-tree card sizes and the one a viewport starts at
-//   bigModel(index, id)                        the model of hourglass-model.js plus what only the big tree draws: the parents' other
-//                                              partners (`sides[i].others`), the great-grandparents (`ggp`, a grandparent's `up`) and `focus.ariaBig`
-import { COPY, card, familyModel, parentUnion, partnersOf, relWord } from "./hourglass-model.js";
+//   bigModel(index, id)                        the model of hourglass-model.js plus `focus.ariaBig`, the big tree's one extra
+// The great-grandparents (T-Spec's gold lines, the `great-grandparents` button and `&ggp=1`) are CUT: the second cut of io's order (T-Copy "cut first"), made to
+// keep the hourglass script under 25 KB minified (tests/tree-budget.test.mjs has the bytes). The "both sides" note and tags stay; the note points at the outline.
+// The parents' other partners (T-Spec's step-parent cards beside the parents, medium and up) are CUT too: the third cut of that order. Half-brothers and half-sisters
+// still appear, hung dashed from the shared parent.
+import { COPY, familyModel } from "./hourglass-model.js";
 
 const LINE = 2; // the one line weight (px), as hourglass-layout.js: the big tree does not import the small tree's layout
 const RING = 10;
@@ -16,46 +19,15 @@ const PAD = 24;
 
 /** The big tree's own strings (T-Copy): the row names on the ground and the chips and names that only it has. */
 export const BIG_COPY = {
-  rows: { "-3": "great-grandparents", "-2": "grandparents", "-1": "parents", 1: "children", 2: "grandchildren" },
+  rows: { "-2": "grandparents", "-1": "parents", 1: "children", 2: "grandchildren" },
   inMiddle: (name) => `${name}, in the middle now`,
   moreOfChildren: (n, first) => `${n} more of ${first}'s children. put ${first} in the middle`
 };
 
-/** What a parent's other partner is to the focus person: "stepmother" for a married union, else "father's partner" / "mother's partner". */
-export const stepWord = (unionType, parentSex, sex) => (unionType === "married" ? relWord("step", sex) : `${parentSex === "f" ? "mother's" : parentSex === "m" ? "father's" : "parent's"} partner`);
-
-/**
- * The model of one focus person for the big tree: familyModel plus `sides[i].others` ([card with `unionIds`] the parent's other partners with step
- * words), `ggp` ([{unionId, shared, slots:[card|null, card|null]}] the great-grandparents, one entry per union of a grandparent's parents; `shared`
- * when two or more grandparents are its children) and, on each grandparent card, `up` (the id of that union).
- */
+/** The model of one focus person for the big tree: familyModel plus `focus.ariaBig`, the name read aloud for the person in the middle. */
 export function bigModel(idx, id) {
   const m = familyModel(idx, id);
-  if (!m) return null;
-  const pu = parentUnion(idx, id);
-  const byUnion = new Map();
-  const sexOf = (x) => idx.people.get(x).sex;
-  m.focus.ariaBig = BIG_COPY.inMiddle(m.focus.name);
-  for (const s of m.sides || []) {
-    s.others = [];
-    if (s.parent.ghost) continue;
-    for (const o of partnersOf(idx, s.parent.id)) {
-      if (pu.partners.includes(o.id)) continue;
-      const unions = o.unions.filter((u) => u !== pu);
-      s.others.push(card(idx, o.id, "spouse", stepWord(o.type, sexOf(s.parent.id), sexOf(o.id)), { unionIds: unions.map((u) => u.id) }));
-    }
-    for (const g of s.grandparents || []) {
-      const up = g.ghost ? null : parentUnion(idx, g.id);
-      if (!up) continue;
-      g.up = up.id;
-      if (!byUnion.has(up.id)) byUnion.set(up.id, []);
-      byUnion.get(up.id).push(g.id);
-    }
-  }
-  m.ggp = [...byUnion].map(([unionId, kids]) => {
-    const shared = kids.length > 1; // a grandparent under both sides counts twice
-    return { unionId, shared, slots: idx.unions.get(unionId).slots.map((g) => (g ? card(idx, g, "grandparent", relWord("ggp", sexOf(g)), { both: shared }) : null)) };
-  });
+  if (m) m.focus.ariaBig = BIG_COPY.inMiddle(m.focus.name);
   return m;
 }
 
@@ -70,21 +42,19 @@ export const SIZES = [
 /** The size a viewport starts at: medium from 700 px, else small. */
 export const defaultLevel = (viewportWidth) => (viewportWidth >= 700 ? 2 : 1);
 
-const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
-
 /**
  * The big tree at one of the four sizes (`level` 0 to 3), around the model's focus person. `sibsOpen` opens the brothers and sisters beside the
- * person; `ggp` shows the great-grandparents. Positions are in card units inside, then px: a card's x is x * (width + column gap).
- * Returns {level, size, nodes, strips, rings, labels, width, height, centre, canShowGgp}:
+ * person. Positions are in card units inside, then px: a card's x is x * (width + column gap).
+ * Returns {level, size, nodes, strips, rings, labels, width, height, centre}:
  *   nodes   [{key, kind, g, left, top, width, height, cx, ...}] in reading order (ancestors, the person's row, descendants):
  *             kind "person" {card, role, name (full from medium, short below), text (false at faces only), showBoth, current, aria}
  *             kind "chip"   {role, label, aria, expanded, act ("sibs" or "go"), target}   brothers and sisters, "+N more" grandchildren
  *             kind "ghost"  {text, label ("?" at faces only), tell (offers "know who? tell us")}
- *   strips  [{x, y, w, h, dashed, rep}] under the cards      rings [{cx, cy, size}] on the marriage brackets
+ *   strips  [{x, y, w, h, dashed}] under the cards      rings [{cx, cy, size}] on the marriage brackets
  *   labels  [{text, x, y, g}] the row names on the ground    centre {x, y} the person's centre in canvas px
- * The parents' other partners show from medium (level 2). Half-brothers and half-sisters hang dashed from the shared parent's other union.
+ * Half-brothers and half-sisters hang dashed from the shared parent.
  */
-export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) {
+export function bigLayout(model, level, { sibsOpen = false } = {}) {
   const lv = Math.max(0, Math.min(3, Math.trunc(level) || 0));
   const L = SIZES[lv];
   const unit = L.nw + L.gx;
@@ -113,10 +83,9 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
   else {
     model.sides.forEach((s) => {
       const x = s.i === 0 ? -0.5 : 0.5;
-      const sl = { s, x, others: [], gp: null, gx: 0 };
+      const sl = { s, x, gp: null, gx: 0 };
       slots.push(sl);
       if (s.parent.ghost) ghostItem(s.parent, -1, x); else person(s.parent, -1, x);
-      if (lv >= 2 && !s.parent.ghost) s.others.forEach((o, j) => { const ox = s.i === 0 ? -1.5 - j : 1.5 + j; sl.others.push({ o, x: ox }); person(o, -1, ox); });
     });
     for (const sl of slots) {
       if (sl.s.parent.ghost) continue;
@@ -128,30 +97,6 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
         if (gc.ghost) ghostItem(gc, -2, x); else person(gc, -2, x);
         return { x, ghost: !!gc.ghost };
       });
-    }
-  }
-  // Great-grandparents, once per union of a grandparent's parents; groups are pushed apart so they never overlap.
-  const gg = [];
-  if (ggp) {
-    const groups = new Map();
-    for (const it of items) {
-      if (it.k !== "person" || it.g !== -2 || !it.card.up) continue;
-      if (!groups.has(it.card.up)) groups.set(it.card.up, []);
-      groups.get(it.card.up).push(it.x);
-    }
-    const list = [...groups].map(([unionId, kids]) => {
-      const m = model.ggp.find((z) => z.unionId === unionId);
-      const cards = m.slots.filter(Boolean);
-      return { unionId, kids, cards, shared: m.shared, want: mean(kids), half: cards.length / 2 };
-    }).filter((z) => z.cards.length).sort((a, b) => a.want - b.want);
-    let edge = -Infinity;
-    for (const z of list) { z.c = Math.max(z.want, edge + z.half); edge = z.c + z.half; }
-    const drift = list.length ? list[list.length - 1].c - list[list.length - 1].want : 0;
-    for (const z of list) {
-      z.c -= drift / 2;
-      z.xs = z.cards.length === 2 ? [z.c - 0.5, z.c + 0.5] : [z.c];
-      z.cards.forEach((c, j) => person(c, -3, z.xs[j]));
-      gg.push(z);
     }
   }
   // Children and grandchildren, in blocks per union that never overlap.
@@ -193,46 +138,43 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
   const PX = (x) => x * unit + sx;
   const strips = [];
   const rings = [];
-  const seg = (x1, y1, x2, y2, dashed = false, rep = false) => {
-    if (Math.abs(y1 - y2) < 0.5) strips.push({ x: Math.min(x1, x2) - 1, y: y1 - 1, w: Math.abs(x2 - x1) + 2, h: LINE, dashed, rep });
-    else strips.push({ x: x1 - 1, y: Math.min(y1, y2), w: LINE, h: Math.abs(y2 - y1), dashed, rep });
+  const seg = (x1, y1, x2, y2, dashed = false) => {
+    if (Math.abs(y1 - y2) < 0.5) strips.push({ x: Math.min(x1, x2) - 1, y: y1 - 1, w: Math.abs(x2 - x1) + 2, h: LINE, dashed });
+    else strips.push({ x: x1 - 1, y: Math.min(y1, y2), w: LINE, h: Math.abs(y2 - y1), dashed });
   };
   const bottom = (x, g) => ({ x: PX(x), y: Y(g) + L.nh });
   // The k-th of n brackets or bars sharing one row gap goes 7 (brackets) or 5 (bars) px lower than the one before, but never more than the
   // gap can hold: with many partners or child blocks the offsets are squeezed to fit, so a strip never leaves the two rows it joins.
   const spread = (k, n, per, room) => (n > 1 ? Math.min(k, n - 1) * Math.min(per, Math.max(0, room) / (n - 1)) : 0);
-  const bracket = (xa, xb, g, k, n, dashed = false, rep = false) => {
+  const bracket = (xa, xb, g, k, n, dashed = false) => {
     const y0 = Y(g) + L.nh;
     const yb = y0 + 10 + spread(k, n, 7, 0.6 * L.gy - 10);
     const a = PX(xa);
     const b = PX(xb);
-    seg(a, y0, a, yb, dashed, rep); seg(b, y0, b, yb, dashed, rep); seg(a, yb, b, yb, dashed, rep);
+    seg(a, y0, a, yb, dashed); seg(b, y0, b, yb, dashed); seg(a, yb, b, yb, dashed);
     rings.push({ cx: (a + b) / 2, cy: yb, size: RING });
     return { x: (a + b) / 2, y: yb };
   };
-  const hang = (mid, xs, gChild, k, n, dashed = false, rep = false) => {
+  const hang = (mid, xs, gChild, k, n, dashed = false) => {
     if (!xs.length) return;
     const top = Y(gChild);
     const yBar = Math.min(Math.max(mid.y + 10, top - L.gy / 2 + spread(k, n, 5, L.gy / 2 - 8)), top - 6);
     const px = xs.map(PX);
-    seg(mid.x, mid.y, mid.x, yBar, dashed, rep);
+    seg(mid.x, mid.y, mid.x, yBar, dashed);
     const mn = Math.min(mid.x, ...px);
     const mx = Math.max(mid.x, ...px);
-    if (mx - mn > 1) seg(mn, yBar, mx, yBar, dashed, rep);
-    for (const x of px) seg(x, yBar, x, top, dashed, rep);
+    if (mx - mn > 1) seg(mn, yBar, mx, yBar, dashed);
+    for (const x of px) seg(x, yBar, x, top, dashed);
   };
   if (model.noParents) seg(PX(0), Y(-1) + L.nh, PX(0), Y(0), true);
   else {
-    // One bracket and one comb per (parent, other partner) pair, however many half brothers and sisters hang from it.
+    // One dashed comb per shared parent, however many half brothers and sisters hang from it.
     const fullCount = sibs.filter((s) => !s.half).length;
     const groups = new Map();
     for (const s of sibs) {
       if (!s.half) continue;
-      const sl = slots[s.halfSide];
-      const ot = sl.others.find((z) => z.o.unionIds.includes(s.unionId));
-      const key = `${s.halfSide}:${ot ? ot.o.id : "-"}`;
-      if (!groups.has(key)) groups.set(key, { sl, ot, xs: [] });
-      groups.get(key).xs.push(sibsOpen ? sibX.get(s.id) : -1);
+      if (!groups.has(s.halfSide)) groups.set(s.halfSide, { sl: slots[s.halfSide], xs: [] });
+      groups.get(s.halfSide).xs.push(sibsOpen ? sibX.get(s.id) : -1);
     }
     // Opened, every group hangs its own half brothers and sisters. Closed, the chip hangs solid when it holds a full one, else dashed from
     // the first group, so the two states draw the same kind of line.
@@ -243,13 +185,12 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
     if (sibs.length && !sibsOpen && fullCount) full.push(-1);
     for (const s of sibLeft) if (!s.half) full.push(sibX.get(s.id));
     hang(mid, full, 0, 0, n);
-    hung.forEach(({ sl, ot, xs }, i) => hang(ot ? bracket(sl.x, ot.x, -1, i + 1, n, true) : bottom(sl.x, -1), xs, 0, i + 1, n, true));
+    hung.forEach(({ sl, xs }, i) => hang(bottom(sl.x, -1), xs, 0, i + 1, n, true));
     for (const sl of slots) {
       if (sl.s.parent.ghost) continue;
       if (sl.gp) { const dashed = sl.gp.some((z) => z.ghost); hang(bracket(sl.gp[0].x, sl.gp[1].x, -2, 0, 1, dashed), [sl.x], -1, 0, 1, dashed); }
       else hang(bottom(sl.gx, -2), [sl.x], -1, 0, 1, true);
     }
-    for (const z of gg) hang(z.xs.length === 2 ? bracket(z.xs[0], z.xs[1], -3, 0, 1, false, z.shared) : bottom(z.xs[0], -3), z.kids, -2, 0, 1, false, z.shared);
   }
   const mids = model.partners.map((_, i) => bracket(0, i + 1, 0, i, model.partners.length));
   for (const bk of blocks) {
@@ -269,8 +210,7 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
   for (let g = gmin; g <= gmax; g += 1) if (BIG_COPY.rows[g]) labels.push({ text: BIG_COPY.rows[g], x: 8, y: Y(g) - 26, g });
   return {
     level: lv, size: L, nodes, strips, rings, labels,
-    width: maxX - minX + 2 * PAD, height: Y(gmax) + L.nh + PAD, centre: { x: PX(0), y: Y(0) + L.nh / 2 },
-    canShowGgp: model.ggp.some((z) => z.shared) || ggp
+    width: maxX - minX + 2 * PAD, height: Y(gmax) + L.nh + PAD, centre: { x: PX(0), y: Y(0) + L.nh / 2 }
   };
 }
 

@@ -31,5 +31,5 @@ export const box = (e, l, t, w, h) => {
   return e;
 };
 
-/** A connector: a 2 px <i> under the cards, from a layout strip {x, y, w, h, dashed, rep}. */
-export const strip = (s) => box(h("i", `hfy-tree__ln ${s.w > s.h ? "is-h" : "is-v"}${s.dashed ? " is-dash" : ""}${s.rep ? " is-rep" : ""}`), s.x, s.y, s.w, s.h);
+/** A connector: a 2 px <i> under the cards, from a layout strip {x, y, w, h, dashed}. */
+export const strip = (s) => box(h("i", `hfy-tree__ln ${s.w > s.h ? "is-h" : "is-v"}${s.dashed ? " is-dash" : ""}`), s.x, s.y, s.w, s.h);

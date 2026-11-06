@@ -71,7 +71,7 @@ export function mountHourglass(host, { graph, id, from = id, links = {} }) {
     };
     const eq = (n) => `repeat(${n}, minmax(0, 1fr))`;
     const out = L.rows.map((r) => {
-      if (r.kind === "note") return h("div", "hfy-tree__note", null, h("span", null, null, r.text), big && h("a", "hfy-tree__lk", { href: bigHref(id, from, "&ggp=1") }, r.button));
+      if (r.kind === "note") return h("div", "hfy-tree__note", null, h("span", null, null, r.text), h("a", "hfy-tree__lk", { href: listHref("outline", id) }, r.button));
       if (r.kind === "cards") return grid(eq(r.cols), r.cells, `hfy-tree__row${r.sides ? " is-cap" : ""}`);
       if (r.kind === "gap") {
         const g = h("div", "hfy-tree__gap", { "aria-hidden": true }, r.strips.map(strip));

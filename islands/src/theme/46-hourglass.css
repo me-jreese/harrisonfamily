@@ -54,11 +54,9 @@
 .hfy-tree__cap { padding-bottom: var(--io-space-1); color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); text-align: center; }
 .hfy-tree__gap { position: relative; flex: none; }
 .hfy-tree__ln { position: absolute; display: block; background: var(--hfy-tree-line); }
-.hfy-tree__ln.is-rep { background: var(--hfy-tree-repeat); }
 .hfy-tree__ln.is-dash { background: none; border: 0 dashed var(--hfy-tree-line); }
 .hfy-tree__ln.is-dash.is-v { border-left-width: var(--hfy-tree-line-w); }
 .hfy-tree__ln.is-dash.is-h { border-top-width: var(--hfy-tree-line-w); }
-.hfy-tree__ln.is-dash.is-rep { border-color: var(--hfy-tree-repeat); }
 
 /* A card: a 2 px edge, a role fill and its ink (8 of the 14 role fills are under 3:1 on the ground, so the edge is the boundary). */
 .hfy-tree__card {
