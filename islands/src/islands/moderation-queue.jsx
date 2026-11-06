@@ -54,7 +54,7 @@ function Queue() {
 
   const load = useCallback(async (which, after) => {
     const ticket = ++live.current;
-    if (!after) { setLoading(true); setProblem(null); }
+    if (!after) { setLoading(true); setProblem(null); setRows([]); setCursor(null); }
     try {
       const page = readPage(await api.get("/moderation", { query: listQuery(which, after) }));
       if (ticket !== live.current) return;
