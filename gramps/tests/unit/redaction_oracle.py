@@ -417,7 +417,7 @@ def _fields(obj, tree, pol, ctx, dob_set, sticky, files, base_obj, holds, fired)
         if not isinstance(el, dict) or "rect" not in el:
             continue
         problem = R.rect_problem(el["rect"], pol)
-        if problem == "full_frame":
+        if problem in ("full_frame", "no_region"):
             el["rect"] = None
             fired.add("media.rect.full_frame")
         elif problem == "degenerate_or_float":

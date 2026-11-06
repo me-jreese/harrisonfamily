@@ -235,6 +235,22 @@
     {
       "changes": [
         {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/regions/2/rect",
+          "render": null
+        }
+      ],
+      "key": "media/95c1e2e76d98047b229a3390d414.json",
+      "rule": "no-region-rect"
+    },
+    {
+      "changes": [
+        {
           "legacy": "Sample Farm",
           "pointer": "/events/0/place/displayName",
           "render": "Exampleville"
@@ -411,6 +427,114 @@
       ],
       "key": "person/I0009.json",
       "rule": "excluded-place"
+    },
+    {
+      "changes": [
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/mediaGallery/0/tags/2/rect",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/mediaGallery/1/tags/2/rect",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/primaryPhoto/tags/2/rect",
+          "render": null
+        }
+      ],
+      "key": "person/I0013.json",
+      "rule": "no-region-rect"
+    },
+    {
+      "changes": [
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/mediaGallery/0/region",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/mediaGallery/0/tags/2/rect",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/primaryPhoto/region",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/primaryPhoto/tags/2/rect",
+          "render": null
+        }
+      ],
+      "key": "person/I0014.json",
+      "rule": "no-region-rect"
+    },
+    {
+      "changes": [
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/mediaGallery/0/tags/2/rect",
+          "render": null
+        },
+        {
+          "legacy": [
+            0,
+            0,
+            100,
+            100
+          ],
+          "pointer": "/primaryPhoto/tags/2/rect",
+          "render": null
+        }
+      ],
+      "key": "person/I0015.json",
+      "rule": "no-region-rect"
     },
     {
       "changes": [
@@ -690,6 +814,10 @@
     "excluded-place": {
       "reference": "BRD2 section 11.1 (5.3), sync.md 5.3, D2-32, Q2-02 item 2",
       "summary": "The renderer never publishes a street-level or home-like place (Street, Building, Number, Farm, or a custom type matching house|home|residence|address|apartment|apt|lot|farm). Its place file is not written, it leaves place/index.json, and every event or place reference to it is re-pointed to the nearest kept ancestor. The live ETL publishes all of them."
+    },
+    "no-region-rect": {
+      "reference": "ruling P4-R16, HFY-TSK-401 (HFY-ISS-028)",
+      "summary": "The renderer reads a MediaRef rectangle the way Gramps does (hfygramps/rect.py): the full frame [0,0,100,100] and a point (x1 == x2 and y1 == y2) are no region, so a tag or region built from one carries rect null. The live ETL copies the stored rectangle. A box with one zero-extent axis and reversed corners are kept as stored on both sides."
     }
   },
   "version": 1

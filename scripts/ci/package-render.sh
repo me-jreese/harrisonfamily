@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/hfy-sync-render.zip: the hfy-sync-render Lambda (handler handler.handler, Python 3.13, arm64) of HFY-TSK-176.
 # Contents: lambda/hfy-sync-render/handler.py and hfy_render/ (the engine), plus the pure-stdlib renderer core it imports from gramps/:
-# hfygramps/__init__.py, hfygramps/scanner.py (the R-18 detector) and hfygramps/render/ (render_site and its helpers). Nothing else of
+# hfygramps/__init__.py, hfygramps/scanner.py (the R-18 detector), hfygramps/rect.py (the tag-rectangle read rule, P4-R16) and hfygramps/render/ (render_site and its helpers). Nothing else of
 # gramps/ ships (no addon, no merge engine, no fixtures, no tests). boto3 comes from the Lambda runtime.
 # The zip is reproducible (sorted entries, fixed mtimes, no extra attributes): the same sources give the same bytes, so the same key.
 # Prints the RenderCodeKey for the app-stack change set, lambda/hfy-sync-render-<first 12 hex of the zip's SHA-256>.zip. A code change is
@@ -16,11 +16,11 @@ STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 cp "$SRC/handler.py" "$STAGE/"
 mkdir -p "$STAGE/hfy_render" "$STAGE/hfygramps/render"
 for f in "$SRC"/hfy_render/*.py; do cp "$f" "$STAGE/hfy_render/"; done
-cp "$CORE/__init__.py" "$CORE/scanner.py" "$STAGE/hfygramps/"
+cp "$CORE/__init__.py" "$CORE/scanner.py" "$CORE/rect.py" "$STAGE/hfygramps/"
 for f in "$CORE"/render/*.py; do cp "$f" "$STAGE/hfygramps/render/"; done
 find "$STAGE" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 # The zip must import on its own: handler, the engine, and the renderer core, with no repository on the path.
-( cd "$STAGE" && python3 -I -c 'import sys; sys.path.insert(0, "."); import handler, hfy_render.engine, hfy_render.privacy, hfygramps.render, hfygramps.scanner' ) \
+( cd "$STAGE" && python3 -I -c 'import sys; sys.path.insert(0, "."); import handler, hfy_render.engine, hfy_render.privacy, hfygramps.render, hfygramps.scanner, hfygramps.rect' ) \
   || { echo "package-render: the staged package does not import" >&2; exit 1; }
 find "$STAGE" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 DIST="$ROOT/dist"

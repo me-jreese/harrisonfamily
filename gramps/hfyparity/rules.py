@@ -31,6 +31,13 @@ RULES: Dict[str, Dict[str, str]] = {
                    "matches the policy.",
         "source": "BRD2 11.1 (5.3), sync.md 5.3, D2-32, Q2-02 item 2; deltas.py RULES",
     },
+    "no-region-rect": {
+        "summary": "The shadow output reads a MediaRef rectangle the way Gramps does (hfygramps/rect.py): the full frame [0,0,100,100] and a "
+                   "point (x1 == x2 and y1 == y2) are no region, so a person's region, a gallery region or a tag rect is null where the "
+                   "legacy export copied the stored rectangle. A box with one zero-extent axis and reversed corners are kept as stored on "
+                   "both sides.",
+        "source": "ruling P4-R16, HFY-TSK-401 (HFY-ISS-028); deltas.py RULES",
+    },
     "media-held-mime": {
         "summary": "A Media object whose type the policy holds whole (a PDF) has no media/<handle>.json and no entry in "
                    "media/index.json in the shadow output.",

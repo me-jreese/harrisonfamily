@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from .. import rect as _rect
 from . import labels
 from .note_tags import normalise_note_text
 from .policy import TextGate, default_text_gate, gated_text, is_private, public_items, public_urls, scrub_attributes
@@ -428,24 +429,19 @@ def _is_int(value: Any) -> bool:
 
 
 def mediaref_rect(raw: Any) -> Optional[List[int]]:
-    """A MediaRef rect exactly as Gramps stores it (`[x1, y1, x2, y2]`, integer percent), or None.
+    """A MediaRef rect exactly as Gramps stores it (`[x1, y1, x2, y2]`, integer percent), or None (`hfygramps.rect.normalize_rect`).
 
-    None means "tagged without an area marked": a missing (`null`) or empty rect, and `[0, 0, 0, 0]`, Gramps' own
-    "no region". Any other four integers are copied exactly: corners are NOT ordered, clamped or validated here,
+    None means "tagged without an area marked", which is what Gramps itself reads as no region (P4-R16): a missing (`null`) or empty
+    rect, the full frame `[0, 0, 100, 100]`, and a point (`x1 == x2` and `y1 == y2`, `[0, 0, 0, 0]` included). Any other four integers
+    are copied exactly: a box with one zero-extent axis is kept as typed, and corners are NOT ordered, clamped or validated here,
     because consumers apply the crop rule. A malformed value (not four integers) is also None.
     """
 
-    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
-        return None
-    if not all(_is_int(v) for v in raw):
-        return None
-    if all(v == 0 for v in raw):
-        return None
-    return [int(v) for v in raw]
+    return _rect.normalize_rect(raw)
 
 
 def rect_is_malformed(raw: Any) -> bool:
-    """True for a stored rect that is neither "no region" (null, empty, all zero) nor four integers."""
+    """True for a stored rect that is neither "no region" (null, empty) nor four integers."""
 
     if raw is None or (isinstance(raw, (list, tuple)) and len(raw) == 0):
         return False
