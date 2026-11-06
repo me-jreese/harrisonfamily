@@ -23,6 +23,7 @@ import { circleIds, loadProposal, visibleProposal } from "./records/proposal-sto
 import { getSyncHead, isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
 import { createGraduation } from "./graduate.js";
+import { createPostGraduation } from "./post-graduate.js";
 import { createModeration } from "./moderation.js";
 import { createChatService, serviceUnauthenticated } from "./chat.js";
 import { createCompositeMemberReader } from "./allowlist-store.js";
@@ -150,6 +151,12 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
+    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the HFY_POST_GRADUATE switch (deps.postGraduate, default off). Best effort after the post's own commit.
+    const postGraduation = createPostGraduation({
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: () => deps.postGraduate === true, now, log,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
+    });
+    const graduatePostPhotos = (post) => afterCommit("post photo graduation", () => postGraduation.graduate(post));
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
     const moderation = createModeration({
       ddb, cmds, table, actor, content, comments, notifier, afterCommit,
@@ -162,7 +169,7 @@ export function createHandler(deps) {
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, comments, moderation, graduation, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**
