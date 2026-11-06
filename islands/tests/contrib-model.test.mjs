@@ -2,8 +2,8 @@
 // reads. Every id and name here is synthetic.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { COPY, PAGE_SIZE, chipFor, countCopy, cursorOf, glyphOf, rowOf, rowsFor, safeHref, subjectPerson, totalOf } from "../src/lib/contrib-model.js";
-import { forgetStats, readPage, readStats } from "../src/lib/contrib-api.js";
+import { COPY, MAX_EMPTY_PAGES, PAGE_SIZE, chipFor, countCopy, cursorOf, glyphOf, rowOf, rowsFor, safeHref, subjectPerson, totalOf } from "../src/lib/contrib-model.js";
+import { forgetStats, readPage, readStats, readVisiblePage } from "../src/lib/contrib-api.js";
 
 const names = new Map([["I9001", "Test Person"], ["I9003", "Ann Other"]]);
 const item = (over) => ({ id: "E1", kind: "post", at: "2026-01-01T00:00:00.000Z", weight: 1, photos: 0, ref: { type: "post", id: "P1" }, href: "/posts/?id=P1", ...over });
@@ -125,4 +125,26 @@ test("the reads: stats once per person, a failure is forgotten; the page asks fo
   assert.deepEqual(await readStats("I9005", flaky), { total: 1 });
   assert.deepEqual(await readPage("I9002", {}, { get: async () => ({}) }), { items: [], cursor: null });
   forgetStats();
+});
+
+test("a page of nothing but hidden entries asks on, for the first page and for a later one; the run stops at a limit", async () => {
+  const pages = { "": [{ id: "A", hidden: true }], c1: [{ id: "B", hidden: true }], c2: [{ id: "C" }], c3: [{ id: "D" }] };
+  const next = { "": "c1", c1: "c2", c2: "c3" };
+  const calls = [];
+  const api = { get: async (_p, o) => { const k = o.query.cursor ?? ""; calls.push(k); return { items: pages[k], cursor: next[k] ?? null }; } };
+  const first = await readVisiblePage("I9002", {}, api);
+  assert.deepEqual(first.items.map((i) => i.id), ["A", "B", "C"]);
+  assert.equal(first.cursor, "c3");
+  assert.deepEqual(calls, ["", "c1", "c2"]);
+  calls.length = 0;
+  const later = await readVisiblePage("I9002", { cursor: "c1" }, api);
+  assert.deepEqual(later.items.map((i) => i.id), ["B", "C"], "the same skip-ahead after the first page");
+  assert.deepEqual(calls, ["c1", "c2"]);
+  // Nothing but hidden entries for ever: at most MAX_EMPTY_PAGES extra pages are asked.
+  let n = 0;
+  const endless = { get: async () => { n += 1; return { items: [{ id: `H${n}`, hidden: true }], cursor: "more" }; } };
+  const stopped = await readVisiblePage("I9002", {}, endless);
+  assert.equal(n, 1 + MAX_EMPTY_PAGES);
+  assert.equal(stopped.items.length, 1 + MAX_EMPTY_PAGES);
+  assert.equal(stopped.cursor, "more");
 });

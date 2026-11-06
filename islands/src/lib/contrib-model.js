@@ -31,6 +31,11 @@ export const countCopy = (n) => {
   return `${x} contribution${x === 1 ? "" : "s"}`;
 };
 
+/**
+ * The kinds `contributions.list` emits are the event kinds of api/src/contrib.js CONTRIB_KINDS: post, comment, proposal_accepted, self_edit,
+ * tag and photo_to_record. `photo` is a counter of `contributions.stats` only (the images attached to a post or a comment, `item.photos`);
+ * it is never a list item, so it has no glyph and no sentence here.
+ */
 /** The glyph each kind draws (a currentColor mask icon, src/contrib.css); an unknown kind gets the plain one. */
 export const GLYPHS = Object.freeze({ post: "post", comment: "comment", self_edit: "edit", proposal_accepted: "accepted", tag: "tag", photo_to_record: "photo" });
 export const glyphOf = (kind) => GLYPHS[kind] ?? "other";
@@ -116,9 +121,13 @@ export function totalOf(stats) {
 
 /**
  * The hero chip: `{ total, text }`, or null to draw nothing (D2-17, IF-16: "0 contributions" shows on member pages, and the chip is hidden
- * only on records that are not members). The API gives no membership answer today, so the rule is conservative: it hides the chip only
- * when the answer says `member: false`, or the page is a deceased person's with nothing credited (an author is always a member, and a
- * deceased person has no account). Anything else, a living person with no contributions included, shows "0 contributions".
+ * only on records that are not members).
+ *
+ * OPEN ISSUE (AC2, not met in full): `contributions.stats` (social.md 7.5) defines no membership field, so the page cannot know who is a
+ * member. This rule is a stopgap, not the BRD's: it honours a `member` boolean if the route ever sends one, and without it hides the chip
+ * only for a deceased person's page with nothing credited (an author is always a member, and a deceased person has no account). A living
+ * record that is not a member still shows "0 contributions". The fix is a `member` field on `contributions.stats` (hfy-contrib-read-api)
+ * or a ruling on this heuristic; replace this rule then.
  */
 export function chipFor(stats, person) {
   const total = totalOf(stats);

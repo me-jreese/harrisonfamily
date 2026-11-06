@@ -15,8 +15,8 @@ import { PersonName } from "./person-name.jsx";
 import { personNames } from "./people-corpus.js";
 import { getMe } from "./me.js";
 import { formatTime, fullTime } from "./time.js";
-import { readPage, readStats } from "./contrib-api.js";
-import { COPY, MAX_EMPTY_PAGES, countCopy, rowsFor, totalOf } from "./contrib-model.js";
+import { readStats, readVisiblePage } from "./contrib-api.js";
+import { COPY, countCopy, rowsFor, totalOf } from "./contrib-model.js";
 
 export function ContribRow({ row }) {
   const named = row.person !== null;
@@ -47,7 +47,10 @@ export function ContributionsFeed({ personId }) {
   const [attempt, setAttempt] = useState(0);
   const live = useRef(true);
   const cursorRef = useRef(null);
-  useEffect(() => () => { live.current = false; }, []);
+  const personRef = useRef(personId);
+  personRef.current = personId;
+  // live is set again on every mount: a remount of the same instance (StrictMode) must not leave it false.
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   useEffect(() => {
     let current = true;
@@ -58,18 +61,15 @@ export function ContributionsFeed({ personId }) {
 
   useEffect(() => {
     let current = true;
+    cursorRef.current = null; // a cursor belongs to one person's feed: never carry it to the next
+    setMore({ loading: false, failed: false });
     setView({ phase: "loading", items: [], cursor: null });
     readStats(personId).then((s) => { if (current) setTotal(totalOf(s)); }, () => { /* no total in the header; the chip is silent too */ });
     (async () => {
       try {
         // A first page of nothing but entries the viewer is not shown asks on, a few pages at most.
-        let page = await readPage(personId);
-        let items = page.items;
-        for (let n = 0; n < MAX_EMPTY_PAGES && page.cursor && !items.some((i) => i && i.hidden !== true); n += 1) {
-          page = await readPage(personId, { cursor: page.cursor });
-          items = items.concat(page.items);
-        }
-        if (current) { cursorRef.current = page.cursor; setView({ phase: "ready", items, cursor: page.cursor }); }
+        const page = await readVisiblePage(personId);
+        if (current) { cursorRef.current = page.cursor; setView({ phase: "ready", items: page.items, cursor: page.cursor }); }
       } catch (e) {
         if (current) setView({ phase: authError(e) ? "signedOut" : "error", items: [], cursor: null });
       }
@@ -82,8 +82,9 @@ export function ContributionsFeed({ personId }) {
     if (!cursor) return;
     setMore({ loading: true, failed: false });
     try {
-      const page = await readPage(personId, { cursor });
-      if (!live.current) return;
+      // The same skip-ahead as the first page: a next page of nothing but hidden entries asks on rather than adding no row.
+      const page = await readVisiblePage(personId, { cursor });
+      if (!live.current || personRef.current !== personId || cursorRef.current !== cursor) return;
       cursorRef.current = page.cursor;
       setView((v) => {
         const seen = new Set(v.items.map((i) => i && i.id));
@@ -91,7 +92,7 @@ export function ContributionsFeed({ personId }) {
       });
       setMore({ loading: false, failed: false });
     } catch {
-      if (live.current) setMore({ loading: false, failed: true });
+      if (live.current && personRef.current === personId) setMore({ loading: false, failed: true });
     }
   }, [personId]);
 

@@ -44,7 +44,9 @@ function fill() {
   if (!host || !latest.personId) return;
   if (mounted && mounted.host === host && mounted.personId === latest.personId && host.isConnected) { render(mounted); return; }
   if (mounted) {
-    try { mounted.root.unmount(); } catch { /* the old host is gone with the old hero */ }
+    // Not synchronously: this runs inside an event that can be dispatched from a render or an effect, and React warns about an unmount there.
+    const old = mounted.root;
+    queueMicrotask(() => { try { old.unmount(); } catch { /* the old host is gone with the old hero */ } });
   }
   mounted = { host, root: createRoot(host), personId: latest.personId };
   render(mounted);
