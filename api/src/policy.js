@@ -94,7 +94,7 @@ export function createGroupResolver({ load, emailsFor, ttlMs = 60_000, now = () 
     }
     return cache.cfg;
   };
-  return async ({ sub, email, emailVerified }) => {
+  const groups = async ({ sub, email, emailVerified }) => {
     if (typeof sub !== "string" || sub === "") return [];
     const c = await cfg();
     const out = [];
@@ -109,4 +109,7 @@ export function createGroupResolver({ load, emailsFor, ttlMs = 60_000, now = () 
     if (c.owners.has(sub)) out.push(OWNER_GROUP);
     return out;
   };
+  /** The gramps-owner subjects (io), from the same cached, fail-closed read: who is told about a moderated record that no member owns. */
+  groups.owners = async () => [...(await cfg()).owners];
+  return groups;
 }

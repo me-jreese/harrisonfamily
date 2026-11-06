@@ -1,0 +1,60 @@
+# shellcheck shell=bash
+# shellcheck disable=SC2034 # CURRENT is read by run.sh's fail()
+# Sourced by run.sh: tests for scripts/moderation/reapply-moderation-hides.sh (HFY-TSK-216). Uses run.sh's helpers (eq, contains, lacks, check) and T.
+# The script runs against its own aws double, which answers the MODQ#open query from a fixture and logs every call: nothing reaches AWS.
+MOD=$ROOT/scripts/moderation/reapply-moderation-hides.sh
+MODSTUB=$T/modstub; mkdir -p "$MODSTUB"
+cat > "$MODSTUB/aws" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$MOD_CALLS"
+case "$1 $2" in
+  "dynamodb query") cat "$MOD_ITEMS" ;;
+  "s3api delete-object") ;;
+  "s3api head-object")
+    key=""; while [ $# -gt 0 ]; do [ "$1" = "--key" ] && key=$2; shift; done
+    grep -qxF "$key" "$MOD_SERVED" 2>/dev/null || { echo "404" >&2; exit 254; } ;;
+  *) echo "unexpected aws call: $*" >&2; exit 99 ;;
+esac
+STUB
+chmod +x "$MODSTUB/aws"
+export MOD_CALLS="$T/mod-calls.log" MOD_ITEMS="$T/mod-items.json" MOD_SERVED="$T/mod-served.txt"
+jq -n '{Items: [
+  {PK: {S: "MOD#note:aaaa"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}},
+  {PK: {S: "MOD#media:bbbb"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}},
+  {PK: {S: "MOD#note:question"}, SK: {S: "META"}, hidden: {BOOL: false}, open: {BOOL: true}},
+  {PK: {S: "MOD#post:01J00000000000000000000000"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}},
+  {PK: {S: "MOD#note:closed"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: false}}]}' > "$MOD_ITEMS"
+mod_run() { : > "$MOD_CALLS"; set +e; OUT=$(PATH="$MODSTUB:$PATH" "$MOD" "$@" 2>&1); RC=$?; set -e; }
+
+CURRENT="moderation re-apply script"
+check "the script exists and is executable (the rollback runbook's fail-closed check passes)" test -x "$MOD"
+mod_run
+eq "no arguments is a usage error" "$RC" 2
+mod_run --table t --site-bucket b --bogus
+eq "an unknown option is a usage error" "$RC" 2
+mod_run --table t --site-bucket b
+eq "the default mode is a dry run: exit 0 with no MediaRef" "$RC" 0
+contains "it names the notes and media files to delete" "$OUT" "would delete: note/aaaa.json"
+contains "...and the media file" "$OUT" "would delete: media/bbbb.json"
+lacks "a question that does not hide, a closed item and a post are left alone" "$OUT" "question"
+lacks "...closed" "$OUT" "closed"
+lacks "...post" "$OUT" "01J000"
+lacks "a dry run deletes nothing" "$(cat "$MOD_CALLS")" "delete-object"
+contains "it reads the open moderation queue" "$(cat "$MOD_CALLS")" "GSI1"
+mod_run --table t --site-bucket b --confirm-reapply
+eq "an apply with no MediaRef exits 0" "$RC" 0
+contains "it deletes the note file" "$(cat "$MOD_CALLS")" "s3api delete-object --region us-west-2 --bucket b --key note/aaaa.json"
+contains "...and the media file" "$(cat "$MOD_CALLS")" "--key media/bbbb.json"
+printf 'note/aaaa.json\n' > "$MOD_SERVED"
+mod_run --table t --site-bucket b --verify
+eq "verify fails while a hidden file is still served" "$RC" 1
+contains "...and names it" "$OUT" "STILL SERVED: note/aaaa.json"
+: > "$MOD_SERVED"
+mod_run --table t --site-bucket b --verify
+eq "verify passes once the files are gone" "$RC" 0
+jq '.Items += [{PK: {S: "MOD#mediaref:pppp:mmmm"}, SK: {S: "META"}, hidden: {BOOL: true}, open: {BOOL: true}}]' "$MOD_ITEMS" > "$MOD_ITEMS.2"; mv "$MOD_ITEMS.2" "$MOD_ITEMS"
+mod_run --table t --site-bucket b --confirm-reapply
+eq "a hidden MediaRef lives in a page: exit 3 says the renderer's pass must finish the job" "$RC" 3
+contains "...and it says so" "$OUT" "only the renderer's next live pass removes them"
+contains "...after deleting the files it can name" "$(cat "$MOD_CALLS")" "--key note/aaaa.json"

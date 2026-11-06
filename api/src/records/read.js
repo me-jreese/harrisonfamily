@@ -17,7 +17,7 @@ import { HttpError, json, logSafeError } from "../http.js";
 import { serverSwitch } from "../features.js";
 import { CLASSES, getAlias } from "../sync/store.js";
 import { backrefs, byGrampsId, get } from "./index.js";
-import { applyModOverlay, collectModTargets, recordHidden } from "./mod-overlay.js";
+import { applyModOverlay, collectModTargets, hiddenBadges, recordHidden } from "./mod-overlay.js";
 
 export { applyModOverlay, collectModTargets, recordHidden };
 
@@ -146,10 +146,13 @@ export async function viewRecord(ctx, actor, rec) {
     }
     if (own && rec.class === "Event" && hasFineDate(rec.obj) && (await isOwnOnlyEvent(ctx, own, rec.handle))) viewer.ownOnlyEvents = new Set([rec.handle]);
   }
-  const mods = await loadMods(ctx, [...collectModTargets(rec.obj), ...(rec.class === "Note" ? [`note:${rec.handle}`] : []), ...(rec.class === "Media" ? [`media:${rec.handle}`] : [])]);
+  const wanted = [...collectModTargets(rec.obj), ...(rec.class === "Note" ? [`note:${rec.handle}`] : []), ...(rec.class === "Media" ? [`media:${rec.handle}`] : [])];
+  const mods = await loadMods(ctx, wanted);
   if (recordHidden(rec.class, rec.handle, viewer, mods)) return null;
   const obj = publishView(applyModOverlay(rec.obj, viewer, mods), viewer);
-  return { class: rec.class, handle: rec.handle, gramps_id: rec.gramps_id, version: rec.version, obj };
+  // The hidden badge (D2-19): an admin or the owner, who still sees a hidden item, is told which ones moderation hides from everyone else.
+  const hidden = hiddenBadges(wanted, viewer, mods);
+  return { class: rec.class, handle: rec.handle, gramps_id: rec.gramps_id, version: rec.version, obj, ...(hidden.length > 0 ? { hidden } : {}) };
 }
 
 // ---- the routes ----------------------------------------------------------------------------------------------------------

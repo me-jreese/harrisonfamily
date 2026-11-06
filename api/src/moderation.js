@@ -16,16 +16,25 @@
 // An effective author edit of an item in changes_requested or question state closes the state, the MOD# item and the hide inside the edit's own
 // transaction (content.js update, comments.js edit) and tells the asking admin (onModerationResolved -> moderation_resolved).
 //
-// Not here (another task): the record targets note, mediaref and media (hfy-moderation-record-targets: 422 unsupported_target until it lands).
-import { canView, redactModeration } from "@io-kit/content";
+// Record targets (HFY-TSK-216, hfy-moderation-record-targets; BRD2 D2-19, R2-25): note {kind, handle}, mediaref {kind, person, media} and media {kind, handle}.
+//   They need moderationRecordsV1 as well as moderationV1: while it is off they answer 422 unsupported_target, whatever their shape. A record has no inline
+//   state: the MOD#note:<h>, MOD#mediaref:<person>:<media> or MOD#media:<h> item IS the overlay. The renderer (lambda/hfy-sync-render, overlay.py), the
+//   records API, the edit bundle and MCP hfy_records_get read it (records/mod-overlay.js), so the item, its AUDIT# entry and a `marker` op (origin
+//   "moderation", through applyBatch, which wakes the renderer) commit in ONE transaction. The notice goes to the page owner when they are a member,
+//   otherwise to io (the gramps-owner group).
+import { auditEntry, canView, redactModeration } from "@io-kit/content";
 import { HttpError } from "./http.js";
 import { emptyOps } from "./contrib.js";
+import { pointer } from "./guard.js";
+import { TxnCancelled, auditItem } from "./txn.js";
+import { applyBatch } from "./sync/apply.js";
+import { backrefs, get as getRecord } from "./records/index.js";
 
 export const MODQ_OPEN = "MODQ#open";
 export const MODQ_CLOSED = "MODQ#closed";
 /** The kinds the route moderates now. */
 export const CONTENT_KINDS = Object.freeze(["post", "comment", "photo"]);
-/** Record kinds (records domain): the route answers 422 unsupported_target until hfy-moderation-record-targets lands. */
+/** Record kinds (records domain): the route answers 422 unsupported_target while moderationRecordsV1 is off. */
 export const RECORD_KINDS = Object.freeze(["note", "mediaref", "media"]);
 export const ACTIONS = Object.freeze(["hide", "unhide", "request_changes", "ask"]);
 /** The actions that carry the admin's note to the author. */
@@ -39,6 +48,9 @@ const ULID = "[0-9A-HJKMNP-TV-Z]{26}";
 const ULID_RE = new RegExp(`^${ULID}$`);
 const THREAD_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26})$/;
 const ATT_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const HANDLE_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** The flag that opens the record targets (review DL-17): they wait for the cutover and hfy-social-flip-2. */
+export const RECORDS_FLAG = "moderationRecordsV1";
 const QUEUE_SK_RE = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z#[\w:/#.-]{1,300}$/;
 
 // ---- the one visibility rule (social.md 11.3) -------------------------------------------------------------------------------------------------
@@ -83,6 +95,8 @@ export function archiveView(post, viewer) {
 export function targetKey(t) {
   if (t.kind === "post") return `post:${t.id}`;
   if (t.kind === "comment") return `comment:${t.thread}/${t.id}`;
+  if (t.kind === "note" || t.kind === "media") return `${t.kind}:${t.handle}`;
+  if (t.kind === "mediaref") return `mediaref:${t.person}:${t.media}`;
   if (t.kind === "photo") return `photo:${t.parent.kind}:${t.parent.kind === "comment" ? `${t.parent.thread}/${t.parent.id}` : t.parent.id}#${t.attachment}`;
   throw new TypeError(`moderation: unknown target kind ${t.kind}`);
 }
@@ -97,12 +111,21 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /**
  * The request's target, shape-checked: {kind:"post", id} | {kind:"comment", id, thread} | {kind:"photo", parent:{kind:"post", id} | {kind:"comment", id, thread}, attachment}
- * plus the record kinds {kind: note|mediaref|media, ...}, which the route refuses (422 unsupported_target) once the shape is valid. Throws 400 validation.
+ * plus the record kinds {kind:"note", handle} | {kind:"media", handle} | {kind:"mediaref", person, media}. With `records` false (moderationRecordsV1 off) a record kind
+ * is returned as {kind} unchecked, for the route to refuse with 422 unsupported_target. Throws 400 validation.
  */
-export function parseTarget(raw) {
+export function parseTarget(raw, { records = false } = {}) {
   if (!isObj(raw)) throw bad("target", "target must be an object");
   const { kind } = raw;
-  if (RECORD_KINDS.includes(kind)) return { kind };
+  if (RECORD_KINDS.includes(kind)) {
+    if (!records) return { kind };
+    const handle = (v, field) => {
+      if (typeof v !== "string" || !HANDLE_RE.test(v)) throw bad(field, `${field} must be a record handle`);
+      return v;
+    };
+    if (kind === "mediaref") return { kind, person: handle(raw.person, "target.person"), media: handle(raw.media, "target.media") };
+    return { kind, handle: handle(raw.handle, "target.handle") };
+  }
   if (!CONTENT_KINDS.includes(kind)) throw bad("target", "target.kind must be post, comment or photo");
   const id = (v, field) => {
     if (typeof v !== "string" || !ULID_RE.test(v)) throw bad(field, `${field} must be an id`);
@@ -174,7 +197,7 @@ export function normalizeModerate(input, fail) {
 }
 
 /** The MOD# item of a target. `prior` is the item it replaces (its `version` is bumped), or undefined. */
-export function modItem({ target, author, state, hidden, by, at, note, prior }) {
+export function modItem({ target, author, state, hidden, by, at, note, href, prior }) {
   const key = targetKey(target);
   return {
     ...modKeys(key),
@@ -189,6 +212,7 @@ export function modItem({ target, author, state, hidden, by, at, note, prior }) 
     by: { id: by.id, ...(typeof by.label === "string" ? { label: by.label } : {}) },
     at,
     ...(note !== undefined ? { note } : {}),
+    ...(typeof href === "string" ? { href } : {}),
     open: true,
     version: (prior?.version ?? 0) + 1,
   };
@@ -216,9 +240,9 @@ const replace = (item, prior) => ({
 });
 
 /** A transact() fragment that opens (or replaces) the MOD# item of `target`. */
-export async function openModOps(ctx, { target, author, state, hidden, by, at, note }) {
+export async function openModOps(ctx, { target, author, state, hidden, by, at, note, href }) {
   const prior = await readMod(ctx, targetKey(target));
-  return { ...emptyOps(), puts: [replace(modItem({ target, author, state, hidden, by, at, note, prior }), prior)] };
+  return { ...emptyOps(), puts: [replace(modItem({ target, author, state, hidden, by, at, note, href, prior }), prior)] };
 }
 
 /** A fragment that closes the open MOD# items of `keys`; a key with no open item adds nothing. */
@@ -235,6 +259,7 @@ export async function closeModOps(ctx, keys, { resolvedBy, at }) {
 
 const enc = encodeURIComponent;
 export function hrefOf(target) {
+  if (RECORD_KINDS.includes(target.kind)) return "/me/review/"; // a record row carries its own `href` (the holder's page); this is only the fallback
   const to = target.kind === "photo" ? target.parent : target;
   const anchor = target.kind === "photo" ? "#photos" : "";
   if (to.kind === "post") return `/posts/?id=${enc(to.id)}${anchor}`;
@@ -249,7 +274,7 @@ const rowOf = (it) => ({
   ...(typeof it.note === "string" ? { note: it.note } : {}),
   open: it.open !== false,
   ...(it.open === false ? { resolved_by: it.resolved_by, resolved_at: it.resolved_at } : {}),
-  author: it.author ?? { id: it.author_id }, href: hrefOf(it.target),
+  author: it.author ?? { id: it.author_id }, href: typeof it.href === "string" ? it.href : hrefOf(it.target),
 });
 
 function parseLimit(v) {
@@ -276,10 +301,122 @@ const notFound = () => new HttpError(404, "not_found", "no such item");
  * `content` and `comments` are the request's sources (content.js, comments.js) acting as the admin; `notifier` is notify.js createNotifier
  * (onModeration never throws); `afterCommit(label, fn)` runs a post-commit side effect and logs its failure.
  */
-export function createModeration({ ddb, cmds, table, actor, content, comments, notifier, afterCommit = async (_l, fn) => fn() }) {
+export function createModeration({
+  ddb, cmds, table, actor, content, comments, notifier, afterCommit = async (_l, fn) => fn(),
+  // Record targets (HFY-TSK-216): `store` is the record-store context (handler.build's `store`), `featureOn(name)` the request's flag read, `guard` the R-18 check,
+  // `listMembers()` the member gramps_ids (a Set), `getOwners()` the gramps-owner subjects, `apply` replaces applyBatch (tests), `uid` and `now` as everywhere.
+  store, featureOn = async () => false, guard, listMembers, getOwners, apply = applyBatch, uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36), now = () => Date.now(), log = console,
+}) {
   const admin = () => {
     if (actor?.admin !== true) throw forbidden();
   };
+  const iso = () => new Date(now()).toISOString();
+
+  // ---- record targets ----------------------------------------------------------------------------------------------------------------------
+
+  /** The head of the record a target names (404 when there is none or it is a tombstone), and the {class, handle} the marker op is about. */
+  async function locateRecord(target) {
+    const need = async (cls, handle) => {
+      const head = await getRecord(store, cls, handle);
+      if (!head) throw notFound();
+      return head;
+    };
+    if (target.kind === "note") return { head: await need("Note", target.handle), ref: { class: "Note", handle: target.handle } };
+    if (target.kind === "media") return { head: await need("Media", target.handle), ref: { class: "Media", handle: target.handle } };
+    const head = await need("Person", target.person);
+    const list = Array.isArray(head.obj?.media_list) ? head.obj.media_list : [];
+    if (!list.some((r) => isObj(r) && r.ref === target.media)) throw notFound();
+    return { head, ref: { class: "Person", handle: target.person } };
+  }
+
+  /** The Person handles whose page shows the target: the holder of a MediaRef, or the Persons that reach a Note or Media (at most three hops, Event or Family between). */
+  async function holders(target) {
+    if (target.kind === "mediaref") return [target.person];
+    const start = `${target.kind === "note" ? "Note" : "Media"}:${target.handle}`;
+    const seen = new Set([start]);
+    const persons = [];
+    let layer = [start];
+    for (let depth = 0; depth < 3 && layer.length > 0 && persons.length < 20; depth++) {
+      const next = [];
+      for (const key of layer) {
+        for (const ref of await backrefs(store, key)) {
+          if (seen.has(ref)) continue;
+          seen.add(ref);
+          if (ref.startsWith("Person:")) persons.push(ref.slice("Person:".length));
+          else next.push(ref);
+        }
+      }
+      layer = next;
+    }
+    return persons;
+  }
+
+  /** Who is told, and where the item lives: the page owner when they are a member, otherwise io (the gramps-owner); `gid` is the first holder's gramps_id (the link). */
+  async function recipientOf(handles) {
+    const members = listMembers ? await listMembers().catch(() => new Set()) : new Set();
+    let gid;
+    let owner;
+    for (const handle of handles) {
+      const head = await getRecord(store, "Person", handle);
+      const id = typeof head?.obj?.gramps_id === "string" ? head.obj.gramps_id : undefined;
+      if (!id) continue;
+      gid ??= id;
+      if (owner === undefined && members.has(id)) owner = id;
+    }
+    if (owner !== undefined) return { id: owner, member: true, gid };
+    const owners = getOwners ? await getOwners().catch(() => []) : [];
+    return { id: owners[0], member: false, gid };
+  }
+
+  /** POST /api/moderation for a note, mediaref or media: the MOD# item, its audit entry and a marker op in one applyBatch transaction. */
+  async function postRecord(target, { action, note, hide, reason, version }) {
+    const key = targetKey(target);
+    const { head, ref } = await locateRecord(target);
+    if (version !== undefined && version !== String(head.version)) throw new HttpError(409, "conflict", "that record changed since you looked");
+    const holderHandles = await holders(target);
+    const who = await recipientOf(holderHandles);
+    if (who.member && who.id === actor.id) throw new HttpError(400, "self_moderation", "you can't moderate your own item. edit it or ask for it to be removed instead.");
+    if (note !== undefined) guard?.("moderation", "moderate", [[pointer("note"), note]]); // R-18: 422 contact_info, nothing stored
+    const at = iso();
+    const by = { id: actor.id, label: actor.label };
+    const prior = await readMod({ ddb, cmds, table }, key);
+    const open = prior !== undefined && prior.open !== false;
+    let state = null;
+    let mod;
+    if (action === "unhide") {
+      if (open) mod = await closeModOps({ ddb, cmds, table }, [key], { resolvedBy: actor.id, at });
+    } else {
+      const st = action === "hide" ? "hidden" : action === "request_changes" ? "changes_requested" : "question";
+      const hidden = action === "ask" ? hide === true : true;
+      if (!(action === "hide" && open && prior.state === "hidden" && prior.hidden === true)) {
+        const href = who.gid ? `/person/?id=${encodeURIComponent(who.gid)}#${target.kind === "note" ? "stories" : "photos"}` : undefined;
+        mod = await openModOps({ ddb, cmds, table }, { target, author: { id: who.id ?? actor.id }, state: st, hidden, by, at, note, href });
+      }
+      state = { state: st, hidden, by, at, ...(note !== undefined ? { note } : {}), open: true };
+    }
+    const before = open ? { state: prior.state, hidden: prior.hidden === true } : null;
+    if (mod === undefined) { // a repeated hide, or an unhide of what is not moderated: nothing changes, nothing is sent
+      const kept = open ? { state: prior.state, hidden: prior.hidden === true, by: prior.by, at: prior.at, ...(prior.note !== undefined ? { note: prior.note } : {}), open: true } : null;
+      return { status: 200, body: { target, moderation: action === "unhide" ? null : kept, item: { class: ref.class, handle: ref.handle, version: head.version } } };
+    }
+    const entry = auditEntry("moderate", key, actor.id, before, state, at, reason);
+    const extra = { ...mod, puts: [...mod.puts, { item: auditItem(entry, uid(), table) }] };
+    try {
+      await apply(store, { principal: actor.id, origin: "moderation", idempotencyKey: `moderation:${uid()}`, ops: [{ op_id: "1", op: "marker", reason: "moderation", ref }], extra });
+    } catch (e) {
+      if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
+      if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "that item was moderated by someone else just now. look again.");
+      throw e;
+    }
+    if (who.id !== undefined) {
+      await afterCommit("moderation notification", () =>
+        notifier.onModeration({
+          kind: NOTICE_KIND[action], ...(note !== undefined ? { note } : {}), item: target.kind === "note" ? "story" : "photo", target: key,
+          authorId: who.id, by: { id: actor.id, label: actor.label }, navigate: who.gid ? `/person/?id=${encodeURIComponent(who.gid)}#${target.kind === "note" ? "stories" : "photos"}` : "/",
+        }));
+    } else log.warn?.("moderation: no recipient for a record item (no member owner, no gramps-owner)");
+    return { status: 200, body: { target, moderation: state, item: { class: ref.class, handle: ref.handle, version: head.version } } };
+  }
 
   /** The item behind a target as the admin sees it, with its author, version and (for a photo) the photo; 404 when there is none. */
   async function locate(target) {
@@ -309,9 +446,14 @@ export function createModeration({ ddb, cmds, table, actor, content, comments, n
     /** POST /api/moderation. Returns {status, body}. */
     async post(body) {
       admin(); // before anything is read or validated: a member learns nothing about the route
-      const target = parseTarget(body.target);
+      // A record target needs moderationRecordsV1 as well (DL-17): while it is off, any record kind is 422 unsupported_target before its shape is read.
+      const recordsOn = RECORD_KINDS.includes(body?.target?.kind) ? (await featureOn(RECORDS_FLAG)) === true : false;
+      const target = parseTarget(body.target, { records: recordsOn });
       const { action, note, hide, reason, version } = parseAction(body);
-      if (RECORD_KINDS.includes(target.kind)) throw new HttpError(422, "unsupported_target", "that kind of item can't be moderated yet.");
+      if (RECORD_KINDS.includes(target.kind)) {
+        if (!recordsOn || store === undefined) throw new HttpError(422, "unsupported_target", "that kind of item can't be moderated yet.");
+        return postRecord(target, { action, note, hide, reason, version });
+      }
       // A note is for the whole item: a photo is hidden or unhidden, never asked about (the source refuses it too).
       if (target.kind === "photo" && note !== undefined) throw bad("note", "a note is for the whole post or comment, not one photo");
       const found = await locate(target);
