@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0c2012ba",
+        "js": "7100b704",
         "css": "4cd750ae"
       },
       "family": {
@@ -44,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "ec2c7845",
+        "js": "8edb72d4",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "745a03e7",
+        "js": "7576ef58",
         "css": "38a33f05"
       },
       "join": {
@@ -63,9 +63,13 @@
         "js": "dba45074",
         "css": "a475a3dd"
       },
+      "moderation-queue": {
+        "js": "794c62cf",
+        "css": "c3d2737a"
+      },
       "my-posts": {
-        "js": "6400b81d",
-        "css": "acb4acbc"
+        "js": "add93f63",
+        "css": "3d97e51e"
       },
       "notifications": {
         "js": "339b0773",
@@ -76,8 +80,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "f274dce4",
-        "css": "a3ad2b3b"
+        "js": "a15f47af",
+        "css": "bd2a5788"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -92,19 +96,23 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "dac0352c",
-        "css": "ca219197"
+        "js": "ef1d518d",
+        "css": "105346a6"
+      },
+      "record-moderation": {
+        "js": "8cab6d0e",
+        "css": "5b548e69"
       },
       "review": {
-        "js": "83a6e3db",
-        "css": "d3f4cc44"
+        "js": "8be01fa3",
+        "css": "bf26d487"
       },
       "search": {
         "js": "99872d4f",
         "css": "9e007813"
       },
       "settings": {
-        "js": "f185da8e",
+        "js": "23424cab",
         "css": "be4f0b90"
       },
       "shell": {
@@ -112,11 +120,11 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "b68af309",
-        "css": "3610897c"
+        "js": "c7d5a977",
+        "css": "c249f04c"
       },
       "tree": {
-        "js": "4c81e826",
+        "js": "b5dd2367",
         "css": "3ba8898b"
       }
     },
@@ -386,6 +394,12 @@
           const merged = Object.assign({}, build, overrideFlags);
           // HFY-R48: the search island's launcher lives in the shell, so searchV2 implies shellV2 (unless explicitly forced off).
           if (merged.searchV2 === true && overrideFlags.shellV2 !== false) merged.shellV2 = true;
+          // HFY-TSK-215: graduateV1 (add a comment photo to a family page) needs the comment photos and the moderation controls it sits beside,
+          // so it turns commentPhotosV1 and moderationV1 on, unless a preview override explicitly forces one off ("-name").
+          if (merged.graduateV1 === true) {
+            if (overrideFlags.commentPhotosV1 !== false) merged.commentPhotosV1 = true;
+            if (overrideFlags.moderationV1 !== false) merged.moderationV1 = true;
+          }
           return merged;
         });
     }
@@ -956,6 +970,15 @@
     }
   });
 
+  // HFY-TSK-192: the moderation-queue island fills the static /me/moderation/ page (the admins' queue of hidden and asked-about items). With moderationV1 off the
+  // bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island asks /api/me itself and shows a non-admin one line.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true) return;
+    if (/^\/me\/moderation\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("moderation-queue", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
   // HFY-TSK-279: the admin-sync island fills the static /admin/sync/ page (sync status and conflict decisions for hfy-admin and gramps-owner). With syncStatusV1
   // off the bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island shows anyone else the standard not-allowed line.
   resolveFlags().then((flags) => {
@@ -976,6 +999,14 @@
     } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
+  });
+
+  // HFY-TSK-216: moderationV1 and moderationRecordsV1 together mount the record moderation controls on the person page (island record-moderation): a
+  // "moderate story" control under each story and a "moderate photo" control in the lightbox, for an admin only (the island checks /api/me; the server
+  // re-checks every call). It listens to the person page's two events, so person-page.js is not touched. With either flag off nothing is requested.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true || flags.moderationRecordsV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("record-moderation", { onError() { /* the page stands without the moderation controls */ } });
   });
 
   // HFY-TSK-142: chatV1 loads the chat island (the roster panel and the docked chats, the chat entry in the bar's chat slot, and on /chat/ the

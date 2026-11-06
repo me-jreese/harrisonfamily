@@ -47,6 +47,8 @@ export const PAGES = [
   "me/review/index.html",
   // the family requests page (accessRequests, HFY-TSK-264)
   "me/requests/index.html",
+  // the moderation queue page (moderationV1, HFY-TSK-192)
+  "me/moderation/index.html",
   // the admin sync status page (syncStatusV1, HFY-TSK-279)
   "admin/sync/index.html",
   // the join page (accessRequests, HFY-TSK-140)

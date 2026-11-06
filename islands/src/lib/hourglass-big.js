@@ -7,10 +7,12 @@
 //   scrollTarget(layout, viewport)             where to scroll so the person sits in the middle of the viewport
 //   defaultLevel(viewportWidth), SIZES         the four big-tree card sizes and the one a viewport starts at
 //   bigModel(index, id)                        the model of hourglass-model.js plus `focus.ariaBig`, the big tree's one extra
-// The great-grandparents (T-Spec's gold lines, the `great-grandparents` button and `&ggp=1`) are CUT: the second cut of io's order (T-Copy "cut first"), made to
-// keep the hourglass script under 25 KB minified (tests/tree-budget.test.mjs has the bytes). The "both sides" note and tags stay; the note points at the outline.
-// The parents' other partners (T-Spec's step-parent cards beside the parents, medium and up) are CUT too: the third cut of that order. Half-brothers and half-sisters
-// still appear, hung dashed from the shared parent.
+// UNMET AC, for io's ruling: the great-grandparents (T-Spec's gold repeat lines, the `great-grandparents` button, `&ggp=1`, rows -3..2) and the parents' other
+// partners (T-Spec's step-parent cards beside the parents, medium and up) are NOT built. They were cut to keep the hourglass script near 25 KB minified, in io's
+// order but not one at a time: cut 1, the `large` size, was measured and skipped (it frees about 29 bytes of JS), so cuts 2 and 3 were made. Both are allowed by
+// T-Copy and DIGEST 103 only as a budget fallback, and gzip sits far under its line, so io may rule that the budget is the gzip figure and have them restored.
+// Until then the "both sides" tags stay, the note under the small tree points at the outline (DIGEST 138 asks for the big tree, which needs `&ggp=1`),
+// and half-brothers and half-sisters still appear, hung dashed from the shared parent. tests/tree-budget.test.mjs has the bytes.
 import { COPY, familyModel } from "./hourglass-model.js";
 
 const LINE = 2; // the one line weight (px), as hourglass-layout.js: the big tree does not import the small tree's layout

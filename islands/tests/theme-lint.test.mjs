@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
-const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/me/links/index.html", "11ty/me/inbox/index.html", "11ty/tree/index.html", "11ty/edit/index.html", "11ty/edit/family/index.html", "11ty/me/review/index.html", "11ty/me/requests/index.html", "11ty/admin/sync/index.html", "11ty/join/index.html", "11ty/chat/index.html", "11ty/offline.html"];
+const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/me/links/index.html", "11ty/me/inbox/index.html", "11ty/tree/index.html", "11ty/edit/index.html", "11ty/edit/family/index.html", "11ty/me/review/index.html", "11ty/me/requests/index.html", "11ty/me/moderation/index.html", "11ty/admin/sync/index.html", "11ty/join/index.html", "11ty/chat/index.html", "11ty/offline.html"];
 const ALIAS_FILE = "src/theme/10-kit-aliases.css";
 // The hourglass partial (HFY-TSK-379) opens with one alias block of --hfy-tree-* names that fall back to existing --io-* tokens until the new tree tokens ship
 // in @io-kit/tokens; the rest of that one file may read them. No other file may, and nothing else outside --io-* / --bs-* is readable.

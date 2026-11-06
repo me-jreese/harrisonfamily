@@ -149,7 +149,12 @@ export function createHandler(deps) {
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
-    const moderation = createModeration({ ddb, cmds, table, actor, content, comments, notifier, afterCommit });
+    const moderation = createModeration({
+      ddb, cmds, table, actor, content, comments, notifier, afterCommit,
+      // HFY-TSK-216: the record targets (note, mediaref, media) write a MOD# overlay and a marker op through applyBatch, behind moderationRecordsV1.
+      store, featureOn, guard, listMembers: deps.listMembers, getOwners: deps.getOwners, now, uid, log,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}),
+    });
     const links = createLinks(base);
     const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });

@@ -126,3 +126,9 @@
 
 /* The footer row of a post holds the control and the ping. */
 .hfy-posts__footer > .hfy-mod { margin-inline-start: auto; }
+
+/* ------------------------------------------------------------------------------------------------------ record stories and photos (HFY-TSK-216) */
+.hfy-mod__story { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-content-space-2); margin-block-start: var(--io-content-space-2); }
+.hfy-mod__lightbox { display: inline-flex; align-items: center; gap: var(--io-content-space-2); margin-inline-end: var(--io-content-space-2); }
+/* The person page's footer is fixed to the bottom and covers a menu that opens downward under the last story: a story's menu opens upward (the lightbox header's opens downward, as the header is at the top). */
+.hfy-mod__story .hfy-mod__panel[data-variant="menu"] { inset-block-start: auto; inset-block-end: 100%; }
