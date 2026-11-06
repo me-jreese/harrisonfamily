@@ -269,7 +269,7 @@ function watchCommentIds(root) {
  * `social` is the contribV1 column inside #hfy-person-social: newest first (order=desc), the composer on top, the list capped with
  * "show older comments", and `#comment-<ulid>` scrolled to and highlighted (loading up to 5 more pages to find it). Off, the thread is as it was.
  */
-export function Comments({ subject, social = false }) {
+export function Comments({ subject, social = false, heading = true }) {
   const [session, setSession] = useState(undefined);
   const [moderator, setModerator] = useState(false);
   const [graduator, setGraduator] = useState(false);
@@ -376,8 +376,8 @@ export function Comments({ subject, social = false }) {
   const viewer = sid ? { id: sid, label: session.label, ...(moderator ? { roles: ["admin"] } : {}) } : null;
   const returnTo = encodeURIComponent(location.pathname + location.search);
   return (
-    <section className={social ? "hfy-comments hfy-social__col" : "hfy-comments"} {...(social ? { id: "hfy-person-comments" } : {})} aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
-      <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
+    <section className={social ? "hfy-comments hfy-social__col" : "hfy-comments"} {...(social ? { id: "hfy-person-comments" } : {})} {...(heading ? { "aria-labelledby": `hfy-comments-h-${subject}` } : {})} data-hfy-comments ref={root}>
+      {heading && <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>}
       {social && missed && <p className="hfy-ping" role="status" data-hfy-anchor-missed>{ANCHOR_MISSED}</p>}
       {(session === undefined || (viewer && flags === undefined)) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
       {session !== undefined && !viewer && (

@@ -24,19 +24,19 @@
         "css": "0bc02cef"
       },
       "edit-entry": {
-        "js": "8c1a5024",
+        "js": "7f4152b0",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "027b5a73",
+        "js": "3ed953d2",
         "css": "4cd750ae"
       },
       "family": {
-        "js": "892fec0d",
+        "js": "bae09afe",
         "css": "e52fd206"
       },
       "family-entry": {
-        "js": "892de9ca",
+        "js": "2ca3d18f",
         "css": "978fbe15"
       },
       "follow": {
@@ -60,11 +60,11 @@
         "css": "e44c3a91"
       },
       "life-dates": {
-        "js": "a0648af5",
+        "js": "e47807c3",
         "css": "159c53fd"
       },
       "life-dates-queue": {
-        "js": "d26cc7bf",
+        "js": "49b55291",
         "css": "ea3388ce"
       },
       "links-editor": {
@@ -72,12 +72,12 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "dd4ea851",
-        "css": "83db50ff"
+        "js": "731cdd9a",
+        "css": "b72e84e6"
       },
       "media-carousel": {
-        "js": "30542cfa",
-        "css": "42a8b072"
+        "js": "d7381324",
+        "css": "c64b6ba7"
       },
       "moderation-queue": {
         "js": "794c62cf",
@@ -96,7 +96,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "c7a5d50f",
+        "js": "f5b7f642",
         "css": "bd2a5788"
       },
       "person-add-photo": {
@@ -113,14 +113,14 @@
       },
       "photo-tag-edit": {
         "js": "a6eea071",
-        "css": "6d3e841a"
+        "css": "912a7ff2"
       },
       "photo-tags": {
         "js": "5993b868",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "de38071a",
+        "js": "4a6e444f",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -128,7 +128,7 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "138691f1",
+        "js": "6facb0b4",
         "css": "9545b73d"
       },
       "search": {

@@ -29,4 +29,4 @@ html:has(.io-media-tags),
 
 /* Both kit stylesheets name a class .io-media-stage: tags.css (absolute, inset 0, inside the editor's viewport) and browser.css (the detail page's own photo, relative). Loaded after
    browser.css, tags.css pulled the detail page's photo out of the flow and over the "tag people" toggle at the two-column width. The page's own photo stays in the flow. */
-.io-media-detail .io-media-detail-main .io-media-stage { position: relative; inset: auto; transform: none; transition: none; }
+.io-media-detail .io-media-detail-main > .io-media-stage { position: relative; inset: auto; transform: none; transition: none; }
