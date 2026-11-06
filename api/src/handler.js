@@ -1,6 +1,7 @@
 // Lambda Function URL (payload v2) handler. All logic is injected through `deps` so tests run offline.
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
+import { isMediaPublished } from "./media-visible.js";
 import { createCommentSource, purgeThread, refusePendingGraduation, toCommentPrincipal } from "./comments.js";
 import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
@@ -22,6 +23,7 @@ import { circleIds, loadProposal, visibleProposal } from "./records/proposal-sto
 import { getSyncHead, isPersonWithdrawn } from "./sync/store.js";
 import { createAccessRequests } from "./access-requests.js";
 import { createGraduation } from "./graduate.js";
+import { createPostGraduation } from "./post-graduate.js";
 import { createModeration } from "./moderation.js";
 import { createChatService, serviceUnauthenticated } from "./chat.js";
 import { createCompositeMemberReader } from "./allowlist-store.js";
@@ -105,6 +107,7 @@ export function createHandler(deps) {
       getPost: (id) => content.get(id),
       // A proposal:<ulid> thread: dark with HFY_EDITING, and visible only inside the proposal's visibility set (the proposer, admins, owners of the targeted pages).
       proposalVisible: async (id) => editingOn() && (await visibleProposal(store, actor, id)) !== null,
+      mediaVisible: (grampsId) => isMediaPublished({ ddb, cmds, table }, grampsId), // a media:<id> thread is as visible as its Media in the person gallery (HFY-TSK-387-0I)
       isWithdrawn: (grampsId) => isPersonWithdrawn({ ddb, cmds, table }, grampsId), // a withdrawn person's thread is 404 to all but an admin (HFY-TSK-178)
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {
@@ -148,6 +151,12 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
+    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the HFY_POST_GRADUATE switch (deps.postGraduate, default off). Best effort after the post's own commit.
+    const postGraduation = createPostGraduation({
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: () => deps.postGraduate === true, now, log,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
+    });
+    const graduatePostPhotos = (post) => afterCommit("post photo graduation", () => postGraduation.graduate(post));
     // hfy-moderation-api-core: the moderation routes over this request's sources; the notice to the author runs after the commit and never fails it.
     const moderation = createModeration({
       ddb, cmds, table, actor, content, comments, notifier, afterCommit,
@@ -160,7 +169,7 @@ export function createHandler(deps) {
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, comments, moderation, graduation, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

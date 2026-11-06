@@ -194,7 +194,8 @@ The same shape appears in a person's `mediaGallery` and `primaryPhoto`.
 | --- | --- | --- |
 | `person/index.json` | `{count, generatedAt, people: [...]}`. Each entry: `handle`, `grampsId`, `displayName`, `givenName`, `surname`, `isLiving`, `birthYear`, `deathYear`, `lifespanSummary`, `primaryPhoto` (a string: the `s3Key`, else the `placeholderImage`). | `build_search_index.js`. `export_person_data.py` first writes the same entries as a bare array, and both readers accept either form. |
 | `person/search-index.json` | `{generatedAt, documents: [{grampsId, searchText}]}`. `searchText` is the lowercased display name, given name, surname, Gramps ID, birth year and lifespan summary. | `build_search_index.js` |
-| `media/index.json` | Array of `{handle, grampsId, s3Key, checksum, size, missing}` | The render Lambda (legacy: `export_person_data.py`) |
+| `media/index.json` | Array of `{handle, grampsId, s3Key, checksum, size, missing}`, plus `thumb` `{s320, s800, w, h}` when thumbnails exist ([Media thumbnails](sync-render.md#media-thumbnails)) | The render Lambda (legacy: `export_person_data.py`) |
+| `media/thumb/<handle>-<sha8>-<size>.jpg`, `media/thumb/index.json` | Derived JPEG thumbnails (320 and 800 px) of published images, and the sidecar that records them. Never originals | `hfy-graph-render` |
 | `place/index.json` | Array of `{handle, grampsId, displayName}` | The render Lambda (legacy: `export_person_data.py`) |
 
 `lifespanSummary` exists only in the manifest. The person record carries `lifespan.summary`.
