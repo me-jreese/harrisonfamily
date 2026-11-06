@@ -1,6 +1,6 @@
 // HFY-TSK-388-0G (pass 1): the tag ports of the HFY adapter over a fake HFY API that runs the real ops engine. Part 1 runs the kit's own conformance fixtures
 // (@io-kit/media/testing TAG_FIXTURES, shared with the repo suite in tests/tagging) against the adapter; part 2 pins what HFY policy changes (D-13) and the
-// adapter's own behaviour: redaction, the picker rule, self-untag, the offline queue. Synthetic ids and names only.
+// adapter's own behaviour: names, the picker rule, self-untag, the offline queue. Synthetic ids and names only.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FIXTURE_WORLD, TAG_FIXTURES } from "@io-kit/media/testing";
@@ -72,29 +72,31 @@ test("T-18 under HFY policy: hideAll is a no-op", async () => {
   assert.equal((await h.source.getTags("fx-m1")).some((t) => t.personId === BO), true);
 });
 
-test("a tag carries exactly personId, mediaId, rect, index and state; names come from readTags", async () => {
+test("a tag carries exactly personId, mediaId, rect, index and state; names (living or deceased) come from readTags", async () => {
   const h = harness({ ...FIXTURE_WORLD, people: [...FIXTURE_WORLD.people, { id: "fx-lv", name: "Real Living Name", living: true }], tags: [...FIXTURE_WORLD.tags, ["fx-lv", "fx-m1", [40, 40, 60, 60]]] });
   const tags = await h.source.getTags("fx-m1");
   for (const t of tags) assert.deepEqual(Object.keys(t).sort(), ["index", "mediaId", "personId", "rect", "state"]);
   const { names, version } = await h.source.readTags("fx-m1");
-  assert.deepEqual(names["fx-lv"], { displayName: "a living family member", living: true });
-  assert.deepEqual(names["fx-bo"], { displayName: "Bo Fixture", living: false });
+  assert.deepEqual(names["fx-lv"], { displayName: "Real Living Name" }, "a living person is named like any other (P4-R37)");
+  assert.deepEqual(names["fx-bo"], { displayName: "Bo Fixture" });
   assert.equal(typeof version, "string");
   assert.equal(JSON.stringify(tags).includes("Real Living Name"), false);
 });
 
-test("the picker offers deceased people and 'you' only, with a photo URL when there is one (P4-R2 Q1)", async () => {
-  const seed = { viewerPersonId: "I0001", media: [{ id: "O0001" }], people: [
+test("the picker offers every member, living or deceased, 'you' first, with a photo URL when there is one (P4-R37)", async () => {
+  const seed = { viewerPersonId: "I0003", media: [{ id: "O0001" }], people: [
     { id: "I0001", name: "Alder Testwood", living: true }, { id: "I0002", name: "Alma Testwood", living: true },
     { id: "I0003", name: "Hazel Birchwell", photo: "/img/hazel.jpg" }, { id: "I0004", name: "Ash Birchwell" },
   ] };
   const h = harness(seed);
   const all = await h.source.resolvePeople("");
-  assert.deepEqual(all.map((p) => p.personId).sort(), ["I0001", "I0003", "I0004"], "a living person who is not you is never offered");
+  assert.deepEqual(all.map((p) => p.personId), ["I0003", "I0001", "I0002", "I0004"], "the viewer first, then everyone else, living or not");
   assert.equal(all.find((p) => p.personId === "I0003").thumbUrl, "/img/hazel.jpg");
   assert.equal("thumbUrl" in all.find((p) => p.personId === "I0004"), false, "no photo, no thumbUrl");
   assert.deepEqual((await h.source.resolvePeople("alder")).map((p) => p.personId), ["I0001"]);
-  assert.deepEqual((await h.source.resolvePeople("alma")).map((p) => p.personId), []);
+  assert.deepEqual((await h.source.resolvePeople("alma")).map((p) => p.personId), ["I0002"], "a living member who is not you is offered when searched by name");
+  assert.deepEqual((await h.source.resolvePeople("hazel")).map((p) => p.personId), ["I0003"]);
+  assert.deepEqual((await h.source.resolvePeople("", { limit: 2 })).map((p) => p.personId), ["I0003", "I0001"]);
 });
 
 test("errors: an unknown media is NOT_FOUND, a bad rect is INVALID_RECT before anything is sent", async () => {

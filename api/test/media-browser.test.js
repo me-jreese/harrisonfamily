@@ -1,6 +1,6 @@
 // HFY-TSK-387-0E (V0): the Media Browser list and detail. Synthetic ids and names only; the store, the media index and the post list are in-memory fakes.
 import { describe, expect, it } from "vitest";
-import { LIVING_NAME, buildCatalog, createMediaBrowser, createMediaIndexReader, detailOf, pageOf } from "../src/media-browser.js";
+import { buildCatalog, createMediaBrowser, createMediaIndexReader, detailOf, pageOf } from "../src/media-browser.js";
 import { isMediaPublished } from "../src/media-visible.js";
 import { ROUTES, matchRoute } from "../src/routes.js";
 
@@ -164,13 +164,12 @@ describe("pagination and counts (M-6)", () => {
 });
 
 describe("detail", () => {
-  it("redacts a living person's name in tags, keeps a deceased one's, and carries rect, index, state and a base version", () => {
+  it("names a living and a deceased person alike in tags (P4-R37), and carries rect, index, state and a base version", () => {
     const d = detailOf(cat(), "O1", {});
     expect(d.tags).toEqual([
-      { personId: "I1", mediaId: "O1", rect: [10, 10, 40, 40], index: 0, state: "applied", person: { displayName: "FirstI1 Sample", living: false } },
-      { personId: "I2", mediaId: "O1", rect: [50, 50, 90, 90], index: 0, state: "applied", person: { displayName: LIVING_NAME, living: true } },
+      { personId: "I1", mediaId: "O1", rect: [10, 10, 40, 40], index: 0, state: "applied", person: { displayName: "FirstI1 Sample" } },
+      { personId: "I2", mediaId: "O1", rect: [50, 50, 90, 90], index: 0, state: "applied", person: { displayName: "FirstI2 Sample" } },
     ]);
-    expect(JSON.stringify(d)).not.toContain("FirstI2");
     expect(d).toMatchObject({ origin: "gramps", commentsSubject: "media:O1", imageUrl: `${BASE}/media/O1.jpg` });
     expect(d.originRef).toBeUndefined();
     expect(d.originBy).toBeUndefined();
@@ -181,10 +180,14 @@ describe("detail", () => {
     w.heads.find((h) => h.handle === "p-I1").version = 2;
     expect(detailOf(buildCatalog(w), "O1", {}).version).not.toBe(before);
   });
-  it("origin line (M-8): post links the post, a living author is redacted; upload names the uploader; import shows none", () => {
+  it("a private Person's tag is never listed, living or not (D-37, first half)", () => {
+    const d = detailOf(cat({ heads: [person("I7", { private: true, death_ref_index: -1, media_list: [ref("m-O1", { rect: [1, 1, 5, 5] })] }), person("I8", { private: true, media_list: [ref("m-O1")] })] }), "O1", {});
+    expect(d.tags.map((x) => x.personId)).toEqual(["I1", "I2"]);
+    expect(JSON.stringify(d)).not.toMatch(/FirstI[78]/);
+  });
+  it("origin line (M-8): post links the post and names its author, living or not; upload names the uploader; import shows none", () => {
     const d = detailOf(cat(), "O3", {});
-    expect(d).toMatchObject({ origin: "post", originRef: POST_ID, originBy: { displayName: LIVING_NAME }, commentsSubject: "media:O3" });
-    expect(JSON.stringify(d.originBy)).not.toContain("Nine");
+    expect(d).toMatchObject({ origin: "post", originRef: POST_ID, originBy: { displayName: "FirstI9 Sample" }, commentsSubject: "media:O3" });
     const up = detailOf(cat(), "O4", {});
     expect(up).toMatchObject({ origin: "upload", originRef: "I3", originBy: { displayName: "FirstI3 Sample" } });
     const unseen = detailOf(cat({ posts: [] }), "O3", {});
@@ -192,8 +195,8 @@ describe("detail", () => {
     const w = world();
     w.heads.find((h) => h.handle === "p-I3").obj.death_ref_index = -1;
     const living = detailOf(buildCatalog(w), "O4", {});
-    expect(living.originBy).toEqual({ displayName: LIVING_NAME });
-    expect(living.originRef).toBeUndefined();
+    expect(living.originBy).toEqual({ displayName: "FirstI3 Sample" });
+    expect(living.originRef).toBe("I3");
   });
   it("an ungraduated post photo has the post as origin, no tags, and the post as comment subject", () => {
     const d = detailOf(cat(), `pa-${UPLOAD_A}`, {});

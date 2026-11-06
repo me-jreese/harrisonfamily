@@ -7,7 +7,7 @@
 //   queue         the kit editor reports its unsent changes through onQueueChange; they are kept in the store. On the next mount the stored ones are replayed first
 //                 (a stale one is dropped as a conflict, never overwritten); what could not be sent yet is said in a line above the editor.
 //   self-untag    RemoveMeControl ("remove me from this photo", confirm, a 10 second undo) over a port that calls consent.selfUntag and, for the undo, undoSelfUntag.
-//   names         the tagged people's names come from the server's read (a living person is already "a living family member", P4-R18).
+//   names         the tagged people's names come from the server's read (the server names every tagged person, living or deceased, P4-R37).
 import "@io-kit/media/tokens.css";
 import "@io-kit/media/tags.css";
 import "../tag-editor.css";
@@ -88,7 +88,7 @@ export function HfyTagEditor({ mediaId, onClose, onSaved }) {
     try {
       const r = await kit.source.readTags(mediaId);
       if (alive.current) setNames((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(r.names).map(([id, v]) => [id, v.displayName])) }));
-    } catch { /* the kit falls back to "living family member" */ }
+    } catch { /* the kit keeps the names it already has */ }
   };
 
   useEffect(() => {

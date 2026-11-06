@@ -5,7 +5,7 @@
 //   listMedia({section, filter, cursor, limit}) -> {cards, nextCursor, counts}                      (the API reply already has the kit shape; cards are cleaned)
 //   getMedia(id, {section, filter})             -> {card, imageUrl, description?, origin, originRef?, originName?, neighbors?, tags, version}
 //                                                  plus the extras the page uses: handle (the Gramps handle, for the shipped tag editor), commentsSubject.
-// The API says `previousId` (the next newer item) and `nextId` (the next older one), `originBy.displayName` and, on a tag, `person: {displayName, living}`.
+// The API says `previousId` (the next newer item) and `nextId` (the next older one), `originBy.displayName` and, on a tag, `person: {displayName}`.
 // The kit says `neighbors {prevId, nextId, position, total}` and `originName`. position and total come from the API (`position`, `total`); an older reply
 // without them gives 0 and 0, which the page's labels draw as nothing. Errors: 404 is NOT_FOUND and 401 or 403 is FORBIDDEN (the kit shows "not found" for
 // both), everything else REQUEST_FAILED with the HTTP status (0 for a network failure); the kit shows its error banner with a retry.
@@ -37,7 +37,7 @@ export function toDetail(d, id) {
     ...(inList ? { neighbors: { prevId, nextId, position: isNum(d.position) ? d.position : 0, total: isNum(d.total) ? d.total : 0 } } : {}),
     tags: (Array.isArray(d.tags) ? d.tags : []).map((t) => ({
       personId: String(t.personId), mediaId: String(t.mediaId ?? id), rect: Array.isArray(t.rect) ? t.rect : null, index: isNum(t.index) ? t.index : 0, state: t.state === "pending-proposal" ? "pending-proposal" : "applied",
-      person: { displayName: str(t.person?.displayName) ?? "a living family member", living: t.person?.living === true },
+      person: { displayName: str(t.person?.displayName) ?? String(t.personId) },
     })),
     version: String(d.version ?? ""), ...(str(d.handle) ? { handle: d.handle } : {}), ...(str(d.commentsSubject) ? { commentsSubject: d.commentsSubject } : {}),
   };

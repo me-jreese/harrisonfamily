@@ -11,8 +11,8 @@
 // two to the same answers); the detail asks isMediaPublished() itself as well. An open hidden MOD# item (media: or mediaref:) removes the Media or the tag
 // for everyone but an admin (the owner's own-hidden view of records/mod-overlay.js is deliberately NOT extended to this browser: stricter, fail closed).
 //
-// Redaction (P4-R18; rule SYNC-15, transform.py:790-791): a Person with no death ref is living. In a tag, a living person's displayName is replaced by
-// LIVING_NAME and the tag carries nothing else about the person; the same goes for a living post author or uploader in the origin line.
+// Names (ruling P4-R37, io 2026-11-06, superseding P4-R18): there is no living-name rule. Every tagged person, living or deceased, and the post author or uploader
+// of the origin line carry the real display name. What hides a person is the visibility rule above (a private Person, a private or moderated Media), nothing else.
 //
 // addedAt: the Media's Gramps `change` (epoch seconds; the last time the object changed, the only per-Media time the store holds), or for a post attachment
 // that has not graduated the post's published_at / created_at. Newest first, ties by id descending. The cursor is the (addedAt, id) of the last card, so a
@@ -25,7 +25,6 @@ import { MODQ_OPEN, postAttachmentId } from "./moderation.js";
 import { storeView } from "./records/index.js";
 import { ATTR_ADDED_BY, ATTR_SOURCE, postIdOfSource } from "./media-origin.js";
 
-export const LIVING_NAME = "a living family member";
 export const SECTIONS = Object.freeze(["media", "posts", "all"]);
 export const FILTERS = Object.freeze(["all", "needs_tags", "of_me"]);
 export const DEFAULT_LIMIT = 24;
@@ -43,9 +42,6 @@ const invalid = (field, message) => new HttpError(400, "validation", message, { 
 const unavailable = (message = "the media browser is unavailable") => new HttpError(503, "unavailable", message);
 const isAdmin = (a) => a?.admin === true || (Array.isArray(a?.roles) && a.roles.includes("admin"));
 const sha = (s) => createHash("sha1").update(s).digest("hex");
-
-/** Person is living by the legacy rule SYNC-15: no death ref. */
-export const isLiving = (person) => !(Number.isInteger(person?.death_ref_index) && person.death_ref_index >= 0);
 
 function personName(obj) {
   const first = obj?.primary_name?.first_name;
@@ -205,31 +201,27 @@ export function detailOf(cat, id, query) {
   const section = q.section ?? item.card.section;
   const list = cat.items.filter((it) => inSection(it, section) && matchesFilter(cat, it, q.filter));
   const at = list.findIndex((it) => it.id === id);
-  const redactPerson = (gid) => {
+  const nameOf = (gid) => {
     const p = gid ? cat.personByGid.get(gid) : undefined;
-    return p && isLiving(p.obj) ? { displayName: LIVING_NAME, redacted: true } : { displayName: p ? personName(p.obj) : undefined, redacted: false };
+    return p ? personName(p.obj) : undefined;
   };
 
   const tags = item.tags.map((e) => {
     const gid = e.person.gramps_id ?? e.person.obj.gramps_id;
-    const living = isLiving(e.person.obj);
     return {
       personId: gid, mediaId: id, rect: rectOf(e.ref.rect), index: e.index, state: "applied",
-      person: living ? { displayName: LIVING_NAME, living: true } : { displayName: personName(e.person.obj) ?? gid, living: false },
+      person: { displayName: personName(e.person.obj) ?? gid },
     };
   });
   const post = item.postId ? cat.postsById.get(item.postId) : undefined; // only a post the viewer can see is linked
   let originRef;
   let originBy;
   if (item.origin === "post" && post) {
-    const a = redactPerson(post.author?.id);
     originRef = post.id;
-    originBy = { displayName: a.displayName ?? (typeof post.author?.label === "string" ? post.author.label : undefined) };
-    if (a.redacted) originBy = { displayName: LIVING_NAME };
+    originBy = { displayName: nameOf(post.author?.id) ?? (typeof post.author?.label === "string" ? post.author.label : undefined) };
   } else if (item.origin === "upload" && typeof item.addedBy === "string") {
-    const a = redactPerson(item.addedBy);
-    if (!a.redacted) originRef = item.addedBy;
-    originBy = { displayName: a.displayName };
+    originRef = item.addedBy;
+    originBy = { displayName: nameOf(item.addedBy) };
   }
   if (originBy && originBy.displayName === undefined) originBy = undefined;
 

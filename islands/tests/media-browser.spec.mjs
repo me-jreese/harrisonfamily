@@ -8,10 +8,10 @@ import { axeViolations } from "./axe.mjs";
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const VIEWPORTS = [["375", { width: 375, height: 812 }], ["1280", { width: 1280, height: 900 }]];
 const card = (id, over = {}) => ({ mediaId: id, thumbUrl: `/t/${id}-320.png`, width: 320, height: 240, section: "media", tagCount: 1, needsTags: false, title: `Photo ${id}`, year: 1952, grampsId: id, addedAt: 100, thumb: { s320: `/t/${id}-320.png`, s800: `/t/${id}-800.png`, w: 320, h: 240 }, ...over });
-const tag = (personId, name, living, rect, index) => ({ personId, mediaId: "M0002", rect, index, state: "applied", person: { displayName: name, living } });
+const tag = (personId, name, rect, index) => ({ personId, mediaId: "M0002", rect, index, state: "applied", person: { displayName: name } });
 const detail = (id, over = {}) => ({
   card: card(id, { title: "Picnic by the lake" }), imageUrl: `/t/${id}-full.png`, description: "Everyone at the lake.", origin: "post", originRef: "POST1", originBy: { displayName: "Ruth Example" },
-  tags: [tag("I0001", "Ada Example", false, [10, 10, 40, 50], 0), tag("I0002", "a living family member", true, null, 1)], version: "v1", commentsSubject: `media:${id}`,
+  tags: [tag("I0001", "Ada Example", [10, 10, 40, 50], 0), tag("I0002", "Bo Example", null, 1)], version: "v1", commentsSubject: `media:${id}`,
   handle: `h${id}`, previousId: "M0001", nextId: "M0003", position: 2, total: 3, ...over,
 });
 
@@ -103,15 +103,15 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.getByRole("button", { name: new RegExp(L.retry, "i") })).toBeVisible();
     });
 
-    test("the detail: title, year, description, origin line, tagged people (a living person is not linked), comments host, previous and next, axe", async ({ page }, testInfo) => {
+    test("the detail: title, year, description, origin line, tagged people (every one is linked, P4-R37), comments host, previous and next, axe", async ({ page }, testInfo) => {
       const state = await open(page, "/all-media/?id=M0002&section=media&filter=all");
       await expect(page.getByRole("heading", { level: 1, name: "Picnic by the lake" })).toBeVisible();
       expect(state.details[0]).toMatchObject({ id: "M0002", section: "media", filter: "all" });
       await expect(page.getByText("Everyone at the lake.")).toBeVisible();
       await expect(page.getByRole("link", { name: "Ruth Example" })).toHaveAttribute("href", "/posts/?id=POST1");
       await expect(page.getByRole("link", { name: "Ada Example" })).toHaveAttribute("href", "/person/?id=I0001");
-      await expect(page.locator("[data-media-people]").getByText("a living family member")).toBeVisible();
-      await expect(page.locator("[data-media-people] a")).toHaveCount(1);
+      await expect(page.locator("[data-media-people]").getByRole("link", { name: "Bo Example" })).toHaveAttribute("href", "/person/?id=I0002");
+      await expect(page.locator("[data-media-people] a")).toHaveCount(2);
       await expect(page.locator('[data-slot="media-comments"]')).toHaveAttribute("data-subject", "media:M0002");
       await expect(page.getByText(DEFAULT_POSITION)).toBeVisible();
       await noSideways(page);

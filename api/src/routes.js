@@ -266,7 +266,7 @@ export const ROUTES = defineRoutes([
   },
   {
     name: "media.get", method: "GET", path: "/media/:id",
-    summary: "One media item by gramps_id (or pa-<upload id> for a post photo not yet graduated), with ?section and ?filter for previous/next: {card, imageUrl, description?, origin: gramps|upload|post, originRef?, originBy?, tags: [{personId, mediaId, rect, index, state, person: {displayName, living}}], version, commentsSubject, previousId, nextId}; living names are redacted; 404 when not in the person gallery",
+    summary: "One media item by gramps_id (or pa-<upload id> for a post photo not yet graduated), with ?section and ?filter for previous/next: {card, imageUrl, description?, origin: gramps|upload|post, originRef?, originBy?, tags: [{personId, mediaId, rect, index, state, person: {displayName}}], version, commentsSubject, previousId, nextId}; every tagged person is named, living or deceased (P4-R37); 404 when not in the person gallery",
     gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.get(c.params.id, c.query)),
   },
   // HFY-TSK-388-0A (BRD D-05, D-09, D-11, D-12, D-34; ruling P4-R26): member web uploads. Behind the feature gate: the portrait route needs portraitV1; the commit decides by purpose (item: mediaAddV1, portrait: portraitV1), 404 while the relevant flag is off. No MCP tool, no policy row.

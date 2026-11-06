@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 import { applyOps } from "../../api/src/records/ops.js";
 
 export const ME = "I9002";
-export const NAMES = { I9002: "Sam Example", I9012: "Father Example", I9003: "Robin Sample" };
-export const PEOPLE = Object.entries(NAMES).map(([grampsId, displayName]) => ({ grampsId, displayName, living: false }));
+export const NAMES = { I9002: "Sam Example", I9012: "Father Example", I9003: "Robin Sample", I9004: "Wren Sample" };
+export const PEOPLE = Object.entries(NAMES).map(([grampsId, displayName]) => ({ grampsId, displayName, isLiving: grampsId === "I9004" }));
 export const MEDIA = {
   O1: { handle: "MTAG1", w: 800, h: 600, title: "Landscape group" },
   O2: { handle: "MTAG2", w: 600, h: 900, title: "Portrait, nobody tagged yet" },
@@ -36,9 +36,9 @@ export function detailOf(state, gid) {
   const versions = [];
   for (const [pid, e] of Object.entries(state.store)) {
     versions.push(`${pid}:${e.version}`);
-    (e.obj.media_list || []).forEach((r, index) => { if (r.ref === m.handle) tags.push({ personId: pid, mediaId: gid, rect: r.rect, index, state: "applied", person: { displayName: NAMES[pid], living: false } }); });
+    (e.obj.media_list || []).forEach((r, index) => { if (r.ref === m.handle) tags.push({ personId: pid, mediaId: gid, rect: r.rect, index, state: "applied", person: { displayName: NAMES[pid] } }); });
   }
-  for (const p of state.proposals) if (p.mediaId === gid) tags.push({ personId: p.personId, mediaId: gid, rect: p.rect, index: 100 + p.n, state: "pending-proposal", person: { displayName: NAMES[p.personId], living: false } });
+  for (const p of state.proposals) if (p.mediaId === gid) tags.push({ personId: p.personId, mediaId: gid, rect: p.rect, index: 100 + p.n, state: "pending-proposal", person: { displayName: NAMES[p.personId] } });
   return {
     card: { mediaId: gid, thumbUrl: `/media/${m.handle}.jpg`, width: m.w, height: m.h, section: "media", tagCount: tags.length, needsTags: tags.length === 0, title: m.title },
     imageUrl: `/media/${m.handle}.jpg`, origin: "gramps", tags, version: versions.join("|"), handle: m.handle, commentsSubject: `media:${gid}`

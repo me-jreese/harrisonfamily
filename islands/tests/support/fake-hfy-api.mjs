@@ -4,7 +4,6 @@
 import { applyOps } from "../../../api/src/records/ops.js";
 import { normalizeRect } from "../../../api/src/rect.js";
 
-const LIVING = "a living family member";
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const json = (status, data) => ({ ok: status >= 200 && status < 300, status, json: async () => data });
 
@@ -30,7 +29,7 @@ export function createFakeApi(seed = {}, { admin = false } = {}) {
     const tags = [];
     for (const p of persons.values()) {
       p.obj.media_list.forEach((el, index) => {
-        if (el.ref === m.handle) tags.push({ personId: p.gid, mediaId: gid, rect: safe(el.rect), index, state: "applied", person: { displayName: p.living ? LIVING : p.name, living: p.living } });
+        if (el.ref === m.handle) tags.push({ personId: p.gid, mediaId: gid, rect: safe(el.rect), index, state: "applied", person: { displayName: p.name } });
       });
     }
     return { card: { mediaId: gid, tagCount: tags.length }, tags, version: `${m.handle}|${tags.map((t) => `${t.personId}:${t.index}:${persons.get(t.personId).version}`).join("|")}` };
@@ -73,9 +72,9 @@ export function createFakeApi(seed = {}, { admin = false } = {}) {
   const people = {
     async search(q, limit) {
       const needle = String(q || "").trim().toLowerCase();
-      return [...persons.values()].filter((p) => p.name.toLowerCase().includes(needle)).slice(0, limit).map((p) => ({ id: p.gid, title: p.name, photo: p.photo, living: p.living }));
+      return [...persons.values()].filter((p) => p.name.toLowerCase().includes(needle)).slice(0, limit).map((p) => ({ id: p.gid, title: p.name, photo: p.photo }));
     },
-    async byId(id) { const p = persons.get(id); return p ? { id, title: p.name, photo: p.photo, living: p.living } : null; },
+    async byId(id) { const p = persons.get(id); return p ? { id, title: p.name, photo: p.photo } : null; },
   };
   return {
     fetch, calls, proposals, hooks, people,
