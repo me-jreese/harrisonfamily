@@ -64,8 +64,8 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "6400b81d",
-        "css": "acb4acbc"
+        "js": "86e01c4d",
+        "css": "3d97e51e"
       },
       "notifications": {
         "js": "339b0773",
@@ -76,8 +76,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "fa23ad52",
-        "css": "a3ad2b3b"
+        "js": "85de8bb0",
+        "css": "e955e9a8"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -92,12 +92,16 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "dac0352c",
-        "css": "ca219197"
+        "js": "fb560314",
+        "css": "dfc6ddf3"
+      },
+      "record-moderation": {
+        "js": "865cbf9f",
+        "css": "5b548e69"
       },
       "review": {
-        "js": "83a6e3db",
-        "css": "d3f4cc44"
+        "js": "73e16fab",
+        "css": "d9db1c3c"
       },
       "search": {
         "js": "99872d4f",
@@ -112,8 +116,8 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "b68af309",
-        "css": "3610897c"
+        "js": "8cd5f926",
+        "css": "c249f04c"
       },
       "tree": {
         "js": "24de6c27",
