@@ -172,3 +172,17 @@ a.io-chat-name-link:focus-visible {
   outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus);
   outline-offset: var(--io-control-focus-offset);
 }
+
+/* ------------------------------------------------------------------------------------------------ the roster panel (HFY-ISS-026) */
+/* HFY-TSK-385: the panel starts collapsed. Collapsed it is a small launcher (the dot, "chat", an unread mark; the title bar keeps the kit's
+   44px target) instead of a 15rem bar. Open, it is capped to the viewport under the shell's bar (its roster scrolls inside it) and clears
+   the home indicator. */
+.io-chat-panel:not(:has(.io-chat-panel-body)) { width: auto; min-width: var(--io-control-tap-min); }
+.io-chat-panel:not(:has(.io-chat-panel-body)) .io-chat-bar-title { padding-inline-end: var(--io-chat-gap); }
+.io-chat-panel {
+  max-height: min(var(--io-chat-panel-height), calc(100dvh - var(--io-shell-bar-h) - var(--io-shell-safe-top) - var(--io-space-6)));
+  padding-block-end: var(--io-shell-safe-bottom);
+}
+/* While it is open on a wide screen the page makes room for it (the island sets --io-hfy-chat-reserve to the panel's right edge), so the panel
+   sits beside the content and never over it. */
+html.hfy-chat-open .hfy-scroller { padding-inline-start: var(--io-hfy-chat-reserve, 0); box-sizing: border-box; }

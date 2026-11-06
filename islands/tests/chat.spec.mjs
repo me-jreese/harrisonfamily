@@ -100,8 +100,15 @@ async function expectRowRing(page, loc, label) {
 }
 
 /** Stubs on the context (so a pop-out window gets them too): flags, the edge session, the refresh, the API, and the hub for the sockets. */
-async function wire(context, { flag = true, session = ME, hub = null, refuse = null, exp = null } = {}) {
+async function wire(context, { flag = true, session = ME, hub = null, refuse = null, exp = null, fresh = false } = {}) {
   const log = { chatAssets: [], refreshes: 0 };
+  // HFY-TSK-385: the roster panel now starts collapsed at every width (it used to start open from 64rem). The specs written for the open
+  // panel keep their premise by remembering "open" on a wide screen the way a member who opened it would; `fresh: true` is a first visit.
+  if (!fresh) {
+    await context.addInitScript(() => {
+      try { if (localStorage.getItem("hfy:chat:panel") === null) localStorage.setItem("hfy:chat:panel", "open"); } catch { /* storage blocked */ }
+    });
+  }
   // `exp`: the session expires `exp` seconds from now until /auth/refresh is called, and an hour after it (the page's single refresh).
   const clock = { refreshed: false, at: Date.now() };
   const expiry = () => (exp && !clock.refreshed ? Math.floor(clock.at / 1000) + exp : Math.floor(Date.now() / 1000) + 3600);
@@ -123,6 +130,7 @@ async function wire(context, { flag = true, session = ME, hub = null, refuse = n
 }
 
 const panel = (page) => page.getByTestId("io-chat-panel");
+const bar = (page) => panel(page).getByRole("button", { name: "chat" });
 const moles = (page) => page.getByTestId("io-chat-mole");
 const composer = (page) => page.getByRole("textbox", { name: "message" });
 const lastLine = (scope) => scope.locator(".io-chat-line").last();
@@ -535,7 +543,7 @@ test.describe("1280", () => {
     await wire(context, { hub });
     await page.goto("/contact/", { waitUntil: "domcontentloaded" });
     await expect(panel(page)).toBeVisible();
-    await panel(page).getByRole("button", { name: "chat" }).click(); // the roster starts folded below 64rem
+    await expect(bar(page)).toHaveAttribute("aria-expanded", "true"); // remembered open by wire(), at every width (HFY-TSK-385)
     await panel(page).getByRole("button", { name: /Pat Example/ }).click();
     await panel(page).getByRole("button", { name: /Alex Example/ }).click();
     const chip = page.locator(".io-chat-more > button.io-chat-bar");
@@ -728,8 +736,9 @@ test.describe("a session's chat state", () => {
   test("sign-out erases the snapshot, the panel and mole state and the outbox, so nothing readable or queued outlives the session", async ({ page, context }) => {
     const hub = chatHub();
     hub.virtual(PAT);
-    await wire(context, { hub });
+    await wire(context, { hub, fresh: true });
     await page.goto("/contact/", { waitUntil: "domcontentloaded" });
+    await bar(page).click(); // a first visit: the panel starts collapsed (HFY-TSK-385)
     await panel(page).getByRole("button", { name: /Pat Example/ }).click();
     await composer(page).fill("a private line");
     await composer(page).press("Enter");
