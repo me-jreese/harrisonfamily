@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { VIEW_KEY, readView } from "../src/lib/hourglass-ui.js";
 import { bigHref } from "../src/lib/tree-hourglass.js";
 import { cachedGraph } from "../src/lib/tree-data.js";
-import { treeLinkHref } from "../src/lib/tree-link.js";
+import { hourglassLinks, treeLinkHref } from "../src/lib/tree-link.js";
 import { GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const lib = (f) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", f), "utf8");
@@ -59,4 +59,27 @@ test("cachedGraph asks once while the graph is ready, and again after a failure;
   const boom = {};
   assert.equal((await cachedGraph(boom, async () => { throw new Error("offline"); })).state, "error");
   assert.equal(boom.promise, null);
+});
+
+test("the footer links exist only for views the visitor has: outline with familyViz, table with familyViz and familyVizTime", () => {
+  const f = (o) => hourglassLinks(o);
+  assert.deepEqual(f({ familyViz: true }), { outline: true, table: false });
+  assert.deepEqual(f({ familyViz: true, familyVizTime: false }), { outline: true, table: false });
+  assert.deepEqual(f({ familyViz: true, familyVizTime: true }), { outline: true, table: true });
+  assert.deepEqual(f({ familyViz: false, familyVizTime: true }), { outline: false, table: false }, "the time view needs familyViz too");
+  assert.deepEqual(f({ familyVizTime: true }), { outline: false, table: false });
+  assert.deepEqual(f({ familyViz: "true", familyVizTime: "true" }), { outline: false, table: false }, "only a real true counts");
+  assert.deepEqual(f(null), { outline: false, table: false }, "flags that could not be read");
+  assert.deepEqual(f(undefined), { outline: false, table: false });
+  // the renderer draws the table link only from what this says, and the outline link always (the tree is only drawn with familyViz)
+  assert.match(lib("tree-hourglass.js"), /links\.table && \[/);
+  assert.match(lib("tree-link.js"), /tableOn = hourglassLinks\(flags\)\.table;/);
+});
+
+test("the hourglass has no toast of its own: the thank-you is a polite status line, and the person page waits for the island before holding the frame back for good", () => {
+  assert.match(lib("tree-hourglass.js"), /role: "status"/);
+  assert.match(lib("tree-hourglass.js"), /not a toast/);
+  const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "11ty", "js", "person-page.js"), "utf8");
+  assert.match(page, /ISLAND_WAIT_MS = 4000/);
+  assert.match(page, /watchForIsland\(personId\);/);
 });

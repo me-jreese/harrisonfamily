@@ -114,6 +114,26 @@
     renderFamilyVisualization(lastRendered.person, lastRendered.personId);
   });
 
+  // HFY-TSK-379: the signal above comes only from the person island. If that island never runs (personV2 off, or its script fails to load) nothing would
+  // draw the frame held back, and the family section would be blank. So, a few seconds after a render that held the frame back, an empty
+  // [data-slot="tree-link"] host (the island fills it as soon as it has the flags: the link, the switch or the mini view) means "no island": draw the frame.
+  const ISLAND_WAIT_MS = 4000;
+  let islandWatch = null;
+  function watchForIsland(personId) {
+    clearTimeout(islandWatch);
+    if (!personMiniOn) {
+      return;
+    }
+    islandWatch = setTimeout(() => {
+      const host = document.querySelector('[data-slot="tree-link"]');
+      if (!personMiniOn || !lastRendered || lastRendered.personId !== personId || (host && host.firstElementChild)) {
+        return;
+      }
+      personMiniOn = false;
+      renderFamilyVisualization(lastRendered.person, lastRendered.personId);
+    }, ISLAND_WAIT_MS);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
     const loading = document.getElementById("person-loading");
@@ -286,6 +306,7 @@
     const hasEvents = renderEvents(person);
     const hasFamilyList = renderFamily(person);
     const hasFamilyVisualization = renderFamilyVisualization(person, personId);
+    watchForIsland(personId);
     if (!hasFamilyList && !hasFamilyVisualization) {
       const familyData = document.getElementById("person-family-data");
       if (familyData) {

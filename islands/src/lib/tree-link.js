@@ -24,6 +24,13 @@ export function fillTreeLink(doc, personId, familyViz) {
   return true;
 }
 
+/**
+ * Which of the hourglass footer's "prefer a list?" links exist for these flags (viz.md section 14). The outline view of /tree/ is always rendered with familyViz
+ * (it is the accessible path, section 12.3), so its link shows whenever the hourglass does; the table view is the lifelines' screen-reader twin
+ * (lib/tree-view.js TABLE_VIEW) and exists only with familyVizTime. Without familyViz nothing is drawn at all.
+ */
+export const hourglassLinks = (flags) => ({ outline: Boolean(flags) && flags.familyViz === true, table: Boolean(flags) && flags.familyViz === true && flags.familyVizTime === true });
+
 /** Event dispatched when the mini focus view is wanted but not drawn; person-page.js then draws the Graphviz frame it had held back. */
 export const MINI_UNAVAILABLE = "hfy:person-mini-unavailable";
 
@@ -69,7 +76,7 @@ export function mountTreeLink(win = window) {
       flagOn = Boolean(flags) && flags.familyViz === true;
       miniOn = flagOn && flags.familyVizPersonMini === true;
       hourglassOn = flagOn && flags.familyVizHourglass === true;
-      tableOn = flagOn && flags.familyVizTime === true;
+      tableOn = hourglassLinks(flags).table;
       resolved = true;
       fill(idNow());
     });

@@ -143,6 +143,24 @@ test("the table link shows only with familyVizTime", async ({ page }) => {
   await expect(tree(page).getByRole("link", { name: "table" })).toHaveAttribute("href", "/tree/?view=table&focus=I9007");
 });
 
+test("the outline link shows with the hourglass, with and without familyVizTime", async ({ page }) => {
+  await open(page, "full", { width: 375, flags: { familyVizTime: false } });
+  await ready(page);
+  await expect(tree(page).getByRole("link", { name: "outline" })).toHaveAttribute("href", "/tree/?view=outline&focus=I9007");
+  await expect(tree(page).getByRole("link", { name: "table" })).toHaveCount(0);
+});
+
+test("a redraw (the width changes) keeps keyboard focus on the same card", async ({ page }) => {
+  await open(page, "full", { width: 375 });
+  await ready(page);
+  const card = tree(page).getByRole("link", { name: "Rowan Alder, father" });
+  await card.focus();
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Rowan Alder, father");
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Rowan Alder, father");
+});
+
 test("one parent: the known side keeps its caption and two generations; the unknown side has no caption", async ({ page }) => {
   await open(page, "oneParent", { width: 375 });
   await ready(page);
@@ -360,6 +378,23 @@ test("the chunk failing to load is the same: the frame appears", async ({ page }
   await open(page, "full", { width: 375 });
   await expect(page.locator("#person-family-visualization svg")).toHaveCount(1);
   await expect(page.locator(".hfy-hg__bar")).toHaveCount(0);
+});
+
+test("the hourglass on with the person island off (personV2 false): nothing signals, so the page draws the Graphviz frame after a few seconds", async ({ page }) => {
+  const counts = { graph: 0, svg: 0, chunk: 0 };
+  await open(page, "full", { width: 375, flags: { personV2: false }, counts });
+  await expect(page.locator("#person-family-visualization svg")).toHaveCount(1, { timeout: 10000 });
+  await expect(page.locator("#person-family-visualization")).toBeVisible();
+  await expect(tree(page)).toHaveCount(0);
+  expect(counts.chunk).toBe(0);
+  expect(counts.graph).toBe(0);
+});
+
+test("the person island failing to load is the same: the frame appears", async ({ page }) => {
+  await page.route(/\/js\/islands\/person\.js/, (r) => r.abort());
+  await open(page, "full", { width: 375 });
+  await expect(page.locator("#person-family-visualization svg")).toHaveCount(1, { timeout: 10000 });
+  await expect(tree(page)).toHaveCount(0);
 });
 
 // ---- motion, focus, axe ----

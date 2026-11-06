@@ -76,7 +76,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "d5220a75",
+        "js": "7291a98e",
         "css": "a3ad2b3b"
       },
       "person-links": {
