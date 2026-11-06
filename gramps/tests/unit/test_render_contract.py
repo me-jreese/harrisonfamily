@@ -199,8 +199,8 @@ class PhotoRegionsAndTags(unittest.TestCase):
     def test_gallery_region_is_the_exact_rect_or_null(self):
         self.assertEqual(self.photo["region"], [5, 5, 45, 95])
         self.assertEqual(self.quill["primaryPhoto"]["region"], [5, 5, 45, 95])
-        # the tree: a [0,0,100,100] rect is kept as stored (the crop rule is the consumer's), a float rect has no region
-        self.assertEqual(rs.person("I0014")["mediaGallery"][0]["region"], [0, 0, 100, 100])
+        # the tree: a [0,0,100,100] rect is the full frame, which Gramps reads as no region (P4-R16, HFY-TSK-401); a float rect has no region
+        self.assertIsNone(rs.person("I0014")["mediaGallery"][0]["region"])
         self.assertIsNone(rs.person("I0015")["mediaGallery"][0]["region"])         # a float rect is not an integer rect
         self.assertIsNone(rs.person("I0015")["mediaGallery"][1]["region"])         # no rect at all
 

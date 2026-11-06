@@ -1068,10 +1068,16 @@ p = PE("p1", media_list=refs)
 vec("media", "media.rect.full_frame", "A [0,0,100,100] rectangle becomes null in the cloud; other rectangles and null stay", ["media.rect.full_frame"], [m1, p],
     {"m1": C(m1, path=""), "p1": C(p, media_list=[MR("m1", None), MR("m1", [10, 10, 50, 60]), MR("m1", None)])})
 
-bad = [MR("m1", [10, 10, 50, 60]), MR("m1", [12.5, 10, 50, 60]), MR("m1", [60, 10, 50, 70]), MR("m1", [10, 10, 101, 60]), MR("m1", [10, 10, 50])]
+bad = [MR("m1", [10, 10, 50, 60]), MR("m1", [12.5, 10, 50, 60]), MR("m1", [-1, 10, 50, 60]), MR("m1", [10, 10, 101, 60]), MR("m1", [10, 10, 50])]
 base_p = PE("p1", media_list=[MR("m1", [10, 10, 50, 60]), MR("m1", [1, 2, 3, 4]), MR("m1", [5, 5, 40, 40]), MR("m1", [6, 6, 41, 41]), MR("m1", [7, 7, 42, 42])])
 p = PE("p1", media_list=bad)
-vec("media", "media.rect.degenerate_or_float.synced", "A fractional, inverted, out-of-range or short rectangle is held: the cloud keeps the last synced rectangle",
+refs = [MR("m1", [40, 40, 40, 40]), MR("m1", [10, 10, 10, 50]), MR("m1", [10, 30, 60, 30]), MR("m1", [58, 93, 12, 7]), MR("m1", [0, 0, 0, 0])]
+p_nr = PE("p1", media_list=refs)
+vec("media", "media.rect.no_region", "A point becomes null in the cloud (no region); a box with one zero-extent axis and reversed corners are kept as stored (P4-R16)",
+    ["media.rect.full_frame"], [m1, p_nr],
+    {"m1": C(m1, path=""), "p1": C(p_nr, media_list=[MR("m1", None), MR("m1", [10, 10, 10, 50]), MR("m1", [10, 30, 60, 30]), MR("m1", [58, 93, 12, 7]), MR("m1", None)])})
+
+vec("media", "media.rect.degenerate_or_float.synced", "A fractional, out-of-range or short rectangle is held: the cloud keeps the last synced rectangle",
     ["media.rect.degenerate_or_float"], [m1, p], {"m1": C(m1, path=""), "p1": C(p, media_list=base_p["media_list"])},
     holds=[H("p1", "media.rect.degenerate_or_float", "field", "/media_list/%d/rect" % i) for i in (1, 2, 3, 4)],
     context={"base": {"p1": base_p}})

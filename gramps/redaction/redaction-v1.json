@@ -779,7 +779,7 @@
       "path": "/media_list/*/rect",
       "action": "local_only",
       "phase": "fields",
-      "summary": "A media reference rectangle of [0,0,100,100] is normalised to null in the cloud; lift restores it.",
+      "summary": "A media reference rectangle of [0,0,100,100], or a point (x1 = x2 and y1 = y2), is normalised to null in the cloud: both mean no region. Lift restores it.",
       "source": "BRD2 11.1",
       "server": "none",
       "params": { "replaceWith": null }
@@ -791,7 +791,7 @@
       "path": "/media_list/*/rect",
       "action": "local_only",
       "phase": "fields",
-      "summary": "A media reference rectangle that is degenerate (not four numbers in 0..100 with x1 < x2 and y1 < y2) or that has a non-integer value is held: the cloud keeps the last synced rectangle, or null for a new reference. Lift restores the local one.",
+      "summary": "A media reference rectangle that is malformed (not four integers in 0..100) is held: the cloud keeps the last synced rectangle, or null for a new reference. Lift restores the local one.",
       "source": "BRD2 11.1",
       "server": "none",
       "params": { "hold": true }

@@ -257,7 +257,15 @@ class Rules(unittest.TestCase):
                                                       "place-coordinates-rounded", "place-code-local", "note-newly-visible",
                                                       "text-gate-withheld", "tree-svg-frozen", "merged-person-stub",
                                                       "media-held-binary", "held-object", "media-location-stripped",
-                                                      "media-baseline-unhydrated"]))
+                                                      "media-baseline-unhydrated", "no-region-rect"]))
+
+    def test_no_region_rect(self):
+        """HFY-TSK-401, P4-R16: the full frame and a point are null in the shadow output where the legacy export copied them."""
+        legacy, shadow = build_site(), build_site()
+        edit(legacy, PERSON1, lambda d: d.update(extraRegions=[{"region": [0, 0, 100, 100]}, {"rect": [40, 40, 40, 40]}]))
+        edit(shadow, PERSON1, lambda d: d.update(extraRegions=[{"region": None}, {"rect": None}]))
+        doc = self.explained(legacy, shadow)
+        self.assertEqual(list(doc["rules"]), ["no-region-rect"])
 
     def test_excluded_place(self):
         legacy, shadow = build_site(), build_site()
@@ -2070,7 +2078,7 @@ class Agreement(unittest.TestCase):
         self.assertEqual(result["classes"]["only_in_legacy"]["explained"], len(committed["only_in_legacy"]))
         self.assertEqual(result["classes"]["changed"]["explained"], len(committed["changed"]))
         self.assertEqual(result["classes"]["only_in_render"], {"explained": 0, "unexplained": 0})
-        self.assertEqual(list(result["rules"]), ["excluded-place"])
+        self.assertEqual(list(result["rules"]), ["excluded-place", "no-region-rect"])
         self.assertEqual(result["normalised"], {})
         self.assertGreater(result["files"]["identical"], 80)
 

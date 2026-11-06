@@ -150,8 +150,8 @@ Each rule has an id, a class, the Gramps classes it applies to, a path pattern, 
 | `media.exif_gps.hold` | Media | `/` | `hold_media` | classify | none | A JPEG, PNG or TIFF with EXIF GPS latitude or longitude is held (remove the location info, then sync). (sync.md 5.3 and 5.5, Q2-02 item 6) |
 | `media.birth_linked.hold` | Media | `/` | `hold_media` | classify | none | A Media referenced by a birth-like event or its citations is held until io releases it. (BRD2 11.1, PS-03) |
 | `media.pdf.hold` | Media | `/mime` | `hold_media` | classify | none | A Media with mime application/pdf is held until io releases it (scanned certificates). (BRD2 11.1, PS-03) |
-| `media.rect.full_frame` | Person, Family, Event, Place, Source, Citation | `/media_list/*/rect` | `local_only` | fields | none | A media reference rectangle of [0,0,100,100] is normalised to null in the cloud; lift restores it. (BRD2 11.1) |
-| `media.rect.degenerate_or_float` | Person, Family, Event, Place, Source, Citation | `/media_list/*/rect` | `local_only` | fields | none | A media reference rectangle that is degenerate (not four numbers in 0..100 with x1 < x2 and y1 < y2) or that has a non-integer value is held: the cloud keeps the last synced rectangle, or null for a new reference. Lift restores the local one. (BRD2 11.1) |
+| `media.rect.full_frame` | Person, Family, Event, Place, Source, Citation | `/media_list/*/rect` | `local_only` | fields | none | A media reference rectangle of [0,0,100,100], or a point (x1 = x2 and y1 = y2), is normalised to null in the cloud: both mean no region. Lift restores it. (BRD2 11.1) |
+| `media.rect.degenerate_or_float` | Person, Family, Event, Place, Source, Citation | `/media_list/*/rect` | `local_only` | fields | none | A media reference rectangle that is malformed (not four integers in 0..100) is held: the cloud keeps the last synced rectangle, or null for a new reference. Lift restores the local one. (BRD2 11.1) |
 
 ## Tables the rules read
 
@@ -181,7 +181,7 @@ Each rule has an id, a class, the Gramps classes it applies to, a path pattern, 
 - Held until io releases them, by mime type: `application/pdf`.
 - Held when the file has EXIF GPS latitude or longitude, by mime type: `image/jpeg`, `image/png`, `image/tiff`.
 - The addon's per-tree setting `strip_location` (default off, a key of its `config.json`; HFY-TSK-374) changes what the addon hands the projection for such a JPEG or PNG: the numbers of a COPY with minimal metadata, which is what it uploads. The copy keeps the picture byte for byte, its colour profile (if it passes a check, with every text in it replaced by a fixed neutral string) and its Orientation, and drops every other Exif tag, all XMP, IPTC, comments and text chunks, so it is image-lossless and not metadata-lossless. The policy is unchanged, the file on disk and the Gramps database are never written, and a TIFF, or a file the addon cannot copy with certainty (an unusual structure, a colour profile it does not accept, bytes inside or after the picture data that are not the picture), is still held. The addon's reading of a file's position (`mediafile.exif_gps`) covers every IFD of every TIFF structure in the metadata, deflated and UTF-16 XMP, hex raw profiles, XMP property names and values that are positions, and comment text with a coordinate pair, so a position the older reading missed is held too. See [Photos with a location](../how-to/install-the-gramps-sync-addon.md#9-push-the-trees-changes).
-- A media reference rectangle is four integers from 0 to 100 with x1 < x2 and y1 < y2. `[0, 0, 100, 100]` is normalised to null; any other shape is held.
+- A media reference rectangle is four integers from 0 to 100. `[0, 0, 100, 100]` and a point (x1 = x2 and y1 = y2) are normalised to null, both meaning no region; a box with one zero-extent axis and reversed corners are kept as stored (P4-R16); any other shape is held.
 
 ### Free-text scan
 

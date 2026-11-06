@@ -305,7 +305,10 @@ class RulesHelpers(unittest.TestCase):
         self.assertIsNone(R.rect_problem([10, 10, 50, 60]))
         self.assertEqual(R.rect_problem([0, 0, 100, 100]), "full_frame")
         self.assertEqual(R.rect_problem([0.0, 0.0, 100.0, 100.0]), "full_frame")
-        for bad in ([12.5, 10, 50, 60], [60, 10, 50, 70], [10, 70, 50, 60], [10, 10, 101, 60], [-1, 0, 5, 5], [10, 10, 50], "x", [True, 0, 5, 5], [5, 5, 5, 9]):
+        self.assertEqual(R.rect_problem([5, 5, 5, 5]), "no_region")
+        for kept in ([60, 10, 50, 70], [10, 70, 50, 60], [5, 5, 5, 9], [5, 5, 9, 5]):  # reversed corners and a one-axis-zero box are kept (P4-R16)
+            self.assertIsNone(R.rect_problem(kept), kept)
+        for bad in ([12.5, 10, 50, 60], [10, 10, 101, 60], [-1, 0, 5, 5], [10, 10, 50], "x", [True, 0, 5, 5]):
             self.assertEqual(R.rect_problem(bad), "degenerate_or_float", bad)
 
     def test_url_parts_and_rules(self):

@@ -21,7 +21,20 @@ RULES = {
                    "ancestor. The live ETL publishes all of them.",
         "reference": "BRD2 section 11.1 (5.3), sync.md 5.3, D2-32, Q2-02 item 2",
     },
+    "no-region-rect": {
+        "summary": "The renderer reads a MediaRef rectangle the way Gramps does (hfygramps/rect.py): the full frame [0,0,100,100] "
+                   "and a point (x1 == x2 and y1 == y2) are no region, so a tag or region built from one carries rect null. "
+                   "The live ETL copies the stored rectangle. A box with one zero-extent axis and reversed corners are kept "
+                   "as stored on both sides.",
+        "reference": "ruling P4-R16, HFY-TSK-401 (HFY-ISS-028)",
+    },
 }
+
+
+def _no_region_rect(pointer, legacy, render):
+    """True for a rect the renderer reads as no region: ``.../rect`` or ``.../region`` goes from the full frame or a point to null."""
+    return (pointer.endswith(("/rect", "/region")) and render is None and isinstance(legacy, list) and len(legacy) == 4
+            and (legacy == [0, 0, 100, 100] or (legacy[0] == legacy[2] and legacy[1] == legacy[3])))
 
 NORMALISED = [
     "generatedAt: build_search_index.js stamps new Date(); the legacy run fixes it to the same value the renderer is given.",
@@ -147,10 +160,10 @@ def compare(legacy, render, excluded_places):
             changes, rules = [], set()
             for pointer, a, b in json_diff(old, new):
                 owner = _owner_handle(old, pointer)
-                rules.add("excluded-place" if owner in excluded_places else None)
+                rules.add("excluded-place" if owner in excluded_places else "no-region-rect" if _no_region_rect(pointer, a, b) else None)
                 changes.append({"pointer": pointer, "legacy": a, "render": b})
-            if rules == {"excluded-place"}:
-                changed.append({"key": key, "rule": "excluded-place", "changes": changes})
+            if len(rules) == 1 and None not in rules:
+                changed.append({"key": key, "rule": next(iter(rules)), "changes": changes})
             else:
                 unexplained.append({"key": key, "kind": "changed", "changes": changes})
     return {"only_in_legacy": only_legacy, "changed": changed, "only_in_render": only_render, "unexplained": unexplained}

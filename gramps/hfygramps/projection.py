@@ -440,10 +440,11 @@ def lift_coordinate(cloud, local, policy=None):
 
 
 def project_rect(local, base_rect=None, policy=None):
-    """``(cloud value, held)`` for one MediaRef rectangle: ``[0,0,100,100]`` becomes ``None``; a degenerate or fractional rectangle
-    is held (the cloud keeps ``base_rect``, ``None`` for a new reference)."""
+    """``(cloud value, held)`` for one MediaRef rectangle: ``[0,0,100,100]`` and a point become ``None`` (no region); a fractional,
+    out-of-range or malformed rectangle is held (the cloud keeps ``base_rect``, ``None`` for a new reference). A box with one
+    zero-extent axis and reversed corners go through as stored (P4-R16)."""
     problem = R.rect_problem(local, policy)
-    if problem == "full_frame":
+    if problem in ("full_frame", "no_region"):
         return None, False
     if problem == "degenerate_or_float":
         return copy.deepcopy(base_rect), True
@@ -755,8 +756,8 @@ class _Run:
             if not isinstance(el, dict) or "rect" not in el:
                 continue
             problem = R.rect_problem(el["rect"], self.pol)
-            if problem == "full_frame":
-                el["rect"] = None
+            if problem in ("full_frame", "no_region"):
+                el["rect"] = None  # the full frame and a point mean "no region" (P4-R16); one rule id covers both
                 self.fired.add("media.rect.full_frame")
             elif problem == "degenerate_or_float":
                 el["rect"] = copy.deepcopy(R._obj(base_by_key.get(key)).get("rect"))

@@ -173,14 +173,19 @@ export function attributeRule(attr, policy) {
   return null;
 }
 
-/** null for a usable rectangle, "full_frame" for [0,0,100,100], "degenerate_or_float" for a rectangle to hold. */
+/**
+ * null for a usable rectangle, "full_frame" for [0,0,100,100], "no_region" for a point (x1 == x2 and y1 == y2), "degenerate_or_float" for a rectangle
+ * to hold. Gramps-exact (ruling P4-R16): a box with one zero-extent axis and reversed corners are usable as stored. The Python twin is
+ * gramps/hfygramps/rules.py rect_problem (with gramps/hfygramps/rect.py).
+ */
 export function rectProblem(rect, policy) {
   const pol = policy.media;
   if (rect === null || rect === undefined) return null;
   const [lo, hi] = pol.rectRange;
   if (!Array.isArray(rect) || rect.length !== 4 || rect.some((v) => typeof v !== "number" || !Number.isFinite(v) || !Number.isInteger(v))
-    || rect.some((v) => v < lo || v > hi) || rect[0] >= rect[2] || rect[1] >= rect[3]) return "degenerate_or_float";
-  return rect.every((v, i) => v === pol.fullFrameRect[i]) ? "full_frame" : null;
+    || rect.some((v) => v < lo || v > hi)) return "degenerate_or_float";
+  if (rect.every((v, i) => v === pol.fullFrameRect[i])) return "full_frame";
+  return rect[0] === rect[2] && rect[1] === rect[3] ? "no_region" : null;
 }
 
 // ---- URLs

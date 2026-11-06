@@ -4,9 +4,8 @@ Reads the same fixtures file as the node suite (tests/tagging/fixtures/tag-confo
 ruling P4-R16: Gramps-exact for read/compare, null only for the full frame and a point; a box with one zero-extent axis is kept).
 Standard library only. Runs in the io-kit CI `tests` list through `python3 -m unittest discover gramps/tests/unit`.
 
-KNOWN-FAIL ROWS are @unittest.expectedFailure with the cause (file:line) in the docstring; the baseline is docs/reference/BASELINE.md.
-They do not fail CI. When one starts to pass, unittest reports an unexpected success and CI fails until the decorator is removed and
-the baseline updated.
+Since HFY-TSK-401 (HFY-ISS-028) the renderer, the rules and the projection read rectangles Gramps-exact through hfygramps/rect.py, so
+there are no known-fail rows left here; the baseline is docs/reference/BASELINE.md. The per-call-site tests are in test_rect_readers.py.
 """
 
 import json
@@ -20,7 +19,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "gramps"))
 
 import render_support  # noqa: E402,F401  (puts the unit-test helpers on the path like the other tests)
-from hfygramps import rules  # noqa: E402
+from hfygramps import projection, rules  # noqa: E402
 from hfygramps.render import transform  # noqa: E402
 
 with open(os.path.join(ROOT, "tests", "tagging", "fixtures", "tag-conformance.fixtures.json"), encoding="utf-8") as fh:
@@ -54,10 +53,8 @@ class T3FullFrame(unittest.TestCase):
     def test_rules_keep_an_ordinary_region(self):
         self.assertIsNone(rules.rect_problem([30, 47, 34, 54]))
 
-    @unittest.expectedFailure
     def test_render_reader_nulls_the_full_frame(self):
-        """T-3 KNOWN-FAIL: transform.mediaref_rect copies [0,0,100,100]; Gramps stores the full frame as no region
-        (gramps/hfygramps/render/transform.py:431-445)."""
+        """T-3: transform.mediaref_rect reads the full frame as no region, as Gramps does."""
         self.assertIsNone(transform.mediaref_rect([0, 0, 100, 100]))
 
     def test_render_reader_nulls_all_zero(self):
@@ -76,24 +73,18 @@ class T4Degenerate(unittest.TestCase):
         for r in LINES:
             self.assertEqual(transform.mediaref_rect(r["in"]), r["out"], r["id"])
 
-    @unittest.expectedFailure
     def test_render_reader_nulls_a_point(self):
-        """T-4 KNOWN-FAIL: transform.mediaref_rect copies a point; Gramps' editor stores it as no region
-        (gramps/hfygramps/render/transform.py:431-445)."""
+        """T-4: transform.mediaref_rect reads a point as no region."""
         for r in POINTS:
             self.assertIsNone(transform.mediaref_rect(r["in"]), r["id"])
 
-    @unittest.expectedFailure
     def test_rules_do_not_hold_a_line(self):
-        """T-4 KNOWN-FAIL: rules.rect_problem returns "degenerate_or_float" for x1 >= x2 or y1 >= y2, so a line Gramps keeps is held
-        (gramps/hfygramps/rules.py:353-359)."""
+        """T-4: rules.rect_problem keeps a line (one zero-extent axis) as typed."""
         for r in LINES:
             self.assertIsNone(rules.rect_problem(r["in"]), r["id"])
 
-    @unittest.expectedFailure
     def test_rules_do_not_hold_a_point(self):
-        """T-4 KNOWN-FAIL: a point is held as degenerate_or_float; P4-R16 reads it as no region
-        (gramps/hfygramps/rules.py:353-359)."""
+        """T-4: a point is no region (P4-R16), not a held rectangle."""
         for r in POINTS:
             self.assertNotEqual(rules.rect_problem(r["in"]), "degenerate_or_float", r["id"])
 
@@ -102,18 +93,17 @@ class T4ProjectionRestoresBase(unittest.TestCase):
     PROJECTION = os.path.join(ROOT, "gramps", "hfygramps", "projection.py")
 
     def test_projection_still_routes_by_rect_problem(self):
-        """The citation below stays true: the projection nulls full_frame and restores the base rect for degenerate_or_float."""
+        """The projection nulls full_frame and no_region (a point) and restores the base rect for degenerate_or_float."""
         with open(self.PROJECTION, encoding="utf-8") as fh:
             text = fh.read()
-        self.assertIn('problem == "full_frame"', text)
+        self.assertIn('problem in ("full_frame", "no_region")', text)
         self.assertIn('problem == "degenerate_or_float"', text)
 
-    @unittest.expectedFailure
     def test_projection_does_not_restore_base_for_a_line_or_point(self):
-        """T-4 KNOWN-FAIL: the projection restores the base rect (a held field) for every rect_problem == "degenerate_or_float", so a
-        web edit to a line or point is held instead of nulled or kept (gramps/hfygramps/projection.py:755-763; cause rules.py:353-359)."""
+        """T-4: the projection nulls a point and keeps a line; neither is held (the base rect is not restored)."""
         for r in LINES + POINTS:
             self.assertNotEqual(rules.rect_problem(r["in"]), "degenerate_or_float", r["id"])
+            self.assertEqual(projection.project_rect(r["in"], [9, 9, 19, 19]), (r["out"], False), r["id"])
 
 
 class T12OriginBlind(unittest.TestCase):
