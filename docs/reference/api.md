@@ -1018,6 +1018,23 @@ Concurrency: the comment item carries a write counter, `grad_v`, which never lea
 
 The API role needs no new IAM: `s3:PutObject` on `media/*` and `s3:GetObject` on `uploads/comments/*` come from the sync stack parameters (`app-stack.yaml`). The graduated blob has no `md5` in its descriptor (S3's copy gives a SHA-256 only); the desktop materializer computes its own when it downloads the file.
 
+## Graduating post photos
+
+HFY-TSK-387-0G (BRD D-10, D-34, E2E-G). When a post is published, each of its image attachments becomes a Gramps `Media` object with a `MediaRef` on the post's author. It is the post counterpart of [Graduating a comment photo](#graduating-a-comment-photo), and uses the same machinery: `applyBatch()` with origin `graduation`, the `media/<handle>.jpg` copy with a S3-computed SHA-256, and the `hfy:source` Media attribute (`post-photo:post:<post id>/<upload id>`). The code is [`post-graduate.js`](../../api/src/post-graduate.js). The cloud store and the renderer remain the only writers of family data.
+
+**The switch.** `HFY_POST_GRADUATE=on` turns it on; anything else, including an unset variable, is off, and then the publish paths read and write nothing for it. It is a server switch and has no route. The client flag `postGraduateV1` belongs to the UI task and does not control this code. Like the comment route it needs `HFY_ID_POLICY=mint` and a seeded, writable store; when either is missing the hook writes nothing and logs. Deploying it needs the variable added to the app stack, which is a change set that needs io's go-ahead (see [Deploy the app stack](../how-to/deploy-the-app-stack.md)).
+
+| Behavior | Rule |
+| --- | --- |
+| When it runs | After the commit of `posts.create` with `visibility: "published"`, `posts.visibility` to `published`, and `posts.update` of a published post that sent `attachments`. A failure is logged and never fails the post's own write; the next publish, edit or the backfill finishes the photo. |
+| What it makes | One `Media` per image (`desc` is the alt text, `tag_list` holds the `hfy-post` Tag) and one `MediaRef` appended to the author's `media_list` (D-05). The Tag is the existing Tag named `hfy-post`, else one created in the same batch with a handle derived from the name, so two writers cannot make two. |
+| Tagged people | An attachment may carry `tags: [{person: <gramps_id>, rect: [x1, y1, x2, y2]}]` (integer percent, 0 to 100, at most 20 per photo). Each known person gets an appended `MediaRef` with the region; an unknown person is left out; a full-image, zero-area, reversed, out-of-range or non-integer region is stored as `null` (D-03, an interim predicate until the Gramps rule is pinned). The post schema keeps no `tags` field today, so no published post carries one until the post-tagging task adds it. |
+| Idempotency | One marker per photo, `POSTGRAD#<post id>` / `PHOTO#<upload id>`, `{state: pending|done|failed, media_handle, person, at}`, beside the post (an edit rewrites the attachments, so the marker is not kept on them). The handle is minted once; `applyBatch` runs under `postgrad:<post id>:<upload id>`. Republishing or retrying never makes a second `Media`. |
+| Deleting the post | Leaves the `Media`, its blob and the markers (D-10). |
+| Not graduated | A hidden post or a hidden photo (the MOD# overlay), a photo whose type is not `image/jpeg` (`unsupported_type`), a photo with a location (`photo_has_location`) or a missing upload, and a post whose author has no live Person (`author_person_missing`). Each is counted by reason, and a `failed` marker is tried again at the next publish or backfill. |
+
+**Backfill.** [`api/scripts/post-graduate-backfill.mjs`](../../api/scripts/post-graduate-backfill.mjs) graduates the photos of posts published before the switch went on. `--dry-run` is the default: it reads the post index and one marker per photo, writes nothing, and prints counts only (posts scanned, published posts with photos, photos, already graduated, would graduate, would skip with a count per reason). `--apply` refuses to start unless `--approval-ref DOC-<12 hex>` names the document recording io's approval (D-10: dry-run count, io approval, apply), and it also needs io's go-ahead in the session and `HFY_ID_POLICY=mint`. A second apply plans nothing new. Until it completes, the media browser's "Post images" section also reads post attachments that have no marker yet (D-34).
+
 ## Uploads
 
 `POST /uploads` returns a presigned S3 PUT for one post photo, or one comment photo with `purpose` `comment` ([`uploads.js`](../../api/src/uploads.js), [`presign.js`](../../api/src/presign.js)). The Lambda never handles the image bytes.
