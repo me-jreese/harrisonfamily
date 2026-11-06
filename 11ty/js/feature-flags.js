@@ -76,8 +76,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "add680d5",
-        "css": "21a82851"
+        "js": "fa23ad52",
+        "css": "a3ad2b3b"
       },
       "person-links": {
         "js": "d1ab2c79",

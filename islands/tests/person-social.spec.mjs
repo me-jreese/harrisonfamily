@@ -29,6 +29,8 @@ async function stub(page, { me = VISITOR, comments = 30, stories = 12, person = 
   await page.route("**/person/*.json", (r) => (r.request().url().includes("I9001") ? r.fallback() : r.fulfill({ json: [] })));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: me.id, grampsId: me.id, label: me.label } }));
   await page.route("**/auth/refresh", (r) => r.fulfill({ status: 401, json: { error: "no refresh" } }));
+  // the contributions feed (HFY-TSK-189 draws it; its own spec is person-contrib.spec.mjs): an empty feed here
+  await page.route("**/api/contributions**", (r) => r.fulfill({ json: new URL(r.request().url()).pathname.endsWith("/stats") ? { author: "I9001", total: 0, by_kind: {} } : { items: [], cursor: null } }));
   await page.route("**/api/me", (r) => r.fulfill({ json: { id: me.id, label: me.label, admin: false, can: { moderate: false, graduate: false, approve: false } } }));
   await page.route("**/api/comments**", async (r) => {
     const req = r.request();
@@ -98,9 +100,8 @@ test("contribV1 on: #hfy-person-social is filled with the comments and the contr
   expect(await social.evaluate((el) => [...el.querySelector(".hfy-social").children].map((c) => c.id))).toEqual(["hfy-person-comments", "hfy-person-contributions"]);
   await expect(social.getByRole("heading", { name: "comments" })).toBeVisible();
   await expect(social.getByRole("heading", { name: "contributions" })).toBeVisible();
-  // the host for hfy-person-contrib-ui is empty and marked; no empty-state line is drawn before that task owns the feed
-  expect(await page.locator("#hfy-person-contributions [data-hfy-contrib-host]").evaluate((el) => el.childElementCount + el.textContent.trim().length)).toBe(0);
-  await expect(page.locator("#hfy-person-contributions").getByText("no contributions yet")).toHaveCount(0);
+  // the contributions column is drawn by hfy-person-contrib-ui: its host holds the total and the empty line for a person with none
+  await expect(page.locator("#hfy-person-contributions [data-hfy-contrib-host]")).toContainText("no contributions yet.");
   expect(await page.locator("#person-content > #hfy-person-comments").count(), "the comments host is no longer a sibling of the social host").toBe(0);
 });
 

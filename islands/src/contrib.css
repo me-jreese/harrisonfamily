@@ -1,0 +1,102 @@
+/* The contributions column and hero chip of the person page (HFY-TSK-189, social.md section 8; lib/contrib-feed.jsx, lib/contrib-chip.jsx).
+   Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*, --io-radius-* and --io-typography-* (theme-lint no-literal-token-values).
+   A row is one 44 px-or-taller target: the sentence link stretches over the whole row (::after), and the page's name link sits above it. */
+.hfy-social__total { margin: 0 0 var(--io-space-3); color: var(--io-color-semantic-text-dim); font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); }
+.hfy-contrib__skeleton { display: grid; gap: var(--io-space-3); }
+.hfy-contrib__skeleton > .hfy-skeleton { min-block-size: var(--io-control-tap-min); }
+.hfy-contrib__empty { display: grid; justify-items: start; gap: var(--io-space-3); }
+.hfy-contrib__banner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-3); margin: 0; }
+.hfy-contrib__banner > p { flex: 1 1 auto; margin: 0; }
+
+.hfy-contrib__list { margin: 0; padding: 0; list-style: none; }
+.hfy-contrib__row {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--io-space-3);
+  min-block-size: var(--io-control-tap-min);
+  padding-block: var(--io-space-2);
+  border-block-end: 1px solid var(--io-color-semantic-border);
+  color: var(--io-color-semantic-text);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  line-height: var(--io-typography-leading-normal);
+}
+.hfy-contrib__main { display: flex; flex: 1 1 auto; flex-direction: column; min-inline-size: 0; }
+.hfy-contrib__sentence { overflow-wrap: anywhere; }
+.hfy-contrib__time { color: var(--io-color-semantic-text-dim); }
+/* The row's link: the sentence's own words, stretched over the whole row. No underline in any state; the focus ring is on the row. */
+.hfy-contrib__link { color: inherit; text-decoration: none; }
+.hfy-contrib__link::after { content: ""; position: absolute; inset: 0; }
+.hfy-contrib__link:hover { color: var(--io-color-semantic-link-hover); }
+.hfy-contrib__link:focus-visible { outline: none; }
+.hfy-contrib__link:focus-visible::after { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: calc(var(--io-space-1) * -1); }
+/* The page's name (the shared PersonName link) sits above the stretched link, so a tap on the name goes to the page itself. */
+.hfy-contrib__name { position: relative; z-index: 1; }
+.hfy-contrib__tag {
+  flex: none;
+  padding: 0 var(--io-space-2);
+  border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-pill);
+  color: var(--io-color-semantic-text-dim);
+  font-size: var(--io-typography-size-sm);
+}
+
+/* The kind glyph: a 24 px single-weight icon in currentColor (a mask, so it follows the theme and dark mode). */
+.hfy-contrib__glyph {
+  display: block;
+  flex: none;
+  inline-size: var(--io-space-5);
+  block-size: var(--io-space-5);
+  background: var(--io-color-semantic-text-dim);
+  -webkit-mask: no-repeat center / contain;
+  mask: no-repeat center / contain;
+}
+.hfy-contrib__glyph[data-glyph="post"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='3' width='16' height='18' rx='2'/%3E%3Cpath d='M8 8h8'/%3E%3Cpath d='M8 12h8'/%3E%3Cpath d='M8 16h5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='3' width='16' height='18' rx='2'/%3E%3Cpath d='M8 8h8'/%3E%3Cpath d='M8 12h8'/%3E%3Cpath d='M8 16h5'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="comment"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="edit"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M13 7l4 4'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M13 7l4 4'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="accepted"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M8 12.5l3 3 5-6'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M8 12.5l3 3 5-6'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="tag"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12V4h8l10 10-8 8z'/%3E%3Ccircle cx='7.5' cy='8.5' r='1'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12V4h8l10 10-8 8z'/%3E%3Ccircle cx='7.5' cy='8.5' r='1'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="photo"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='11' r='2'/%3E%3Cpath d='M21 16l-5-5-9 8'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='2'/%3E%3Ccircle cx='9' cy='11' r='2'/%3E%3Cpath d='M21 16l-5-5-9 8'/%3E%3C/svg%3E");
+}
+.hfy-contrib__glyph[data-glyph="other"] {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+}
+
+/* The hero chip: a 44 px pill link in the heading chip slot, in the same look as the profile-link chips. */
+.hfy-contrib-chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--io-control-tap-min);
+  padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border);
+  border-radius: var(--io-radius-pill);
+  background: var(--io-color-semantic-surface-raised);
+  color: var(--io-color-semantic-link);
+  font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm);
+  font-weight: var(--io-typography-weight-semibold);
+  text-decoration: none;
+}
+.hfy-contrib-chip:hover { color: var(--io-color-semantic-link-hover); border-color: var(--io-color-semantic-border-strong); text-decoration: none; }
+.hfy-contrib-chip:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }

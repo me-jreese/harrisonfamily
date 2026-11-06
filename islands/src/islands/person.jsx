@@ -6,6 +6,7 @@ import { Comments } from "../lib/comments-ui.jsx";
 import { KitMarkdown } from "../lib/hfy-markdown.jsx";
 import { CappedSection } from "../lib/capped.jsx";
 import { PersonSocial } from "../lib/person-social.jsx";
+import { mountContribChip } from "../lib/contrib-chip.jsx";
 import { mountAt, mountInto } from "../lib/mount.jsx";
 import { mountTreeLink } from "../lib/tree-link.js";
 import { mergedRedirect } from "../lib/merged-person.js";
@@ -85,6 +86,8 @@ async function init() {
     } else {
       host.hidden = false;
       mountInto(host, <PersonSocial id={id} />);
+      // HFY-TSK-189: the hero chip "N contributions" in the heading chip slot, linking to the column just drawn.
+      mountContribChip(id, person);
       return;
     }
   }
