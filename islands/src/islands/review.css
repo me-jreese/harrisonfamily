@@ -156,3 +156,31 @@ html.hfy-shell-v2:has(.io-shell[data-bp="compact"]) .hfy-review__actions { botto
   .hfy-review__actions { position: static; box-shadow: none; }
   .hfy-review__detail { position: sticky; top: var(--io-space-4); }
 }
+
+/* lifeDatesV1 (HFY-TSK-388-0F; board B9): the batch panel, the compare, the deceased confirm and the tag and photo cards. Aliases only. */
+.hfy-batch { display: grid; gap: var(--io-space-3); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); min-width: 0; }
+.hfy-batch__list { display: grid; gap: var(--io-space-2); margin: 0; padding: 0; list-style: none; }
+.hfy-batch__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-3); min-height: var(--io-control-tap-min); padding: var(--io-space-1) var(--io-space-2); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface); box-sizing: border-box; cursor: pointer; }
+.hfy-batch__row--out { cursor: default; border-style: dashed; justify-content: space-between; }
+.hfy-batch__row input { flex: none; inline-size: var(--io-control-tap-min); block-size: var(--io-control-tap-min); margin: 0; }
+.hfy-batch__text { display: grid; gap: var(--io-space-1); min-width: 0; flex: 1 1 calc(4 * var(--io-control-h-lg)); overflow-wrap: anywhere; }
+.hfy-batch__dead { display: inline-flex; align-items: center; min-height: var(--io-control-h-sm); padding: 0 var(--io-space-2); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-pill); font-weight: var(--io-typography-weight-semibold); }
+.hfy-batch__dbody { display: grid; gap: var(--io-space-2); }
+.hfy-batch__names { margin: 0; padding-inline-start: var(--io-space-5); font-weight: var(--io-typography-weight-semibold); overflow-wrap: anywhere; }
+.hfy-batch__years { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-3); }
+.hfy-batch__yline { margin: 0; font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-batch__contested { display: grid; gap: var(--io-space-2); padding-top: var(--io-space-2); border-top: 1px solid var(--io-color-semantic-border); }
+.hfy-cmp { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(4 * var(--io-control-h-lg))), 1fr)); gap: var(--io-space-3); margin: 0; padding: 0; border: 0; min-width: 0; }
+.hfy-cmp__legend { padding: 0; margin-block-end: var(--io-space-2); font-weight: var(--io-typography-weight-semibold); }
+.hfy-cmp__opt { display: grid; align-content: start; gap: var(--io-space-2); min-height: var(--io-control-tap-min); padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface); cursor: pointer; overflow-wrap: anywhere; min-width: 0; }
+.hfy-cmp__opt[data-on="true"] { border: var(--io-control-focus-ring) solid var(--io-color-semantic-accent); }
+.hfy-cmp__opt input { inline-size: var(--io-control-tap-min); block-size: var(--io-control-tap-min); margin: 0; }
+.hfy-cmp__year { font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-cmp__note { margin: 0; padding-inline-start: var(--io-space-2); border-inline-start: 1px solid var(--io-color-semantic-border-strong); }
+.hfy-thumb { display: grid; gap: var(--io-space-2); margin: 0; min-width: 0; }
+.hfy-thumb__frame { position: relative; aspect-ratio: 4 / 3; max-inline-size: 100%; border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); overflow: hidden; }
+.hfy-thumb__img { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: contain; }
+.hfy-thumb__box { position: absolute; box-sizing: border-box; border: var(--io-control-focus-ring) dashed var(--io-color-semantic-text); outline: 1px solid var(--io-color-semantic-surface); }
+.hfy-thumb__cap { display: grid; gap: var(--io-space-1); overflow-wrap: anywhere; }
+.hfy-batch input:focus-visible, .hfy-cmp input:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+@media (prefers-reduced-motion: reduce) { .hfy-batch, .hfy-batch *, .hfy-cmp, .hfy-cmp *, .hfy-thumb, .hfy-thumb * { transition: none; animation: none; scroll-behavior: auto; } }

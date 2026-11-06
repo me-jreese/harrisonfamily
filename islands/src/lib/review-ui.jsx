@@ -9,6 +9,8 @@ import { PROJECT, cardFromApiConflict, proposalToCard } from "./proposal-gate-so
 import { PersonName } from "./person-name.jsx";
 import { personNames } from "./people-corpus.js";
 import { Comments } from "./comments-ui.jsx";
+import { BATCH_COPY, classOf, deathAdded, deceasedNames } from "./review-batch-model.js";
+import { ClassBody, DeceasedConfirm } from "./review-batch-ui.jsx";
 import { fullTime } from "./time.js";
 import {
   COPY, ageText, amendReady, isNewer, amendable, approveBlocked, buildAmend, conflictRows, firstSentence, isOutOfDate, kindBadge, needsFreshSignIn, opRows, pageWord, problemOf,
@@ -284,7 +286,7 @@ function ReasonSheet({ kind, onClose, onSend, busy, problem }) {
  * "about" (a member reading what was suggested about their own page). `source` is the proposal gate source; `api` the shared client (the detail,
  * the edit bundle). `onCardChanged(card)` takes a fresh card (a 412, an edit, a decision); `onChanged()` asks the list to reload.
  */
-export function ProposalCard({ card, source, api, mode, names, onCardChanged, onChanged }) {
+export function ProposalCard({ card, source, api, mode, names, onCardChanged, onChanged, lifeDates = false }) {
   const listed = card.hfy;
   const [detail, setDetail] = useState({ phase: "idle", view: null, rebase: rebaseOf(null) });
   const [busy, setBusy] = useState("");
@@ -293,6 +295,7 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
   const [amending, setAmending] = useState(false);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const [notice, setNotice] = useState("");
+  const [deceasedFor, setDeceasedFor] = useState(null); // lifeDatesV1: an approval that adds a death waits for a confirm (D-19)
   const [reload, setReload] = useState(0);
   const open = listed.state === "pending" || listed.state === "needs_changes" || listed.state === "stale";
   const wantsDetail = open && (mode === "review" || mode === "mine");
@@ -380,6 +383,10 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
     finish(r, "withdrawn.");
   });
 
+  // lifeDatesV1 (D-19): any approval that adds a death, plain or amended, is confirmed first.
+  const marksDeceased = lifeDates && deathAdded(view);
+  const askApprove = () => { if (marksDeceased) setDeceasedFor({}); else approve(); };
+  const askApproveAmended = (amend) => { if (marksDeceased) setDeceasedFor({ amend }); else approveAmended(amend); };
   const labelId = useId();
   const showDecision = !open && isObj(view.decision);
   const warnings = warningsOf(view);
@@ -393,7 +400,7 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
         <StateTag view={view} mode={mode === "review" ? "review" : "mine"} />
       </header>
 
-      {rel ? <Sentences view={view} /> : <OpRows view={view} />}
+      {lifeDates && classOf(view) !== "other" ? <ClassBody view={view} /> : rel ? <Sentences view={view} /> : <OpRows view={view} />}
       {warnings.length > 0 && (
         <section className="hfy-review__warn" aria-label={COPY.warnings}>
           <h3 className="hfy-review__h4">{COPY.warnings}</h3>
@@ -423,14 +430,14 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
 
       {amending && (admin || canEdit) && (
         <AmendForm view={view} rebase={rebase} admin={admin} api={api} busy={busy === "approve" || busy === "edit"} problem={problem}
-          onCancel={() => { setAmending(false); setProblem(null); }} onSubmit={admin ? approveAmended : saveEdit} />
+          onCancel={() => { setAmending(false); setProblem(null); }} onSubmit={admin ? askApproveAmended : saveEdit} />
       )}
 
       {admin && !amending && (
         <div className="hfy-review__actions" role="group" aria-label="decide" data-hfy-actions>
-          <button type="button" className="hfy-review__btn hfy-review__btn--primary" disabled={Boolean(busy) || blocked} aria-describedby={blocked ? `${labelId}-why` : undefined} onClick={approve} data-hfy-act="approve">{busy === "approve" ? COPY.working : COPY.approve}</button>
+          <button type="button" className="hfy-review__btn hfy-review__btn--primary" disabled={Boolean(busy) || blocked} aria-describedby={blocked ? `${labelId}-why` : undefined} onClick={askApprove} data-hfy-act="approve">{busy === "approve" ? COPY.working : COPY.approve}</button>
           <button type="button" className="hfy-review__btn" disabled={Boolean(busy)} onClick={() => { setProblem(null); setSheet("ask"); }} data-hfy-act="ask">{COPY.askChanges}</button>
-          <button type="button" className="hfy-review__btn hfy-review__btn--danger" disabled={Boolean(busy)} onClick={() => { setProblem(null); setSheet("decline"); }} data-hfy-act="decline">{COPY.decline}</button>
+          <button type="button" className="hfy-review__btn hfy-review__btn--danger" disabled={Boolean(busy)} onClick={() => { setProblem(null); setSheet("decline"); }} data-hfy-act="decline">{lifeDates && ["tag", "media"].includes(classOf(view)) ? BATCH_COPY.notThisOne : COPY.decline}</button>
           {amendable(view) && <button type="button" className="hfy-review__btn" disabled={Boolean(busy) || detail.phase !== "ready"} onClick={() => { setProblem(null); setAmending(true); }} data-hfy-act="edit">{COPY.editApprove}</button>}
           {blocked && detail.phase === "ready" && <p className="hfy-review__note" id={`${labelId}-why`} data-hfy-blocked>{COPY.conflictBlocks}</p>}
           {destructive && <p className="hfy-review__note" data-hfy-stepup>{COPY.signInAgain}</p>}
@@ -452,6 +459,10 @@ export function ProposalCard({ card, source, api, mode, names, onCardChanged, on
         </div>
       )}
 
+      {deceasedFor && (
+        <DeceasedConfirm names={deceasedNames([view], names)} busy={Boolean(busy)} onCancel={() => setDeceasedFor(null)}
+          onConfirm={() => { const d = deceasedFor; setDeceasedFor(null); if (d.amend) approveAmended(d.amend); else approve(); }} />
+      )}
       {sheet && <ReasonSheet kind={sheet} busy={Boolean(busy)} problem={problem} onClose={() => { setSheet(null); setProblem(null); }} onSend={sheet === "ask" ? askChanges : decline} />}
 
       <Comments subject={`proposal:${view.id}`} />
