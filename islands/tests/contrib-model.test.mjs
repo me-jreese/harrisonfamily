@@ -89,16 +89,14 @@ test("hidden entries are shown to the owner, tagged, and to nobody else", () => 
   assert.deepEqual(other.map((r) => r.id), ["A", "C"]);
 });
 
-test("the chip: '0 contributions' for a member, hidden only for a record that is not a member", () => {
-  assert.deepEqual(chipFor({ author: "I9002", total: 42 }, { isLiving: true }), { total: 42, text: "42 contributions" });
-  assert.deepEqual(chipFor({ author: "I9002", total: 0 }, { isLiving: true }), { total: 0, text: "0 contributions" });
-  assert.deepEqual(chipFor({ author: "I9002", total: 0 }, null), { total: 0, text: "0 contributions" }, "no person JSON yet: not hidden");
-  assert.deepEqual(chipFor({ author: "I9002", total: 0, member: true }, { isLiving: false }), { total: 0, text: "0 contributions" });
-  assert.equal(chipFor({ author: "I9002", total: 0, member: false }, { isLiving: true }), null);
-  assert.equal(chipFor({ author: "I9002", total: 0 }, { isLiving: false }), null, "a deceased record with nothing credited is not a member");
-  assert.deepEqual(chipFor({ author: "I9002", total: 3 }, { isLiving: false }), { total: 3, text: "3 contributions" }, "credit proves a member");
-  assert.equal(chipFor(null, { isLiving: true }), null);
-  assert.equal(chipFor({ total: "many" }, { isLiving: true }), null);
+test("the chip: shown exactly when member is true ('0 contributions' included), hidden otherwise", () => {
+  assert.deepEqual(chipFor({ author: "I9002", total: 42, member: true }), { total: 42, text: "42 contributions" });
+  assert.deepEqual(chipFor({ author: "I9002", total: 0, member: true }), { total: 0, text: "0 contributions" });
+  assert.equal(chipFor({ author: "I9002", total: 0, member: false }), null);
+  assert.equal(chipFor({ author: "I9002", total: 9, member: false }), null);
+  assert.equal(chipFor({ author: "I9002", total: 3 }), null, "no member field: not shown, no heuristic");
+  assert.equal(chipFor(null), null);
+  assert.equal(chipFor({ total: "many", member: true }), null);
   assert.equal(totalOf({ total: 7.9 }), 7);
   assert.equal(totalOf({ total: -2 }), 0);
   assert.equal(cursorOf({ cursor: "abc" }), "abc");

@@ -120,19 +120,12 @@ export function totalOf(stats) {
 }
 
 /**
- * The hero chip: `{ total, text }`, or null to draw nothing (D2-17, IF-16: "0 contributions" shows on member pages, and the chip is hidden
- * only on records that are not members).
- *
- * OPEN ISSUE (AC2, not met in full): `contributions.stats` (social.md 7.5) defines no membership field, so the page cannot know who is a
- * member. This rule is a stopgap, not the BRD's: it honours a `member` boolean if the route ever sends one, and without it hides the chip
- * only for a deceased person's page with nothing credited (an author is always a member, and a deceased person has no account). A living
- * record that is not a member still shows "0 contributions". The fix is a `member` field on `contributions.stats` (hfy-contrib-read-api)
- * or a ruling on this heuristic; replace this rule then.
+ * The hero chip: `{ total, text }`, or null to draw nothing (D2-17, IF-16). `contributions.stats` sends `member` (this record is linked to
+ * a signed-up identity): the chip shows exactly when it is true ("0 contributions" included) and hides on anything else.
  */
-export function chipFor(stats, person) {
+export function chipFor(stats) {
   const total = totalOf(stats);
   if (total === null) return null;
-  if (stats.member === false) return null;
-  if (stats.member !== true && total === 0 && person && person.isLiving === false) return null;
+  if (stats.member !== true) return null;
   return { total, text: countCopy(total) };
 }

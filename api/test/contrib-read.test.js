@@ -398,7 +398,7 @@ describe("contributions.stats", () => {
     const r = await get(w, BEN, "contributions/stats", { author: ANN });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
-      author: ANN, total: 6, first_at: AT,
+      author: ANN, member: false, total: 6, first_at: AT,
       by_kind: { post: 1, comment: 1, photo: 3, self_edit: 0, proposal_accepted: 0, tag: 1, photo_to_record: 0 },
     });
   });
@@ -406,7 +406,24 @@ describe("contributions.stats", () => {
   it("an unknown author returns zeros, not 404", async () => {
     const r = await get(world(), BEN, "contributions/stats", { author: "I7777" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ author: "I7777", total: 0, by_kind: { post: 0, comment: 0, photo: 0, self_edit: 0, proposal_accepted: 0, tag: 0, photo_to_record: 0 } });
+    expect(r.body).toEqual({ author: "I7777", member: false, total: 0, by_kind: { post: 0, comment: 0, photo: 0, self_edit: 0, proposal_accepted: 0, tag: 0, photo_to_record: 0 } });
+  });
+
+  it("member is true for a record behind a sign-in, false for a non-member and an unknown record, and names no account", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set([ANN]) } });
+    const mem = await get(w, BEN, "contributions/stats", { author: ANN });
+    expect(mem.body.member).toBe(true);
+    expect(Object.keys(mem.body).sort()).toEqual(["author", "by_kind", "member", "total"]);
+    expect((await get(w, BEN, "contributions/stats", { author: PAGE })).body).toMatchObject({ author: PAGE, member: false, total: 0 });
+    expect((await get(w, BEN, "contributions/stats", { author: "I7777" })).body).toMatchObject({ member: false, total: 0 });
+    expect(JSON.stringify(mem.body)).not.toMatch(/@|sub|email/i);
+  });
+
+  it("an unreadable member list reads as member false, and the stats still answer", async () => {
+    const w = world({ extraDeps: { listMembers: async () => { throw new Error("down"); } } });
+    const r = await get(w, BEN, "contributions/stats", { author: ANN });
+    expect(r.status).toBe(200);
+    expect(r.body.member).toBe(false);
   });
 
   it("hidden events still count: a withdrawn post keeps its credit in the totals others see", async () => {
