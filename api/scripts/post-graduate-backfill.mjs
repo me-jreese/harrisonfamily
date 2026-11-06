@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Post-photo graduation backfill (HFY-TSK-387-0G; BRD D-10, D-34, E2E-G). Photos of posts published before the HFY_POST_GRADUATE switch went on
+// Post-photo graduation backfill (HFY-TSK-387-0G; BRD D-10, D-34, E2E-G). Photos of posts published before the postGraduateV1 flag went on
 // have no Gramps Media. This script counts them (dry run) and, after io's approval, graduates them through the same code the publish path uses
 // (src/post-graduate.js: one Media per photo with the hfy-post Tag, a MediaRef on the author, idempotent per photo).
 //

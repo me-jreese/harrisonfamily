@@ -153,12 +153,12 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
-    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the HFY_POST_GRADUATE switch (deps.postGraduate, default off). Best effort after the post's own commit.
+    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the postGraduateV1 flag (featureOn for the post's author, default off). Best effort after the post's own commit.
     const postGraduation = createPostGraduation({
-      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: () => deps.postGraduate === true, now, log,
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: (post) => features.featureOn("postGraduateV1", post?.author?.id), now, log,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
-    // HFY-TSK-388-0A: member portrait and new-media uploads (web-upload.js), behind the HFY_WEB_UPLOAD route gate.
+    // HFY-TSK-388-0A: member portrait and new-media uploads (web-upload.js), behind the mediaAddV1 and portraitV1 gates.
     const webUpload = createWebUpload({
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, now, log,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),

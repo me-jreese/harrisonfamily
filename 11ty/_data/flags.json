@@ -26,6 +26,7 @@
   "photoTagEdit": true,
   "photoTags": true,
   "portraitV1": false,
+  "postGraduateV1": false,
   "postsV2": true,
   "profileLinks": true,
   "proposalReview": true,

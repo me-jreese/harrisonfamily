@@ -7,7 +7,7 @@
 //   upload.commit    POST /api/media/uploads {items}                        -> [{uploadId, mediaId, state}]; graduates the Media (tag hfy-web-upload, origin Attributes)
 //                    and, for purpose item, appends the MediaRef (your own page now, another person's as a proposal: state pending-proposal)
 //   portrait.setPortrait POST /api/media/portrait {personId, mediaId, crop} -> Tag[]; ONE submission: the MediaRef with the crop, moved to index 0
-// The server switch HFY_WEB_UPLOAD is off by default; while it is off these calls answer 404 (REQUEST_FAILED, status 404).
+// The server gates are the flags mediaAddV1 (commit, item presign) and portraitV1 (portrait route, portrait presign); while off these calls answer 404 (REQUEST_FAILED, status 404).
 import { MediaError } from "@io-kit/media";
 
 export const RECT_UNIT = Object.freeze({ kind: "int-percent", min: 0, max: 100 });

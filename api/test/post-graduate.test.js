@@ -1,4 +1,4 @@
-// HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind HFY_POST_GRADUATE (default off). In-memory DynamoDB and S3 fakes, the real
+// HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the postGraduateV1 flag (default off). In-memory DynamoDB and S3 fakes, the real
 // applyBatch, synthetic ids and names only. The backfill script is covered at the end (dry run counts, the --apply approval refusal).
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { applyBatch } from "../src/sync/apply.js";
 import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
-import { POST_TAG, POST_TAG_HANDLE, createPostGraduation, markerKey, normalizeRect, plan, postGraduateFromEnv, tagsOf, uploadKeyOf } from "../src/post-graduate.js";
+import { POST_TAG, POST_TAG_HANDLE, createPostGraduation, markerKey, plan, tagsOf, uploadKeyOf } from "../src/post-graduate.js";
 import { ATTR_ADDED_BY, ATTR_SOURCE, SOURCE_UPLOAD, postIdOfSource, postSource } from "../src/media-origin.js";
 import * as browser from "../src/media-browser.js";
 import { APPROVAL_REF_RE, describePlan, parseArgs, planBackfill, run } from "../scripts/post-graduate-backfill.mjs";
@@ -32,8 +32,8 @@ let w, hooks, store, tok;
 async function world({ postGraduate, seeded = true } = {}) {
   hooks = createHookRegistry();
   const api = makeApi({
-    admins: ["I0099"], log: q,
-    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(["I0099"]), txnOpts: { sleep: async () => {} }, ...(postGraduate !== undefined ? { postGraduate } : {}) },
+    admins: ["I0099"], log: q, flags: postGraduate === true ? { postGraduateV1: true } : {},
+    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(["I0099"]), txnOpts: { sleep: async () => {} } },
   });
   registerRecordContributor({ ddb: api.ddb, cmds, table: TABLE, log: q }, hooks);
   api.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true });
@@ -68,16 +68,6 @@ beforeEach(async () => {
 });
 
 describe("pure helpers", () => {
-  it.each([
-    [[10, 10, 40, 40], [10, 10, 40, 40]],
-    [[0, 0, 100, 100], null], [[10, 10, 10, 40], null], [[40, 10, 10, 40], null], [[1.5, 0, 20, 20], null], [[-1, 0, 20, 20], null],
-    [[0, 0, 101, 20], null], [[1, 2, 3], null], ["x", null], [null, null],
-  ])("normalizeRect(%j) is %j", (input, want) => expect(normalizeRect(input)).toEqual(want));
-
-  it("reads the switch only when it is exactly on", () => {
-    expect([undefined, "", "1", "true", "ON", "off", "on"].map((v) => postGraduateFromEnv({ HFY_POST_GRADUATE: v }))).toEqual([false, false, false, false, false, false, true]);
-    expect(postGraduateFromEnv({})).toBe(false);
-  });
 
   it("tagsOf keeps well-formed, distinct people, at most 20, with a normalized region", () => {
     const many = Array.from({ length: 30 }, (_, i) => ({ person: `I${i + 100}`, rect: [1, 1, 5, 5] }));

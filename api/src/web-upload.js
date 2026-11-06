@@ -12,20 +12,20 @@
 // idempotency receipt. The Media itself is created at commit in either case; it has no MediaRef until the write or the approval, so the Media Browser does not
 // list it (P4-R21). Nothing here deletes anything.
 //
-// Behind HFY_WEB_UPLOAD=on (a server switch, default OFF, 404 while off) and a member session. Idempotent: one marker item per upload,
+// Behind the feature gate (features.js): commit needs the flag mediaAddV1, the portrait route portraitV1, and the portrait and item presign purposes follow the same two
+// (404 while off, uat principals honoured), read from the deployed flags.json; no environment switch. A member session is required. Idempotent: one marker item per upload,
 // PK `WEBUP#<upload id>`, SK `MEDIA`, whose handle is minted once; applyBatch runs under the key `webupload:<upload id>`; the MediaRef writes carry a key built
 // from the record version they read, so a retry after success finds the ref and writes nothing, and a retry of a proposal replays its receipt.
 import { createHash } from "node:crypto";
 import { CopyObjectCommand } from "@aws-sdk/client-s3";
-import { serverSwitch } from "./features.js";
 import { SOURCE_TYPE, classifySyncError, mediaObject } from "./graduate.js";
 import { HttpError, logSafeError } from "./http.js";
 import { SOURCE_UPLOAD } from "./media-origin.js";
-import { normalizeRect } from "./post-graduate.js";
 import { byGrampsId, storeView } from "./records/index.js";
 import { commit, planChanges, readIdem, replayOf, requestHashOf } from "./records/changes.js";
 import { yearDate } from "./records/life-dates.js";
 import { createRecordGuard } from "./records/guard.js";
+import { validateNewRect } from "./rect.js";
 import { keySegment, mintHandle, validateOps } from "./records/ops.js";
 import { applyBatch, checkStoreGate } from "./sync/apply.js";
 import { policyOf } from "./sync/id-policy.js";
@@ -44,9 +44,6 @@ export const MAX_TITLE = 200;
 export const MAX_DESCRIPTION = 500;
 export const PURPOSES = Object.freeze([UPLOAD_PURPOSE_PORTRAIT, UPLOAD_PURPOSE_ITEM]);
 
-/** The switch: anything but "on" is off. Read at request time, as HFY_EDITING is. */
-export const webUploadOn = (env = () => process.env) => env().HFY_WEB_UPLOAD === "on";
-export const webUploadGate = (env = () => process.env) => serverSwitch("HFY_WEB_UPLOAD", async () => webUploadOn(env));
 export const webUploadKey = (uploadId) => `webupload:${uploadId}`;
 export const markerKey = (uploadId) => ({ PK: `WEBUP#${uploadId}`, SK: "MEDIA" });
 
@@ -76,14 +73,12 @@ export function parseItem(raw, currentYear = new Date().getUTCFullYear()) {
   return { uploadId, purpose, subject, title, description, ...(hasYear ? { year, about: about === true } : {}) };
 }
 
-/** A crop as the HFY rect unit stores it: null for the full frame (and for a degenerate one the Gramps predicate drops); an integer-percent rect otherwise. Anything else is 400. */
+/** A crop as the HFY rect unit stores it: null for the full frame; else whole percents on the 0..100 grid, ordered, at least 2 x 2 units (validateNewRect, D-07). Anything else is 400 validation carrying the rect code. */
 export function cropToRect(crop) {
   if (crop === null) return null;
-  if (!Array.isArray(crop) || crop.length !== 4) throw invalid("crop", "crop is [x1, y1, x2, y2] in whole percent, or null for the whole photo");
-  const rect = normalizeRect(crop);
-  const full = crop.length === 4 && crop[0] === 0 && crop[1] === 0 && crop[2] === 100 && crop[3] === 100;
-  if (rect === null && !full) throw invalid("crop", "crop is a rectangle of whole percents inside the photo");
-  return rect;
+  const v = validateNewRect(crop);
+  if (!v.ok) throw new HttpError(400, "validation", `the crop is not a usable rectangle (${v.code})`, { fields: [{ field: "crop", code: v.code }] });
+  return v.rect;
 }
 const sameRect = (a, b) => (a ?? null) === (b ?? null) || (Array.isArray(a) && Array.isArray(b) && a.length === 4 && a.every((v, i) => v === b[i]));
 const mediaRef = (handle, rect) => ({ _class: "MediaRef", ref: handle, rect, private: false, attribute_list: [], citation_list: [], note_list: [] });

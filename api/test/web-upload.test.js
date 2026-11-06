@@ -1,4 +1,4 @@
-// HFY-TSK-388-0A: member portrait and new-media uploads behind HFY_WEB_UPLOAD (src/web-upload.js). In-memory DynamoDB and S3 fakes, the real
+// HFY-TSK-388-0A: member portrait and new-media uploads behind the mediaAddV1 and portraitV1 flags (src/web-upload.js). In-memory DynamoDB and S3 fakes, the real
 // applyBatch and /api/changes pipeline, synthetic ids and names only.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cmds, makeApi, signToken, TABLE } from "./world.js";
@@ -9,7 +9,7 @@ import { registerRecordContributor } from "../src/record-contributor.js";
 import { ATTR_ADDED_BY, ATTR_SOURCE, SOURCE_UPLOAD } from "../src/media-origin.js";
 import { SERVER_SWITCHES } from "../src/features.js";
 import { ROUTES } from "../src/routes.js";
-import { WEB_UPLOAD_TAG, WEB_UPLOAD_TAG_HANDLE, cropToRect, parseItem, webUploadOn } from "../src/web-upload.js";
+import { WEB_UPLOAD_TAG, WEB_UPLOAD_TAG_HANDLE, cropToRect, parseItem } from "../src/web-upload.js";
 import { jpeg, tiff, SOME_LAT, SOME_LON } from "./photo-fixtures.js";
 
 const h = (n) => n.toString(16).padStart(28, "0");
@@ -27,14 +27,14 @@ const q = { warn() {}, error() {}, info() {} };
 const ME = "I0001";
 const OTHER = "I0002";
 
-let w, saved;
+let w, saved, flags;
 beforeEach(async () => {
-  saved = { e: process.env.HFY_EDITING, u: process.env.HFY_WEB_UPLOAD };
+  saved = { e: process.env.HFY_EDITING };
   process.env.HFY_EDITING = "on";
-  process.env.HFY_WEB_UPLOAD = "on";
+  flags = { inboxV1: true, mediaAddV1: true, portraitV1: true };
   const hooks = createHookRegistry();
   w = makeApi({
-    admins: ["I0099"], log: q, flags: { inboxV1: true },
+    admins: ["I0099"], log: q, flags,
     extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(["I0099"]), txnOpts: { sleep: async () => {} } },
   });
   registerRecordContributor({ ddb: w.ddb, cmds, table: TABLE, log: q }, hooks);
@@ -45,7 +45,7 @@ beforeEach(async () => {
   await applyBatch(sctx, { principal: "svc-seed", origin: "desktop", idempotencyKey: "seed1", ops: [person(1, { media_list: [ref(OLD.handle)] }), person(2), OLD].map(create) });
 });
 afterEach(() => {
-  for (const [k, v] of [["HFY_EDITING", saved.e], ["HFY_WEB_UPLOAD", saved.u]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  for (const [k, v] of [["HFY_EDITING", saved.e]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 });
 
 const call = async (who, method, path, body) => w.call(method, path, { token: await signToken(who), body });
@@ -65,18 +65,26 @@ async function graduated(who, purpose, subject, extra = {}) {
 }
 
 describe("the switch and the routes", () => {
-  it("names HFY_WEB_UPLOAD as a server switch and gates both routes on it", () => {
-    expect(SERVER_SWITCHES).toContain("HFY_WEB_UPLOAD");
-    const gates = Object.fromEntries(ROUTES.filter((r) => r.name.startsWith("mediaUpload.")).map((r) => [r.name, r.gate.name]));
-    expect(gates).toEqual({ "mediaUpload.commit": "HFY_WEB_UPLOAD", "mediaUpload.portrait": "HFY_WEB_UPLOAD" });
+  it("gates the commit on mediaAddV1 and the portrait route on portraitV1, with no environment switch", () => {
+    expect(SERVER_SWITCHES.some((n) => /WEB_UPLOAD|POST_GRADUATE/.test(n))).toBe(false);
+    const gates = Object.fromEntries(ROUTES.filter((r) => r.name.startsWith("mediaUpload.")).map((r) => [r.name, [r.gate.type, r.gate.name]]));
+    expect(gates).toEqual({ "mediaUpload.commit": ["feature", "mediaAddV1"], "mediaUpload.portrait": ["feature", "portraitV1"] });
   });
-  it.each([[undefined], [""], ["1"], ["true"], ["ON"], ["off"]])("is off unless exactly on (%j)", (v) => expect(webUploadOn(() => ({ HFY_WEB_UPLOAD: v }))).toBe(false));
   it("answers 404 on every web route and refuses the web purposes while off, and a plain post presign is untouched", async () => {
-    delete process.env.HFY_WEB_UPLOAD;
+    flags.mediaAddV1 = false;
+    flags.portraitV1 = false;
     expect((await call(ME, "POST", "/api/uploads", { purpose: "portrait", subject: ME })).status).toBe(404);
     expect((await call(ME, "POST", "/api/media/uploads", commitRows([]))).status).toBe(404);
     expect((await call(ME, "POST", "/api/media/portrait", { personId: ME, mediaId: "O0001", crop: null })).status).toBe(404);
     expect((await call(ME, "POST", "/api/uploads", { contentType: "image/jpeg", size: 9 })).status).toBe(201);
+  });
+  it("each web purpose follows its own flag", async () => {
+    const presignStatus = async (purpose) => (await call(ME, "POST", "/api/uploads", { purpose, subject: ME })).status;
+    flags.portraitV1 = false;
+    expect([await presignStatus("portrait"), await presignStatus("item")]).toEqual([404, 201]);
+    flags.portraitV1 = true;
+    flags.mediaAddV1 = false;
+    expect([await presignStatus("portrait"), await presignStatus("item")]).toEqual([201, 404]);
   });
   it("needs a session", async () => {
     expect((await w.call("POST", "/api/media/uploads", { body: commitRows([]) })).status).toBe(401);
@@ -232,7 +240,7 @@ describe("the portrait", () => {
     expect(proposals()).toHaveLength(1);
   });
   it.each([
-    [{ crop: [10, 10, 10, 40] }, "a zero-width crop"], [{ crop: [10.5, 10, 50, 50] }, "a fraction"], [{ crop: [0, 0, 101, 50] }, "out of range"],
+    [{ crop: [10, 10, 10, 40] }, "a zero-width crop"], [{ crop: [10.5, 10, 50, 50] }, "a fraction"], [{ crop: [10, 10, 11, 11] }, "under 2 x 2"], [{ crop: [60, 60, 10, 10] }, "inverted"], [{ crop: [0, 0, 101, 50] }, "out of range"],
     [{ crop: "x" }, "not a rect"], [{}, "no crop"], [{ personId: "bad id", crop: null }, "a malformed person"],
   ])("refuses %j (%s)", async (extra) => {
     const { r } = await graduated(ME, "portrait", ME);
