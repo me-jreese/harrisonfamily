@@ -246,3 +246,11 @@
   padding-block: var(--io-comments-space-2) var(--io-comments-space-3);
   border-block-end: 1px solid var(--io-comments-border);
 }
+
+/* The comment an #comment-<ulid> link points at (HFY-TSK-188): a raised surface and an accent bar on the leading edge, until the next link. */
+.hfy-comments [data-hfy-target] {
+  background: var(--io-comments-surface);
+  box-shadow: inset var(--io-space-1) 0 0 var(--io-comments-accent);
+  padding-inline-start: var(--io-space-3);
+}
+.hfy-comments [data-hfy-target]:focus { outline: none; }

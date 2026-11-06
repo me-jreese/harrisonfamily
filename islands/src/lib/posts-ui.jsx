@@ -8,6 +8,7 @@ import { api } from "./api.js";
 import { createHfyContentSource } from "./content-source.js";
 import { formatTime, watchTimeTitles } from "./time.js";
 import { authorHref } from "./person-name.jsx";
+import { CappedSection } from "./capped.jsx";
 
 export { formatTime };
 export const source = createHfyContentSource(api);
@@ -91,7 +92,7 @@ export function useTimeTitles() {
  * Newest-first published posts with cursor paging, through useTimeline's page(). The timeline source answers in the feed.v1 shape
  * ({ items, next_cursor, has_more }), so the next page's cursor is `next_cursor` (reading `cursor` left "show older posts" unrendered).
  */
-export function usePosts(filter) {
+export function usePosts(filter, { limit = 20 } = {}) {
   const timeline = useTimeline(source);
   const [state, setState] = useState({ items: [], cursor: null, status: "loading", error: null });
   const key = JSON.stringify(filter || {});
@@ -101,12 +102,12 @@ export function usePosts(filter) {
     busy.current = true;
     setState((s) => ({ ...s, status: cursor ? "more" : "loading", error: null }));
     try {
-      const r = await timeline.page({ filter: { visibility: "published", ...(filter || {}) }, cursor: cursor || undefined, limit: 20 });
+      const r = await timeline.page({ filter: { visibility: "published", ...(filter || {}) }, cursor: cursor || undefined, limit });
       setState((s) => ({ items: cursor ? [...s.items, ...r.items.filter((p) => !s.items.some((q) => q.id === p.id))] : r.items, cursor: r.next_cursor ?? null, status: "ready", error: null }));
     } catch (e) {
       setState((s) => ({ ...s, status: "error", error: friendlyError(e) }));
     } finally { busy.current = false; }
-  }, [timeline, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [timeline, key, limit]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(null); }, [load]);
   const remove = async (post) => {
     try {
@@ -203,7 +204,11 @@ export function EmptyPosts({ action }) {
   );
 }
 
-export function PostList({ posts, link = true, emptyAction }) {
+/**
+ * `capped` (contribV1, HFY-TSK-188): the stories list is a CappedSection, so it is cut at the stories cap and "show older stories" first reveals
+ * what the cap clipped, then asks for the next page. `showEmpty` false draws no empty state (a viewer who is not the owner has nothing to add).
+ */
+export function PostList({ posts, link = true, emptyAction, capped = false, showEmpty = true }) {
   const { items, cursor, status, error, more, remove } = posts;
   const ref = useTimeTitles();
   return (
@@ -211,13 +216,18 @@ export function PostList({ posts, link = true, emptyAction }) {
       {status === "loading" ? <Skeletons /> : (
         <>
           {error && <Banner>{error}</Banner>}
-          {status === "ready" && items.length === 0 && !error && <EmptyPosts action={emptyAction} />}
-          {items.length > 0 && (
-            <ul className="hfy-posts__list">
-              {items.map((p) => <PostRow key={p.id} post={p} link={link} remove={remove} />)}
-            </ul>
-          )}
-          {cursor && <button type="button" className="hfy-btn hfy-posts__more" onClick={more} disabled={status === "more"}>{status === "more" ? "loading…" : "show older posts"}</button>}
+          {showEmpty && status === "ready" && items.length === 0 && !error && <EmptyPosts action={emptyAction} />}
+          {items.length > 0 && (() => {
+            const list = (
+              <ul className="hfy-posts__list">
+                {items.map((p) => <PostRow key={p.id} post={p} link={link} remove={remove} />)}
+              </ul>
+            );
+            return capped
+              ? <CappedSection label="show older stories" clipSelector=".hfy-posts__list" hasMore={Boolean(cursor)} loading={status === "more"} onMore={more}>{list}</CappedSection>
+              : list;
+          })()}
+          {!capped && cursor && <button type="button" className="hfy-btn hfy-posts__more" onClick={more} disabled={status === "more"}>{status === "more" ? "loading…" : "show older posts"}</button>}
         </>
       )}
     </div>
