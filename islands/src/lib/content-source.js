@@ -21,7 +21,7 @@ const wrap = async (p) => {
 };
 const enc = encodeURIComponent;
 // drafts:false => this surface has no publish/withdraw gesture, so can.publish is narrowed to false (the server value stays the authority for edit/delete).
-const norm = (p) => ({ ...p, can: { ...p.can, publish: false } });
+export const norm = (p) => ({ ...p, can: { ...p.can, publish: false } });
 
 export function createHfyContentSource(api) {
   return {

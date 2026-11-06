@@ -35,7 +35,7 @@ function One({ id }) {
           {back}
           {deleteError && <Banner>{deleteError}</Banner>}
           {s.post.type === "post"
-            ? <ul className="hfy-posts__list"><PostRow post={s.post} link={false} remove={remove} /></ul>
+            ? <ul className="hfy-posts__list"><PostRow post={s.post} link={false} remove={remove} replace={(post) => setS((cur) => ({ ...cur, post }))} /></ul>
             : <div className="hfy-posts__item"><ArticleView post={s.post} {...CARD_PROPS} /></div>}
           <Comments subject={`post:${s.post.id}`} />
         </article>

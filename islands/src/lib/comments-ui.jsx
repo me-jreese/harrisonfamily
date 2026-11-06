@@ -17,6 +17,8 @@ import { PHOTO_ACCEPT, PhotoDecodeError } from "./photo.js";
 import { FEATURES, MAX_PHOTOS, PHOTO_LABELS, commentPhotoAlt, photoUploadMessage } from "./comment-photos.js";
 import { CappedSection } from "./capped.jsx";
 import { commentFromHash } from "./capped-model.js";
+import { ModerateControl } from "./moderation-ui.jsx";
+import { COPY as MOD_COPY, createModerationClient, commentTarget, photoTarget, pingFor, versionOf } from "./moderation.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable. Every comment author's name
 // links to their page too (Thread authorHref, HFY-TSK-323, ruling P2-R46); both come from lib/person-name.jsx.
@@ -37,6 +39,19 @@ export const LABELS = {
   moderate: "moderate",
   moderateDelete: "delete as moderator",
   reason: "reason",
+  // Moderation (moderationV1, HFY-TSK-191): the kit's menu, ask form, badge and banners, in the DS voice (lib/moderation.js COPY).
+  hide: MOD_COPY.hide,
+  unhide: MOD_COPY.unhide,
+  askChanges: MOD_COPY.askChanges,
+  askQuestion: MOD_COPY.askQuestion,
+  moderationNote: MOD_COPY.note,
+  keepHidden: MOD_COPY.keepHidden,
+  send: MOD_COPY.send,
+  hiddenBadge: MOD_COPY.badgeHidden,
+  photoHidden: MOD_COPY.photoHidden,
+  bannerHidden: MOD_COPY.hiddenByModerator,
+  bannerAsked: `{by} ${MOD_COPY.askedTemplate} {note}`,
+  bannerEditToShow: `— ${MOD_COPY.editToShow}`,
   // Oldest-first paging (contribV1 off) loads the NEXT comments, which are newer, so "older" would be untrue (BRD2 section 8). The newest-first
   // social column has its own "show older comments" button (SOCIAL_MORE), drawn by CappedSection.
   loadMore: "show more comments",
@@ -148,6 +163,62 @@ export function guardCommentDeletes(root, labels = LABELS) {
   return () => { root.removeEventListener("click", onClick, true); close(false); };
 }
 
+/**
+ * HFY-TSK-191: the one-tap controls the kit's badge and banner lack (@io-kit/comments 0.3.1 Comment).
+ *   - An admin looking at a hidden comment gets "unhide" beside the kit's "hidden" badge; it presses the kit menu's own unhide button.
+ *   - The author looking at a moderated comment gets "edit" beside the kit's status banner; it presses the comment's own edit button
+ *     (editing is what makes a changes_requested or question comment visible again).
+ * Both are tagged data-hfy-mod-button and removed when the thing they press is gone. Upstream: Comment `renderModeration` slots.
+ */
+export function watchModerationButtons(root, labels = LABELS) {
+  if (!root || typeof MutationObserver === "undefined") return () => {};
+  const make = (kind, text, press) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "hfy-btn hfy-btn--quiet";
+    b.setAttribute("data-hfy-mod-button", kind);
+    b.textContent = text;
+    b.addEventListener("click", press);
+    return b;
+  };
+  const labelled = (nodes, text) => [...nodes].find((b) => b.textContent.trim() === text);
+  const apply = () => {
+    root.querySelectorAll(".io-comments-comment").forEach((c) => {
+      const moderated = c.querySelector(":scope > .io-comments-moderated");
+      const unhide = labelled(c.querySelectorAll(".io-comments-moderation .io-comments-actions > button"), labels.unhide);
+      const haveUnhide = c.querySelector('[data-hfy-mod-button="unhide"]');
+      if (moderated && unhide && !haveUnhide) moderated.append(make("unhide", labels.unhide, () => unhide.click()));
+      else if (haveUnhide && !(moderated && unhide)) haveUnhide.remove();
+      const banner = c.querySelector(":scope > p.io-comments-banner");
+      const edit = labelled(c.querySelectorAll(":scope > .io-comments-actions > button"), labels.edit);
+      const haveEdit = c.querySelector('[data-hfy-mod-button="edit"]');
+      if (banner && edit && !haveEdit) banner.insertAdjacentElement("afterend", make("edit", labels.edit, () => edit.click()));
+      else if (haveEdit && !(banner && edit && haveEdit.previousElementSibling === banner)) haveEdit.remove();
+    });
+  };
+  apply();
+  const mo = new MutationObserver(apply);
+  mo.observe(root, { subtree: true, childList: true, characterData: true });
+  return () => { mo.disconnect(); root.querySelectorAll("[data-hfy-mod-button]").forEach((b) => b.remove()); };
+}
+
+/** The kit's moderation <details> closes on Escape (focus back to its summary) and on a press outside it, so a phone's bottom Sheet can be dismissed. */
+export function watchModerationSheets(root) {
+  if (!root) return () => {};
+  const onDown = (e) => root.querySelectorAll(".io-comments-moderation[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+  const onKey = (e) => {
+    if (e.key !== "Escape") return;
+    const d = [...root.querySelectorAll(".io-comments-moderation[open]")].find((x) => x.contains(document.activeElement));
+    if (!d) return;
+    e.preventDefault();
+    d.open = false;
+    d.querySelector("summary")?.focus();
+  };
+  document.addEventListener("pointerdown", onDown, true);
+  root.addEventListener("keydown", onKey);
+  return () => { document.removeEventListener("pointerdown", onDown, true); root.removeEventListener("keydown", onKey); };
+}
+
 // The R-18 pre-check (privacy-guard-existing-paths AC2) on the new-comment box and every edit box: the span is marked, the DS copy
 // sits under the box, post (or save) is disabled until the hit is removed, and the text is kept (lib/contact-guard.js).
 export const COMMENT_GUARD = {
@@ -206,10 +277,16 @@ export function Comments({ subject, social = false }) {
   // exactly what it was (the kit's composer has no picker without onUpload).
   const flags = useFlags();
   const photosOn = flags?.commentPhotosV1 === true;
+  // moderationV1 (HFY-TSK-191, default off): the kit's hide / ask / unhide menu, badge and banners, and a hide control on each photo. Off, the
+  // thread is what it was (the kit's moderate menu then offers "delete as moderator" only).
+  const modOn = flags?.moderationV1 === true;
+  const [reload, setReload] = useState(0);
   useEffect(() => { getSession().then(setSession); }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => watchTimeTitles(root.current), []);
   useEffect(() => watchDeleteButtons(root.current), []);
+  useEffect(() => (modOn ? watchModerationButtons(root.current) : undefined), [modOn]);
+  useEffect(() => (modOn ? watchModerationSheets(root.current) : undefined), [modOn]);
   useEffect(() => guardCommentDeletes(root.current), []);
   useEffect(() => watchContactGuard(root.current, COMMENT_GUARD), []);
   const sid = session?.authenticated ? session.sub : null;
@@ -221,9 +298,21 @@ export function Comments({ subject, social = false }) {
     getMe().then((me) => { if (live) setModerator(canModerate(me)); });
     return () => { live = false; };
   }, [sid]);
+  const flash = useCallback((text) => { clearTimeout(timer.current); setPing(text); timer.current = setTimeout(() => setPing(""), 3000); }, []);
   const source = useMemo(() => createHfyCommentSource(api, {
-    onAdded: () => { clearTimeout(timer.current); setPing("posted"); timer.current = setTimeout(() => setPing(""), 3000); },
-  }), []);
+    onAdded: () => flash("posted"),
+    moderation: modOn,
+    onModerated: (input) => flash(pingFor(input.action)),
+  }), [modOn, flash]);
+  // A comment photo's hide or unhide: the kit thread has no hook to swap one attachment, so the thread is fetched again (reload remounts it).
+  const photoAct = useCallback(async (comment, attachment, input) => {
+    await createModerationClient(api).act(photoTarget(commentTarget(subject, comment.id), attachment.id), input, versionOf(comment));
+    flash(pingFor(input.action, { photo: true }));
+    setReload((n) => n + 1);
+  }, [subject, flash]);
+  const renderPhotoActions = useMemo(() => (modOn
+    ? (comment, a) => (comment.can?.moderate === true ? <ModerateControl photo moderation={a.moderation?.hidden === true ? { state: "hidden", hidden: true } : undefined} onAct={(input) => photoAct(comment, a, input)} /> : null)
+    : undefined), [modOn, photoAct]);
   const onUpload = useCallback(async (file) => {
     try {
       const a = await uploadPhoto(api, file, { purpose: "comment" });
@@ -281,10 +370,10 @@ export function Comments({ subject, social = false }) {
         <>
           {social ? (
             <CappedSection label={SOCIAL_MORE} clipSelector=".io-comments-list" hasMore={pager.hasMore} loading={pager.loading} onMore={() => loadRef.current?.()} revealSelector={anchorSelector} onReveal={onReveal}>
-              <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} order="desc" composerPosition="top" pageSize={SOCIAL_PAGE} renderMore={renderMore} {...photoProps} />
+              <Thread key={reload} threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...(renderPhotoActions ? { renderAttachmentActions: renderPhotoActions } : {})} order="desc" composerPosition="top" pageSize={SOCIAL_PAGE} renderMore={renderMore} {...photoProps} />
             </CappedSection>
           ) : (
-            <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...photoProps} />
+            <Thread key={reload} threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...(renderPhotoActions ? { renderAttachmentActions: renderPhotoActions } : {})} {...photoProps} />
           )}
           <p className="hfy-ping" role="status" aria-live="polite">{ping}</p>
         </>

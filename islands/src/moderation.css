@@ -1,0 +1,128 @@
+/* Admin moderation (HFY-TSK-191, R-32; social.md 11.6; flag moderationV1), imported by lib/moderation-ui.jsx. Tokens only (theme-lint).
+   The control is a 44 px "moderate" button. From 688 px it opens a menu under the button; under 688 px a bottom Sheet (a native modal
+   <dialog>, the editor's `.hfy-sheet` pattern) whose rows are 56 px (tap.min + space.3). The ask form lives in the same panel. */
+.hfy-mod { position: relative; display: inline-flex; }
+.hfy-mod__trigger { padding-inline: var(--io-content-space-2); }
+.hfy-mod__photo { margin-block-start: var(--io-content-space-1); }
+/* A post photo's control sits inside the kit card, whose generic `.iok-content button` rule (posts.css) would box it: it stays a quiet link button. */
+.hfy-posts .hfy-mod__photo .hfy-mod__trigger,
+.hfy-comments .hfy-mod__photo .hfy-mod__trigger { border-color: transparent; background: transparent; color: var(--io-content-link); }
+.hfy-posts .hfy-mod__photo .hfy-mod__trigger:hover,
+.hfy-comments .hfy-mod__photo .hfy-mod__trigger:hover { color: var(--io-content-link-hover); }
+.hfy-posts .hfy-mod__photo { margin-inline-start: calc(-1 * var(--io-content-space-2)); }
+
+/* ------------------------------------------------------------------------------------------------------------------ panel */
+.hfy-mod__panel {
+  box-sizing: border-box;
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-content-font-size);
+  line-height: var(--io-content-line-height);
+  background: var(--io-content-surface-raised);
+  border: 1px solid var(--io-content-border-strong);
+}
+.hfy-mod__panel[data-variant="menu"] {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: 0;
+  z-index: 3;
+  min-inline-size: calc(var(--io-space-9) * 4);
+  max-inline-size: calc(100vw - 2 * var(--io-space-4));
+  padding: var(--io-content-space-1);
+  border-radius: var(--io-content-radius-md);
+  box-shadow: var(--io-elevation-2);
+}
+.hfy-mod__panel[data-variant="sheet"] {
+  inline-size: 100%;
+  max-inline-size: none;
+  max-block-size: 90vh;
+  margin: auto 0 0;
+  padding: 0;
+  overflow: auto;
+  border-radius: var(--io-content-radius-md) var(--io-content-radius-md) 0 0;
+}
+.hfy-mod__panel[data-variant="sheet"]::backdrop { background: var(--io-color-semantic-scrim); }
+.hfy-mod__body { display: grid; gap: var(--io-content-space-2); min-inline-size: 0; }
+.hfy-mod__panel[data-variant="sheet"] .hfy-mod__body { padding: var(--io-content-space-3) var(--io-content-space-4) calc(var(--io-content-space-4) + var(--io-safe-bottom)); }
+.hfy-mod__title { margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); font-weight: var(--io-typography-weight-semibold); }
+
+/* rows */
+.hfy-mod__rows { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.hfy-mod__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  inline-size: 100%;
+  min-block-size: var(--io-content-tap-min);
+  margin: 0;
+  padding: 0 var(--io-content-space-3);
+  border: 0;
+  border-radius: var(--io-content-radius-md);
+  background: transparent;
+  color: var(--io-content-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.hfy-mod__panel[data-variant="sheet"] .hfy-mod__row { min-block-size: calc(var(--io-content-tap-min) + var(--io-content-space-3)); }
+.hfy-mod__row:hover { background: var(--io-content-surface-sunken); }
+.hfy-mod__row:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* the ask form */
+.hfy-mod__form, .hfy-mod__edit-form { display: grid; gap: var(--io-content-space-2); min-inline-size: 0; }
+.hfy-mod__field { display: grid; gap: var(--io-content-space-1); color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-mod__note {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: calc(var(--io-content-tap-min) * 2);
+  margin: 0;
+  padding: var(--io-content-space-2) var(--io-content-space-3);
+  resize: vertical;
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-sunken);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-control-input-min-font);
+  font-weight: var(--io-typography-weight-regular);
+  line-height: var(--io-content-line-height);
+}
+.hfy-mod__count { margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); text-align: end; }
+.hfy-mod__count[data-over] { color: var(--io-content-danger); }
+.hfy-mod__check { display: flex; align-items: center; gap: var(--io-content-space-2); min-block-size: var(--io-content-tap-min); }
+.hfy-mod__check > input { inline-size: var(--io-space-5); block-size: var(--io-space-5); margin: 0; accent-color: var(--io-content-accent); flex: none; }
+.hfy-mod__actions { display: flex; flex-wrap: wrap; gap: var(--io-content-space-2) var(--io-content-space-3); }
+.hfy-mod__hint, .hfy-mod__error { margin: 0; padding: var(--io-content-space-2) var(--io-content-space-3); border-inline-start: var(--io-content-focus-ring) solid var(--io-content-border-strong); font-size: var(--io-content-font-size-sm); overflow-wrap: anywhere; }
+.hfy-mod__error { border-inline-start-color: var(--io-content-danger); color: var(--io-content-danger); }
+.hfy-mod__note:focus-visible,
+.hfy-mod__row:focus-visible,
+.hfy-mod__check > input:focus-visible { outline: var(--io-content-focus-ring) solid var(--io-content-focus); outline-offset: var(--io-content-focus-offset); }
+
+/* --------------------------------------------------------------------------------------------------------- what an item shows */
+.hfy-mod__notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-content-space-1) var(--io-content-space-3); margin-block-start: var(--io-content-space-2); min-inline-size: 0; }
+.hfy-mod__badge {
+  padding: 0 var(--io-content-space-2);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-pill);
+  color: var(--io-content-text-dim);
+  font-size: var(--io-content-font-size-sm);
+}
+.hfy-mod__asked { flex: 1 1 100%; margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); overflow-wrap: anywhere; }
+/* The author's banner is neutral (role=status, not an alert): a quiet block with a gold-free edge, never the danger colour. */
+.hfy-mod__banner {
+  flex: 1 1 calc(var(--io-space-9) * 4);
+  margin: 0;
+  padding: var(--io-content-space-2) var(--io-content-space-3);
+  border: 1px solid var(--io-content-border);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-sunken);
+  color: var(--io-content-text);
+  font-size: var(--io-content-font-size-sm);
+  overflow-wrap: anywhere;
+}
+.hfy-mod__edit, .hfy-mod__unhide { padding-inline: var(--io-content-space-2); }
+.hfy-mod__edit-form { margin-block-start: var(--io-content-space-2); }
+
+/* The footer row of a post holds the control and the ping. */
+.hfy-posts__footer > .hfy-mod { margin-inline-start: auto; }

@@ -187,7 +187,10 @@ html.hfy-shell-v2 .hfy-posts { padding-inline: 0; }
 .hfy-posts__post > .hfy-posts__avatar { grid-area: 1 / 1; }
 .hfy-posts__post > .iok-content-card { grid-area: 1 / 1 / auto / -1; min-width: 0; }
 .hfy-posts__post > .hfy-posts__footer,
-.hfy-posts__post > .hfy-confirm { grid-column: 1 / -1; }
+.hfy-posts__post > .hfy-confirm,
+.hfy-posts__post > .hfy-mod__notice,
+.hfy-posts__post > .hfy-mod__edit-form,
+.hfy-posts__post > .hfy-ping { grid-column: 1 / -1; }
 .hfy-posts__post > .iok-content-card > .iok-content-meta {
   align-items: center;
   min-block-size: var(--io-content-control-h-sm);

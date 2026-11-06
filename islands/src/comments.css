@@ -254,3 +254,53 @@
   padding-inline-start: var(--io-space-3);
 }
 .hfy-comments [data-hfy-target]:focus { outline: none; }
+
+/* ---------------------------------------------------------------------------------------------------- moderation (HFY-TSK-191)
+   The kit's moderation menu is a <details> (summary "moderate", then the hide / ask / unhide buttons, the ask form, and the reason box with
+   "delete as moderator"). From 688 px it opens as a raised panel under the control; under 688 px the whole <details> becomes a bottom Sheet
+   with 56 px rows and the page behind dimmed (a spread shadow, because a <details> has no backdrop). comments-ui.jsx closes it on Escape or
+   a tap outside. Posts and photos use lib/moderation-ui.jsx, which draws the same look. */
+.hfy-comments .io-comments-moderation { position: relative; }
+.hfy-comments .io-comments-moderation[open] {
+  box-sizing: border-box;
+  padding: var(--io-comments-space-2);
+  border: 1px solid var(--io-comments-border);
+  border-radius: var(--io-comments-radius-md);
+  background: var(--io-comments-surface);
+}
+.hfy-comments .io-comments-moderation > .io-comments-actions { margin-inline-start: 0; flex-direction: column; align-items: stretch; }
+.hfy-comments .io-comments-moderation .io-comments-actions > .io-comments-control {
+  justify-content: flex-start;
+  min-block-size: var(--io-comments-tap-min);
+  padding-inline: var(--io-comments-space-3);
+  text-align: start;
+}
+.hfy-comments .io-comments-moderation .io-comments-ask .io-comments-control { min-block-size: var(--io-comments-tap-min); }
+/* The reason box and "delete as moderator" (the kit's existing two-step delete): a full-width box, then the button, one row each. */
+.hfy-comments .io-comments-moderation > input.io-comments-input { box-sizing: border-box; inline-size: 100%; min-block-size: var(--io-comments-tap-min); }
+.hfy-comments .io-comments-moderation > .io-comments-control { justify-self: start; min-block-size: var(--io-comments-tap-min); }
+.hfy-comments .io-comments-moderation .io-comments-ask .io-comments-row { align-items: center; }
+.hfy-comments .io-comments-moderation input[type="checkbox"] { inline-size: var(--io-space-5); block-size: var(--io-space-5); accent-color: var(--io-comments-accent); }
+.hfy-comments .io-comments-moderation label.io-comments-counter { display: inline-flex; align-items: center; gap: var(--io-comments-space-2); min-block-size: var(--io-comments-tap-min); }
+/* The unhide and edit buttons added next to the kit's badge and banner (comments-ui watchModerationButtons). */
+.hfy-comments .io-comments-moderated { align-items: center; }
+.hfy-comments [data-hfy-mod-button] { padding-inline: var(--io-comments-space-2); }
+.hfy-comments .io-comments-banner { color: var(--io-comments-text); font-size: var(--io-comments-font-size-sm); }
+.hfy-comments .io-comments-badge { border-color: var(--io-comments-border-strong); }
+.hfy-comments .hfy-mod__photo .hfy-mod__trigger { justify-content: flex-start; }
+@media (max-width: 42.99rem) {
+  .hfy-comments .io-comments-moderation[open] {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 3;
+    max-block-size: 90vh;
+    overflow: auto;
+    padding: var(--io-comments-space-2) var(--io-comments-space-4) calc(var(--io-comments-space-4) + var(--io-safe-bottom));
+    border-inline: 0;
+    border-block-end: 0;
+    border-radius: var(--io-comments-radius-md) var(--io-comments-radius-md) 0 0;
+    box-shadow: 0 0 0 100vmax var(--io-color-semantic-scrim);
+  }
+  .hfy-comments .io-comments-moderation[open] > summary { min-block-size: calc(var(--io-comments-tap-min) + var(--io-comments-space-3)); }
+  .hfy-comments .io-comments-moderation[open] .io-comments-actions > .io-comments-control { min-block-size: calc(var(--io-comments-tap-min) + var(--io-comments-space-3)); }
+}
