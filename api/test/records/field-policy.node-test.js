@@ -11,6 +11,7 @@ import { contentHash, hash12 } from "../../src/records/ops.js";
 import {
   DEFAULT_FIELD_POLICY, FIELD_POLICY_ROWS, NEVER_TYPE_VALUES, Q2_15_ROWS, classifyOps, createFieldPolicy, ownRecord, relationOf,
 } from "../../src/records/field-policy.js";
+import { stricter } from "../../src/records/field-policy.js";
 import { JARGON, groupOps, partitionOps, planOps, summarizeOp } from "../../src/records/edit-plan.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -715,5 +716,55 @@ describe("review fixes (HFY-TSK-233)", () => {
       const other = summarizeOp(set("Event:he2", "/date", date(1980, 3, 4), date(1981, 5, 6)), { objects });
       assert.match(other, /March/);
     });
+  });
+});
+
+// HFY-TSK-386 (lifedates-policy, BRD D-09, D-17..D-19): a death year is a proposal on ANY person, own or other, living or deceased,
+// and never a direct write; birth stays a proposal; the rows around them do not move.
+describe("life dates: birth and death years are proposals for members", () => {
+  const worldWithEvents = (rel, state, kind) => {
+    const w = world();
+    const holder = rel === "own" ? ME : "Person:hp2";
+    const add = (h, type, y) => {
+      w[`Event:${h}`] = { _class: "Event", handle: h, gramps_id: `E99${h}`, type: typed("EventType", type), date: date(y), description: "" };
+      w[holder].event_ref_list.push(eref(h));
+    };
+    if (rel === "other" && kind === "birth") add("hb2", 12, 1950);
+    if (state === "deceased") add("hdx", 13, 1999);
+    return w;
+  };
+  const rows = [];
+  for (const rel of ["own", "other"]) for (const kind of ["birth", "death"]) for (const state of ["living", "deceased"]) rows.push([rel, kind, state]);
+  const strictest = (results) => results.reduce((a, r) => stricter(a, r.code), "direct");
+  for (const [rel, kind, state] of rows) {
+    it(`${rel} record, ${kind} year, ${state} person: proposal`, async () => {
+      const w = worldWithEvents(rel, state, kind);
+      const holder = rel === "own" ? ME : "Person:hp2";
+      const type = kind === "birth" ? 12 : 13;
+      const existing = kind === "birth" ? (rel === "own" ? "he1" : "hb2") : state === "deceased" ? "hdx" : null;
+      const ops = existing
+        ? [set(`Event:${existing}`, "/date", date(existing === "he1" ? 1900 : existing === "hb2" ? 1950 : 1999), date(1962))]
+        : [
+            { id: "c", op: "create", obj: "new:1", cls: "Event", value: { _class: "Event", type: typed("EventType", type), date: date(1962), description: "" } },
+            { id: "a", op: "add", obj: holder, path: "/event_ref_list", value: eref("new:1") },
+          ];
+      const results = await run(ops, { objects: w });
+      assert.equal(strictest(results), "proposal");
+      assert.ok(results.every((r) => r.code !== "direct" || existing === null), "an existing event edit is never direct");
+    });
+  }
+  it("an own Death event's date year is a proposal (it was direct before), the day and month included", async () => {
+    const w = worldWithEvents("own", "deceased", "death");
+    assert.equal(await codeOf(set("Event:hdx", "/date", date(1999), date(1962)), { objects: w }), "proposal");
+    assert.equal(await codeOf(set("Event:hdx", "/date", date(1999), date(1962, 3, 4)), { objects: w }), "proposal");
+  });
+  it("an admin still saves a death year directly (the proposal path binds members)", async () => {
+    const w = worldWithEvents("own", "deceased", "death");
+    assert.equal(await codeOf(set("Event:hdx", "/date", date(1999), date(1962)), { objects: w, actor: actorOf("I9003", true) }), "direct");
+  });
+  it("rows next to it are unchanged: a non-life event date is direct for the owner and a proposal for others; a birth day or month is never", async () => {
+    assert.equal(await codeOf(set("Event:he2", "/date", date(1980, 3, 4), date(1981, 3, 4))), "direct");
+    assert.equal(await codeOf(set("Event:he3", "/date", date(1981), date(1982))), "proposal");
+    assert.equal(await codeOf(set("Event:he1", "/date", date(1900), date(1900, 3, 4))), "never");
   });
 });

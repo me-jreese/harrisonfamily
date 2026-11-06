@@ -103,6 +103,7 @@ Pointer patterns are RFC 6901 paths where `*` is one segment, `**` is any subtre
 | `/type/**` | `direct` | `proposal` | `direct` |  |  |
 | `/date/**` | `direct` | `proposal` | `direct` |  |  |
 | `/date/**` | `proposal` | `proposal` | `direct` | the event is birth-like |  |
+| `/date/**` | `proposal` | `proposal` | `direct` | the event is a Death (type 13): a death year is a proposal on any person, own or other, never a direct write (HFY-TSK-386) |  |
 | `/date/dateval/{0,1,4,5}` | `never` | `never` | `never` | the event is birth-like; the value carries a day or month |  |
 | `/date` | `never` | `never` | `never` | the event is birth-like; the value carries a day or month |  |
 | `/date/dateval` | `never` | `never` | `never` | the event is birth-like; the value carries a day or month |  |

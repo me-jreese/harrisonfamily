@@ -92,6 +92,7 @@ export const FIELD_POLICY_ROWS = Object.freeze([
   ["Event", "/type/**", D, P],
   ["Event", "/date/**", D, P],
   ["Event", "/date/**", P, P, { when: "birthLike" }], // the birth year is a proposal (R-09); day and month are never
+  ["Event", "/date/**", P, P, { when: "deathLike" }], // HFY-TSK-386: a death year is always a proposal, own record or another's (BRD D-17, D-19); never a direct write
   ["Event", "/date/dateval/{0,1,4,5}", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
   ["Event", "/date", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
   ["Event", "/date/dateval", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
@@ -299,6 +300,7 @@ const MERGED_GID = /^\s*merged gramps ids?\s*$/i;
  *  old (the stored value there), element (the stored list element the op addresses), written (the attribute or URL elements the op
  *  writes, as they stand after it), unresolved, policy (redaction-v1) }. A predicate that cannot tell answers for the stricter row. */
 const WHEN = {
+  deathLike: (c) => c.checks.length === 0 || c.checks.some(({ obj }) => obj && obj.type && obj.type.value === EVENT_TYPE.DEATH),
   birthLike: (c) => c.checks.length === 0 || c.checks.some(({ obj, tree }) => obj && isBirthLike(obj, tree, c.policy)),
   dayMonthInValue: (c) => {
     if (c.value === undefined) return true;
