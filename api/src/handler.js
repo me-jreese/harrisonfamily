@@ -8,6 +8,7 @@ import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGI
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
 import { currentFeatureGate, previewOf } from "./features.js";
 import { createUploads } from "./uploads.js";
+import { createWebUpload } from "./web-upload.js";
 import { createGuard } from "./guard.js";
 import { uploadPhotosFor } from "./comment-photos.js";
 import { checkLocation } from "./upload-guard.js";
@@ -152,9 +153,14 @@ export function createHandler(deps) {
       ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, notifier, guard, now, uid, log, via,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
-    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the HFY_POST_GRADUATE switch (deps.postGraduate, default off). Best effort after the post's own commit.
+    // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish, behind the postGraduateV1 flag (featureOn for the post's author, default off). Best effort after the post's own commit.
     const postGraduation = createPostGraduation({
-      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: () => deps.postGraduate === true, now, log,
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, mediaPublicBase: deps.mediaPublicBase, enabled: (post) => features.featureOn("postGraduateV1", post?.author?.id), now, log,
+      ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
+    });
+    // HFY-TSK-388-0A: member portrait and new-media uploads (web-upload.js), behind the mediaAddV1 and portraitV1 gates.
+    const webUpload = createWebUpload({
+      ddb, cmds, table, store, s3: deps.s3, bucket: mediaBucket, now, log,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}), ...(deps.mintHandle ? { mint: deps.mintHandle } : {}), ...(deps.graduateAfterPhase ? { afterPhase: deps.graduateAfterPhase } : {}),
     });
     const graduatePostPhotos = (post) => afterCommit("post photo graduation", () => postGraduation.graduate(post));
@@ -172,7 +178,7 @@ export function createHandler(deps) {
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, webUpload, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

@@ -41,6 +41,15 @@ export function requireFeature(name) {
 }
 
 /**
+ * ROUTES entry member: the route is dark until ANY of the flags in `names` is on (or the caller is uat). For a route that serves several features, each of which the
+ * handler then checks for its own part (POST /api/media/uploads: a portrait needs portraitV1, an item mediaAddV1). caps.json publishes the first name and the whole list.
+ */
+export function requireAnyFeature(names) {
+  if (!Array.isArray(names) || names.length === 0 || names.some((n) => typeof n !== "string" || !FLAG_NAME_RE.test(n))) throw new TypeError(`requireAnyFeature: a list of flag names, got ${JSON.stringify(names)}`);
+  return Object.freeze({ type: "feature", name: names[0], anyOf: Object.freeze([...names]) });
+}
+
+/**
  * ROUTES entry member: the route sits behind stack switch `name`. `check({actor})` runs on every call before the handler (and before the 401
  * for a signed-out caller): return true to continue, false for 404 not_found, or throw the switch's own HttpError (for example 404 not_enabled
  * for SYNC_API_ENABLED, 503 when chat service keys are unset). `check` also receives `params` (the matched path parameters) and `ctx`
@@ -63,7 +72,7 @@ export function gateExempt(reason) {
 /** The caps.json view of a route's gate: {feature}, {switch, rule?} or {exempt}; undefined for an ungated (pre-PLN-002) route. */
 export function describeGate(gate) {
   if (!gate) return undefined;
-  if (gate.type === "feature") return { feature: gate.name };
+  if (gate.type === "feature") return { feature: gate.name, ...(gate.anyOf ? { anyOf: gate.anyOf } : {}) };
   if (gate.type === "switch") return { switch: gate.name, ...(gate.rule ? { rule: gate.rule } : {}) };
   if (gate.type === "exempt") return { exempt: gate.reason };
   return { unknown: true };
@@ -177,7 +186,7 @@ export function createFeatureGate({ flags, isUat, log = console }) {
   async function check(gate, actor, opts) {
     if (gate === undefined || gate === null || gate.type === "exempt") return;
     if (gate.type === "feature") {
-      if (await featureOn(gate.name, actor, opts)) return;
+      for (const name of gate.anyOf ?? [gate.name]) if (await featureOn(name, actor, opts)) return;
       throw notFound();
     }
     if (gate.type === "switch") {

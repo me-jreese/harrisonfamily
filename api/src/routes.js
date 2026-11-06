@@ -3,7 +3,7 @@
 import { HttpError, json } from "./http.js";
 import { NOTIFY_TYPES } from "./notify.js";
 import { buildMe } from "./me.js";
-import { describeGate, gateExempt, requireFeature, serverSwitch } from "./features.js";
+import { describeGate, gateExempt, requireAnyFeature, requireFeature, serverSwitch } from "./features.js";
 import { CHAT_AUDIENCE, CHAT_ISSUER, CHAT_MAX_LIFETIME_SECONDS, CHAT_SUBJECT } from "./chat.js";
 import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
@@ -99,6 +99,20 @@ const need = (v, field) => {
 };
 
 const CHAT_GATE = serverSwitch("CHAT_SERVICE_AUTH", ({ actor }) => actor?.service === true, { rule: "the caller is the chat service actor (a valid ES256 service JWT for aud hfy-api/chat); ChatServicePublicKeys empty refuses every token" });
+
+/** HFY-TSK-388-0A: the flag a web upload purpose needs (the presign route and the commit read the same two). */
+const WEB_UPLOAD_FLAG = Object.freeze({ portrait: "portraitV1", item: "mediaAddV1" });
+/**
+ * The commit's gate, decided by purpose (404 not_found while the relevant flag is off, uat principals honoured by featureOn): every known purpose in `items` needs
+ * its own flag; with no known purpose (an empty or malformed body) the route is dark unless either flag is on, so a dark deploy never answers 400 to a probe.
+ */
+async function webCommitFlags(c, items) {
+  const flags = [...new Set((Array.isArray(items) ? items : []).map((i) => WEB_UPLOAD_FLAG[i?.purpose]).filter(Boolean))];
+  const ok = flags.length
+    ? (await Promise.all(flags.map((f) => c.featureOn(f)))).every(Boolean)
+    : (await Promise.all(Object.values(WEB_UPLOAD_FLAG).map((f) => c.featureOn(f)))).some(Boolean);
+  if (!ok) throw new HttpError(404, "not_found", "no such route");
+}
 
 /**
  * HFY-TSK-238 (api-feature-gate AC3): every PLN-002 route carries `gate`: requireFeature(flag) or serverSwitch(name, check) from
@@ -247,6 +261,20 @@ export const ROUTES = defineRoutes([
     summary: "One media item by gramps_id (or pa-<upload id> for a post photo not yet graduated), with ?section and ?filter for previous/next: {card, imageUrl, description?, origin: gramps|upload|post, originRef?, originBy?, tags: [{personId, mediaId, rect, index, state, person: {displayName, living}}], version, commentsSubject, previousId, nextId}; living names are redacted; 404 when not in the person gallery",
     gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.get(c.params.id, c.query)),
   },
+  // HFY-TSK-388-0A (BRD D-05, D-09, D-11, D-12, D-34; ruling P4-R26): member web uploads. Behind the feature gate: the portrait route needs portraitV1; the commit decides by purpose (item: mediaAddV1, portrait: portraitV1), 404 while the relevant flag is off. No MCP tool, no policy row.
+  // A refusal of the bytes answers 400 photo_has_location (the R-18 guard, upload-guard.js). Shapes and rules: src/web-upload.js.
+  {
+    name: "mediaUpload.commit", method: "POST", path: "/media/uploads",
+    summary: "Commit pending photo uploads {items: [{uploadId, purpose: portrait|item, subject, title?, year?, about?, description?}]} (1-10): each graduates to a Gramps Media with the Tag hfy-web-upload and the Attributes hfy:source=upload and hfy:added-by; purpose item also appends a MediaRef to the subject (your own page now, another person's as a proposal): 200 {items: [{uploadId, mediaId, purpose, state: graduated|applied|pending-proposal, proposal?}]}; 400 photo_has_location | upload_missing | validation, 404, 422 unsupported_type | too_large, 503. Idempotent per upload.",
+    // Dark unless either flag is on; then the flag follows each item's purpose (portrait: portraitV1, item: mediaAddV1), so portraitV1 alone is enough for a portrait commit.
+    gate: requireAnyFeature(["portraitV1", "mediaAddV1"]),
+    handler: async (c) => { await webCommitFlags(c, c.body?.items); return ok(await c.webUpload.commit(c, c.body)); },
+  },
+  {
+    name: "mediaUpload.portrait", method: "POST", path: "/media/portrait",
+    summary: "Set a person's portrait {personId, mediaId, crop: [x1, y1, x2, y2] whole percent | null}: one submission that adds the MediaRef with the crop (null for the full frame) and moves it to index 0; the previous portrait stays behind it. Your own page saves now, another person's becomes a proposal: 200 {state: applied|pending-proposal, tags: [{personId, mediaId, rect, index, state}], proposal?}.",
+    gate: requireFeature("portraitV1"), handler: async (c) => ok(await c.webUpload.portrait(c, c.body)),
+  },
   {
     name: "posts.list", method: "GET", path: "/posts", summary: "List posts newest first (cursor; filters type, author, subject, visibility)",
     handler: async (c) => {
@@ -261,7 +289,7 @@ export const ROUTES = defineRoutes([
     handler: async (c) => {
       const post = await c.content.createDraft({ type: c.body.type, visibility: c.body.visibility, subject: c.body.subject, title: c.body.title, body: c.body.body, attachments: c.body.attachments });
       if (post.visibility === "published") await c.afterPublished(post); // never fails the committed write
-      if (post.visibility === "published") await c.graduatePostPhotos(post); // HFY_POST_GRADUATE, off by default; never fails the committed write
+      if (post.visibility === "published") await c.graduatePostPhotos(post); // postGraduateV1 (featureOn for the author), off by default; never fails the committed write
       return ok(post, 201);
     },
   },
@@ -291,7 +319,9 @@ export const ROUTES = defineRoutes([
     name: "uploads.presign", method: "POST", path: "/uploads", summary: "Presigned S3 PUT for a photo (purpose post, the default: jpeg/png/webp/heic at uploads/posts/<ulid>/photo.<ext>; purpose comment: jpeg/png/webp at uploads/comments/<ulid>/photo.<ext>, needs commentPhotosV1), <= 10 MB, name chosen by the server, bound to you for 24 h; returns {uploadUrl, publicUrl, headers} (send headers exactly: Content-Type is signed)",
     handler: async (c) => {
       if (c.body.purpose === "comment") await commentPhotos(c); // purpose comment: uploads/comments/<ulid>/photo.<ext>, jpeg/png/webp only
-      return ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size, purpose: c.body.purpose }), 201);
+      const webFlag = c.body.purpose === "portrait" ? "portraitV1" : c.body.purpose === "item" ? "mediaAddV1" : undefined; // portrait and item: dark until their flag is on
+      if (webFlag && !(await c.featureOn(webFlag))) throw new HttpError(404, "not_found", "no such route");
+      return ok(await c.uploads.presign(c.actor, { contentType: c.body.contentType, size: c.body.size, purpose: c.body.purpose, subject: c.body.subject }), 201);
     },
   },
   // Notifications: the @io-kit/notify/server handler is mounted under /api/notifications/*.

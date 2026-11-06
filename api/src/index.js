@@ -249,7 +249,6 @@ export const handler = async (event, context) => {
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)
       s3, // checkLocation reads the first 256 KiB of a new post attachment (upload-guard.js; UploadReads in app-stack.yaml)
       guardDob: guardDobFromEnv(env), // HFY_GUARD_DOB=on (stack parameter GuardDob): the dob_not_allowed refusal; default off
-      postGraduate: env.HFY_POST_GRADUATE === "on", // HFY-TSK-387-0G: post photos graduate to Gramps Media on publish; default off (post-graduate.js)
       mediaBucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend",
       mediaPublicBase: env.MEDIA_PUBLIC_BASE ?? "https://harrisonfamily.us",
       // HFY-TSK-194 and HFY-TSK-139: the on-this-day index is built from the published person data (the interim year-tier source) until RENDER_MODE=live and

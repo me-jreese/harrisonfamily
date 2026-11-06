@@ -1,7 +1,7 @@
 // Graduating post photos into Gramps Media on publish (HFY-TSK-387-0G; BRD D-10, D-34, E2E-G; sibling of graduate.js, which graduates comment photos).
 //
-//   Behind HFY_POST_GRADUATE=on (a server switch, default OFF). The client flag postGraduateV1 is a separate, later switch for the UI; this one
-//   decides whether the API writes anything at all.
+//   Behind the feature flag postGraduateV1 (features.js featureOn, with the post's author as the principal; default OFF, read from the deployed flags.json).
+//   One flag enables the client and the API together; there is no environment switch.
 //
 // When a post is published (posts.create with visibility "published", posts.visibility to "published", and an edit of a published post), each
 // image attachment of the post is graduated: one Media object per photo and one MediaRef on the post's author, written through applyBatch()
@@ -35,14 +35,13 @@ import { policyOf } from "./sync/id-policy.js";
 import { finalKey, hexOfB64 } from "./sync/media.js";
 import { getRecord, getRecordItem, getSyncHead } from "./sync/store.js";
 import { postSource } from "./media-origin.js";
+import { validateNewRect } from "./rect.js";
 import { SOURCE_TYPE, classifySyncError, mediaObject } from "./graduate.js";
 
 const unavailable = (code, message) => new HttpError(503, code, message);
 
 export const POST_TAG = "hfy-post";
 export const MAX_TAGS_PER_PHOTO = 20;
-/** The switch that turns the whole feature on. Anything but "on" is off. */
-export const postGraduateFromEnv = (env = process.env) => env?.HFY_POST_GRADUATE === "on";
 /** The idempotency key of one post photo: the same for every attempt. */
 export const postGraduateKey = (postId, uploadId) => `postgrad:${postId}:${uploadId}`;
 export const markerKey = (postId, uploadId) => ({ PK: `POSTGRAD#${postId}`, SK: `PHOTO#${uploadId}` });
@@ -53,15 +52,8 @@ const ULID = "[0-9A-HJKMNP-TV-Z]{26}";
 const KEY_RE = new RegExp(`^${UPLOAD_PREFIX}/${ULID}/[a-z0-9][a-z0-9._-]{0,80}$`);
 const GRAMPS_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$/;
 
-/** A region as the HFY rect unit stores it (integer percent). Floats, reversed, zero-area, out-of-range and full-image regions are null (D-03, interim predicate until W0 pins Gramps' own). */
-export function normalizeRect(r) {
-  if (!Array.isArray(r) || r.length !== 4 || !r.every(Number.isInteger)) return null;
-  const [x1, y1, x2, y2] = r;
-  if (![x1, y1, x2, y2].every((v) => v >= 0 && v <= 100)) return null;
-  if (!(x1 < x2 && y1 < y2)) return null;
-  if (x1 === 0 && y1 === 0 && x2 === 100 && y2 === 100) return null;
-  return [x1, y1, x2, y2];
-}
+/** A stored tag region: an authored rect (validateNewRect, ruling P4-R16) or null (the full frame, or one that is not usable: the person is tagged without a region). */
+const rectOfTag = (r) => { const v = validateNewRect(r); return v.ok ? v.rect : null; };
 
 /** The tags of one attachment, shape-checked: [{person, rect|null}], at most MAX_TAGS_PER_PHOTO, one per person (the first wins). */
 export function tagsOf(a) {
@@ -70,7 +62,7 @@ export function tagsOf(a) {
   for (const t of a.tags) {
     if (out.length >= MAX_TAGS_PER_PHOTO) break;
     if (typeof t?.person !== "string" || !GRAMPS_ID_RE.test(t.person) || out.some((x) => x.person === t.person)) continue;
-    out.push({ person: t.person, rect: normalizeRect(t.rect) });
+    out.push({ person: t.person, rect: rectOfTag(t.rect) });
   }
   return out;
 }
@@ -113,7 +105,7 @@ function withRef(obj, handle, rect, change) {
 }
 
 /**
- * Deps: `ddb`, `cmds`, `table`; `store` (handler.build's `store`); `s3` + `bucket`; `mediaPublicBase`; `enabled()` the switch (default off);
+ * Deps: `ddb`, `cmds`, `table`; `store` (handler.build's `store`); `s3` + `bucket`; `mediaPublicBase`; `enabled(post)` the gate (default off; handler.js passes featureOn("postGraduateV1", author));
  * `apply` replaces applyBatch (tests); `mint`; `afterPhase(name)` (fault injection in tests; production passes none).
  */
 export function createPostGraduation({ ddb, cmds, table, store, s3, bucket = "harrisonfamily-frontend", mediaPublicBase, enabled = () => false, apply = applyBatch, now = () => Date.now(), mint = mintHandle, log = console, afterPhase }) {
@@ -263,7 +255,7 @@ export function createPostGraduation({ ddb, cmds, table, store, s3, bucket = "ha
      * A photo that failed on its own leaves the others alone.
      */
     async graduate(post) {
-      if (enabled() !== true) return { state: "disabled", photos: [] };
+      if ((await enabled(post)) !== true) return { state: "disabled", photos: [] };
       if (post?.visibility !== "published") return { state: "not_published", photos: [] };
       const items = plan(post, mediaPublicBase);
       const photos = items.filter((i) => i.skip).map((i) => ({ upload: i.uploadId, state: "skipped", reason: i.skip }));
