@@ -112,6 +112,8 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
   const [top, setTop] = useState(null);
   // The newest props, read when the chunk mounts: a graph that reloads remounts on whoever is in the middle now, not on the first person.
   const now = useRef(null);
+  // Whether the visitor has moved the stage since the middle person was last centred (see the resize effect below).
+  const moved = useRef(false);
   now.current = { focus, from, notice, links, sync, onFailed };
   useEffect(() => {
     let live = true;
@@ -120,13 +122,16 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
     loadHourglass().then((m) => {
       if (!live) return;
       const o = now.current;
-      api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: o.sync });
+      moved.current = false;
+      api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: (id) => { moved.current = false; now.current.sync(id); } });
       setTop(host.current.querySelector(".hfy-bt__top"));
     }).catch(fail);
     return () => { live = false; api?.destroy(); setTop(null); };
   }, [graph]);
   // The chip can make the top bar a row taller (a phone wraps it under the title), which shortens the stage after the chunk centred the middle person in it. Put them
-  // back in the middle when the stage changes size: once for the chip arriving, and again for a name that wraps differently or a phone turned on its side.
+  // back in the middle when the stage changes size, but only while the visitor has not moved the stage themselves: a phone's address bar or keyboard also resizes
+  // it, and that must not throw away where they have panned to. A touch, wheel, key or press on the stage marks it moved; the chunk's own tap-to-re-centre
+  // (`sync`) clears the mark again.
   useEffect(() => {
     const stage = top && host.current?.querySelector(".hfy-bt__stage");
     if (!stage || typeof ResizeObserver === "undefined") return undefined;
@@ -136,11 +141,14 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
       const b = stage.getBoundingClientRect();
       stage.scrollTo({ left: stage.scrollLeft + a.left + a.width / 2 - b.left - b.width / 2, top: stage.scrollTop + a.top + a.height / 2 - b.top - b.height / 2, behavior: "auto" });
     };
+    const mark = () => { moved.current = true; };
+    const kinds = ["wheel", "touchstart", "pointerdown", "keydown"];
+    kinds.forEach((k) => stage.addEventListener(k, mark, { passive: true }));
     let seen = false; // the observer reports once when it starts
-    const ro = new ResizeObserver(() => { if (seen) centre(); seen = true; });
+    const ro = new ResizeObserver(() => { if (seen && !moved.current) centre(); seen = true; });
     ro.observe(stage);
-    centre();
-    return () => ro.disconnect();
+    if (!moved.current) centre();
+    return () => { ro.disconnect(); kinds.forEach((k) => stage.removeEventListener(k, mark)); };
   }, [top]);
   const name = graph.person(focus)?.name;
   return (
@@ -364,6 +372,8 @@ export function TreeApp() {
   const [lifelinesFailed, setLifelinesFailed] = useState(false);
   // familyVizHourglass (HFY-TSK-379): `?view=tree` is the big tree. With the flag off it is an unknown view (view above is then what it always was);
   // while the flags are on their way it holds a placeholder rather than flashing the cards.
+  // Read once, on purpose: the tree tab and the cards' link are plain links (a full navigation), and the big tree keeps its own history and popstate inside itself,
+  // so this page is never moved to or from `?view=tree` by a pushState of its own.
   const [treeAskedNow] = useState(() => treeAsked(location.search));
   const [treeFailed, setTreeFailed] = useState(false);
   const treeOn = treeAskedNow && flags?.familyVizHourglass === true && !treeFailed;

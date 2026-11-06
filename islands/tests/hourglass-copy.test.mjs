@@ -127,6 +127,7 @@ test("the string literals in the sources that hold copy are lower case and say n
 // HFY-TSK-379 pass 4: the words of the family page's tree tab, the "centred on" chip and the cards' link (lib/tree-view.js TREE_COPY), exactly as T-Copy has them.
 test("the family page's strings (tab, new, centred on, change, the cards' link) are T-Copy's, lower case, and say no banned word", () => {
   assert.deepEqual({ ...TREE_COPY, see: TREE_COPY.see("Clarence") }, { tab: "tree", fresh: "new", centred: "centred on", change: "change", changeAria: "change who the tree is centred on", see: "see Clarence in the tree" });
+  assert.equal(TREE_COPY.see(""), "see the tree", "a person with no first name reads as the plain wording, never a double space");
   for (const [k, v] of Object.entries(TREE_COPY)) {
     const s = typeof v === "function" ? v("Ada") : v;
     assert.doesNotMatch(s, BANNED, `${k}: ${s}`);

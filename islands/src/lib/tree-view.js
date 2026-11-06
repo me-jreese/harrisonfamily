@@ -35,7 +35,7 @@ export const TREE_COPY = {
   centred: "centred on",
   change: "change",
   changeAria: "change who the tree is centred on",
-  see: (first) => `see ${first} in the tree`
+  see: (first) => (first ? `see ${first} in the tree` : "see the tree")
 };
 
 /** Whether the tree tab still carries its quiet "new". `now` is a Date or a millisecond count; a clock that is not a number reads as past (no mark). */
