@@ -72,8 +72,12 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "5171178a",
+        "js": "f3de3828",
         "css": "ba18296d"
+      },
+      "media-carousel": {
+        "js": "89e31e94",
+        "css": "289c73b5"
       },
       "moderation-queue": {
         "js": "794c62cf",
@@ -980,6 +984,13 @@
   resolveFlags().then((flags) => {
     if (flags.mediaBrowserV1 !== true || !/^\/all-media\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("media-browser", { onError() { /* the page keeps its "not available yet" note */ } });
+  });
+
+  // HFY-TSK-388-0C: mediaBrowserV1 also mounts the media carousel above the feed on the static /posts/ page (island media-carousel: the list, not one post). It
+  // renders nothing signed out or when its read fails, and the feed never waits for it. With the flag off the bundle is not requested.
+  resolveFlags().then((flags) => {
+    if (flags.mediaBrowserV1 !== true || !/^\/posts\/?(index\.html)?$/.test(window.location.pathname) || new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("media-carousel", { onError() { /* the feed stands on its own */ } });
   });
 
   // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]
