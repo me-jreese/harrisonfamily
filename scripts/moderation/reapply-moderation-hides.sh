@@ -22,7 +22,7 @@
 set -euo pipefail
 
 TABLE="" BUCKET="" REGION="${AWS_REGION:-us-west-2}" MODE="dry-run" FUNC="hfy-sync-render" BREAKGLASS=0
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --table) TABLE=${2:?}; shift 2 ;;
