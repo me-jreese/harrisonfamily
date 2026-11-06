@@ -1291,6 +1291,8 @@ The tests are [`api/test/records/relationships.node-test.js`](../../api/test/rec
 
 **Confirm (D-25).** When the years in force span more than 120 years the answer is `200 {confirm_needed: true, reason: "lifespan_over_120", lifespan}` and nothing is saved; the client asks "are you sure?" and resends with `confirm: true`.
 
+**Rate limit (P4-R28).** A `life_dates` suggestion (intent type `life_dates`, what the rapid-entry queue sends at about one card every 10 seconds) counts in its own bucket of 300 per member per 24 hours. Every other suggestion shares the general 50. The buckets are counted separately from the `PROPBY#` index by the stored intent type, so a queue session never uses up ordinary editing and ordinary editing never uses up the queue; past a bucket's limit the answer is `429 rate_limited`.
+
 **The deceased marker (D-19).** A suggestion that adds a Death event stores `intent.marks_deceased: true` and the reply carries `marks_deceased`; the summary then ends with the sentence "this will mark them as deceased". The review screen reads the marker. A suggestion that only changes the date of a Death event already on file has `marks_deceased: false`. Nothing is marked deceased without an approval (P4-R20).
 
 **Two members, one person.** Each member's suggestion is its own pending suggestion; an admin sees both on the person's edit bundle. Approving the first changes the person, and the second is judged by the usual rebase on its approval.

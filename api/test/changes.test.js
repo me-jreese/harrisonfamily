@@ -375,6 +375,16 @@ describe("the error matrix (AC3)", () => {
     const d = await w.post(ME, { base_versions: { "Person:nosuchhandle": 1 }, ops: [{ id: "x", op: "set", obj: "Person:nosuchhandle", path: "/gender", base: 1, value: 0 }] }, { idem: "v-4" });
     expect(err(d)).toEqual({ status: 404, error: "not_found" });
   });
+  it("life_dates proposals have their own bucket: 50 of them leave the ordinary 50 untouched (P4-R28)", async () => {
+    const w = await world();
+    const nowMs = Date.now();
+    for (let i = 0; i < 50; i += 1) {
+      const id = `${ulidFloor(nowMs - 3_600_000).slice(0, 10)}${String(i).padStart(16, "0")}`;
+      w.ddb.rows.set(`PROP#${id}\u0000IDX#BY`, { PK: `PROP#${id}`, SK: "IDX#BY", GSI1PK: `PROPBY#${ME}`, GSI1SK: id, proposal: { intent: { type: "life_dates" } } });
+    }
+    const body = { target: key(w.other), base_versions: versions(w, [w.other]), ops: [set(w.other, "/primary_name/first_name", "Alder", "Aldwin")] };
+    expect((await w.post(ME, body, { idem: "r-ld-1" })).status).toBe(201);
+  });
   it("size caps: more than 50 ops and more than 10 new objects are 413 too_large", async () => {
     const w = await world();
     const ops = Array.from({ length: 51 }, (_, i) => set(w.me, "/primary_name/nick", "", `n${i}`, `o${i}`));

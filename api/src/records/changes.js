@@ -10,7 +10,7 @@
 //      (a desktop-only reason, url_not_link and url_email included, rides in details.reasons; 422 is for validation only)
 //   5. per part, applied on its own: the stale-base check of the direct groups (409), the Gramps semantics and the Gramps schema (400 validation),
 //      the guard again on what will be stored, the admin step-up for a destructive direct group (401 step_up_required, auth_time within 900 s),
-//      the 50-proposals-per-24-hours limit (429) and the approval size budget (422 proposal_too_large)
+//      the proposal rate limit (429: 50 per 24 hours, 300 for life_dates proposals, P4-R28) and the approval size budget (422 proposal_too_large)
 //   6. ONE transaction: the direct groups through applyBatch() (record heads and log, GID and audit items, the registered contributors' items)
 //      with the proposal (PROP# META and IDX# copies, AUDIT#proposal) and the IDEM# receipt as `extra`; a submission with no direct part is one
 //      transact() of the proposal items alone, which touches no record
@@ -34,8 +34,8 @@ import { backrefs, customTypes, get, invalidateGraph } from "./index.js";
 import { relationView } from "./edit-bundle.js";
 import { viewRecord } from "./read.js";
 import {
-  MAX_APPROVAL_OBJECTS, MAX_NEW_OBJECTS, MAX_PROPOSAL_BYTES, MAX_PROPOSAL_OPS, MAX_TXN_ACTIONS, PROPOSAL_RATE_LIMIT, idemKeys, idemPut, newProposal, proposalAuditItem, proposalPuts,
-  ownersOf, proposalTooLarge, proposalView, recentProposalCount,
+  MAX_APPROVAL_OBJECTS, MAX_NEW_OBJECTS, MAX_PROPOSAL_BYTES, MAX_PROPOSAL_OPS, MAX_TXN_ACTIONS, idemKeys, idemPut, newProposal, proposalAuditItem, proposalPuts,
+  ownersOf, proposalBucketOf, proposalTooLarge, proposalView, rateLimitFor, recentProposalCount,
 } from "./proposals.js";
 import { FIXED_TXN_ITEMS } from "../sync/store.js";
 import { recordContributorActions } from "../record-contributor.js";
@@ -576,8 +576,10 @@ export async function planChanges(c, req, nowMs, guard, { skipRateLimit = false,
     const counts = { created: r.changes.created.length, updated: r.changes.updated.length, deleted: r.changes.deleted.length, targets: touched.length };
     if (counts.created > MAX_NEW_OBJECTS) throw problem(413, "too_large", `a proposal creates at most ${MAX_NEW_OBJECTS} new objects`);
     if (proposalTooLarge(counts)) throw problem(422, "proposal_too_large", "this suggestion is too big to approve in one step; please split it into smaller ones", { details: { objects: counts.created + counts.updated + counts.deleted } });
-    // A soft limit: the count and the write are not one atomic step, so concurrent submissions from one principal can overshoot 50 by a few.
-    if (!skipRateLimit && (await recentProposalCount(ctx, actor.id)) >= PROPOSAL_RATE_LIMIT) throw problem(429, "rate_limited", "you have made a lot of suggestions today; please try again tomorrow");
+    // A soft limit: the count and the write are not one atomic step, so concurrent submissions from one principal can overshoot by a few.
+    // Two buckets (P4-R28): 50 for ordinary proposals, 300 for life_dates proposals (the rapid-entry queue).
+    const bucket = proposalBucketOf(req.intent);
+    if (!skipRateLimit && (await recentProposalCount(ctx, actor.id, bucket)) >= rateLimitFor(bucket)) throw problem(429, "rate_limited", "you have made a lot of suggestions today; please try again tomorrow");
     if (counts.created + counts.updated + counts.deleted > 0) {
       out.review = { ops, ...r, targets: touched };
       out.warnings.push(...r.warnings);

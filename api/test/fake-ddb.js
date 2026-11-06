@@ -165,8 +165,13 @@ export function createFakeDdb() {
     const more = items.length > limit;
     const lek = more ? { LastEvaluatedKey: { PK: page.at(-1).PK, SK: page.at(-1).SK } } : {};
     // Select COUNT returns the number of items in the page, never the items.
-    if (i.Select === "COUNT") return { Count: page.length, ScannedCount: page.length, ...lek };
-    return { Items: structuredClone(page), Count: page.length, ...lek };
+    // Like DynamoDB the filter runs after the page is read: Count is the kept items, ScannedCount the page. Only the intent-type filters of the proposal rate limit exist.
+    const intentType = (r) => r.proposal?.intent?.type;
+    const kept = i.FilterExpression === "#p.#i.#t = :ld" ? page.filter((r) => intentType(r) === v[":ld"])
+      : i.FilterExpression === "attribute_not_exists(#p.#i.#t) OR #p.#i.#t <> :ld" ? page.filter((r) => intentType(r) !== v[":ld"])
+      : page; // any other filter is ignored, as it always was
+    if (i.Select === "COUNT") return { Count: kept.length, ScannedCount: page.length, ...lek };
+    return { Items: structuredClone(kept), Count: kept.length, ...lek };
   }
 
   function transactWrite(i) {

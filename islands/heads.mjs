@@ -35,6 +35,8 @@ export const PAGES = [
   "me/notifications/index.html",
   // the profile links editor (profileLinks, HFY-TSK-217)
   "me/links/index.html",
+  // the Life dates rapid-entry queue page (lifeDatesV1, HFY-TSK-388-0E)
+  "me/dates/index.html",
   // the notification inbox page (inboxV1, HFY-TSK-185)
   "me/inbox/index.html",
   // the family tree page (familyViz, HFY-TSK-201)

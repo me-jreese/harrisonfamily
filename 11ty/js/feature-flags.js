@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "4ce4fc68",
+        "js": "864d13ab",
         "css": "4cd750ae"
       },
       "family": {
@@ -60,8 +60,12 @@
         "css": "e44c3a91"
       },
       "life-dates": {
-        "js": "926e43a0",
+        "js": "efb06a71",
         "css": "159c53fd"
+      },
+      "life-dates-queue": {
+        "js": "2d776bcc",
+        "css": "ea3388ce"
       },
       "links-editor": {
         "js": "dba45074",
@@ -84,7 +88,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "a5c1fa5b",
+        "js": "fddf2e34",
         "css": "bd2a5788"
       },
       "person-links": {
@@ -930,6 +934,13 @@
     } else if (/^\/me\/links\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("links-editor", { onError() { /* the page keeps its "not available yet" note */ } });
     }
+  });
+
+  // HFY-TSK-388-0E: lifeDatesV1 mounts the Life dates rapid-entry queue on the static /me/dates/ page (island life-dates-queue). With the flag off
+  // the bundle is not requested and the page keeps its "isn't available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.lifeDatesV1 !== true || !/^\/me\/dates\/?(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("life-dates-queue", { onError() { /* the page keeps its "not available yet" note */ } });
   });
 
   // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]

@@ -23,9 +23,17 @@ export const OPEN_STATES = Object.freeze(["pending", "needs_changes", "stale"]);
 export const MAX_PROPOSAL_OPS = 50;
 export const MAX_PROPOSAL_BYTES = 64 * 1024;
 export const MAX_NEW_OBJECTS = 10;
-/** At most this many proposals per principal per 24 hours, counted from the PROPBY index (no counter item). */
+/**
+ * At most this many proposals per principal per 24 hours, counted from the PROPBY index (no counter item). Two buckets (ruling P4-R28): every
+ * ordinary proposal shares the general 50; a life_dates proposal (intent type `life_dates`, the rapid-entry queue, about 10 s a card) has its
+ * own 300, so a queue session never throttles ordinary editing and ordinary editing never eats the queue's room.
+ */
 export const PROPOSAL_RATE_LIMIT = 50;
+export const LIFE_DATES_RATE_LIMIT = 300;
 export const PROPOSAL_RATE_WINDOW_MS = 24 * 3600 * 1000;
+/** "life_dates" for a proposal whose stored intent has that type, else "general". */
+export const proposalBucketOf = (intent) => (intent && intent.type === "life_dates" ? "life_dates" : "general");
+export const rateLimitFor = (bucket) => (bucket === "life_dates" ? LIFE_DATES_RATE_LIMIT : PROPOSAL_RATE_LIMIT);
 /** The receipt of an Idempotency-Key lives this long. */
 export const IDEM_TTL_SECONDS = 24 * 3600;
 /** An approval commits as one applyBatch, which takes at most this many objects (D2-30). */
@@ -149,13 +157,27 @@ export function idemPut({ principal, key, requestHash, result, at, nowMs }) {
 }
 
 // ---- limits ---------------------------------------------------------------------------------------------------------------
-/** How many proposals `principal` created in the last 24 hours (one GSI1 Query on PROPBY#<principal>, at most PROPOSAL_RATE_LIMIT counted). */
-export async function recentProposalCount(ctx, principal) {
-  const res = await ctx.ddb.send(new ctx.cmds.QueryCommand({
-    TableName: ctx.table, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk AND GSI1SK > :after", Select: "COUNT", Limit: PROPOSAL_RATE_LIMIT,
-    ExpressionAttributeValues: { ":pk": `PROPBY#${principal}`, ":after": ulidFloor(ctx.now() - PROPOSAL_RATE_WINDOW_MS) },
-  }));
-  return res.Count ?? (res.Items ?? []).length;
+/**
+ * How many proposals `principal` created in the last 24 hours in `bucket` ("general" or "life_dates"): GSI1 Query on PROPBY#<principal>, filtered on
+ * the stored intent type, paged until the bucket's limit is reached (a count past the limit is never needed).
+ */
+export async function recentProposalCount(ctx, principal, bucket = "general") {
+  const cap = rateLimitFor(bucket);
+  const lifeDates = bucket === "life_dates";
+  let count = 0;
+  let start;
+  do {
+    const res = await ctx.ddb.send(new ctx.cmds.QueryCommand({
+      TableName: ctx.table, IndexName: "GSI1", KeyConditionExpression: "GSI1PK = :pk AND GSI1SK > :after", Select: "COUNT",
+      FilterExpression: lifeDates ? "#p.#i.#t = :ld" : "attribute_not_exists(#p.#i.#t) OR #p.#i.#t <> :ld",
+      ExpressionAttributeNames: { "#p": "proposal", "#i": "intent", "#t": "type" },
+      ExpressionAttributeValues: { ":pk": `PROPBY#${principal}`, ":after": ulidFloor(ctx.now() - PROPOSAL_RATE_WINDOW_MS), ":ld": "life_dates" },
+      ...(start ? { ExclusiveStartKey: start } : {}),
+    }));
+    count += res.Count ?? 0;
+    start = res.LastEvaluatedKey;
+  } while (start && count < cap);
+  return count;
 }
 
 /**
