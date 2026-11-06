@@ -36,6 +36,8 @@ For the reasoning behind these rules, see [How member content stays accountable]
 | [`policy.js`](../../api/src/policy.js) | The MCP permission table `POLICY_ROWS`, the step-up settings, `policyDocument` for `dist/policy.json`, and the groups resolver for `config/groups.json` (the MCP groups, the feature gate's `uat` group and the `gramps-owner` group of the sync API), whose shape is documented at the top of the file. |
 | [`content.js`](../../api/src/content.js) | Posts, as an `@io-kit/content` ContentSource, including the upload binding of new attachments. |
 | [`comments.js`](../../api/src/comments.js) | Comments and reactions, as an `@io-kit/comments` CommentSource. |
+| [`media-browser.js`](../../api/src/media-browser.js) | The Media Browser reads (`media.list`, `media.get`): the catalogue over the record store, the published media index and the post store, the cursor, the filters and the living-name redaction. See [Media Browser](#media-browser). |
+| [`media-visible.js`](../../api/src/media-visible.js) | `isMediaPublished`: whether a Media is in the person gallery. The `media:` comment subject and the Media Browser detail both ask it. |
 | [`comment-photos.js`](../../api/src/comment-photos.js) | Comment photo attachments: `normalizeNew` (the shape check), and `createUploadPhotos` with its `parse`, `owned` and `bind` (the `UPLOAD#` binding, `headUpload` and `checkLocation`). `uploadPhotosFor` wires it over the API's S3 client. See [Comment photos](#comment-photos). |
 | [`contrib.js`](../../api/src/contrib.js) | The contributions ledger: the `CONTRIB#` event and `CSTAT#` counter builders `contribOps`, `revokeOps`, `hideOps` and `mergeOps`, whose fragments commit in the post and comment transactions, and the event read `getEvent`. See [Contributions ledger](#contributions-ledger). |
 | [`contrib-read.js`](../../api/src/contrib-read.js) | The contributions read side: `createContribReader` (the `list`, `stats` and `site` behind `/contributions`), the pure feed-line rule `pickLine` with its `CANDIDATES` and `lineText`, `hrefOf`, and the default `proposalVisible`. See [Contributions read API](#contributions-read-api). |
@@ -182,6 +184,8 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 | `comments.delete` | DELETE | `/comments/:id` | query `subject` (required), optional `reason` | `204` | Author or admin. `subject` is read from the query only. |
 | `comments.react` | POST | `/comments/:id/react` | body `emoji`; `subject` in the body or the query | `200` `{removed, reaction?}` | Set or toggle off |
 | `comments.graduate` | POST | `/comments/:id/attachments/:aid/graduate` | body `subject` (the comment's thread), `person` (a gramps_id), optional `title` (200) and `description` (500) | `201` `{media: {handle, gramps_id?}, person, state: "done"}`, or `200` with the same body when it was already done for that person | Admins only (`403 not_admin`). Behind `requireFeature("graduateV1")`. Not an MCP tool. See [Graduating a comment photo](#graduating-a-comment-photo). |
+| `media.list` | GET | `/media` | query `section` (`media` default, `posts`, `all`), `filter` (`all` default, `needs_tags`, `of_me`), `cursor`, `limit` (1 to 60, default 24) | `200 {cards, nextCursor, counts: {media, posts}}`; see [Media Browser](#media-browser) | Any signed-in member. Behind `requireFeature("mediaBrowserV1")`. Read-only; not an MCP tool. |
+| `media.get` | GET | `/media/:id` | `:id` is a Media gramps_id (or `pa-<upload id>` for a post photo that has not graduated); query `section`, `filter` for previous and next | `200 {card, imageUrl, description?, origin, originRef?, originBy?, tags, version, commentsSubject, previousId, nextId}`; `404 not_found` for a Media the person gallery does not show | Any signed-in member. Behind `requireFeature("mediaBrowserV1")`. Read-only; not an MCP tool. |
 | `moderation.post` | POST | `/moderation` | body `{target, action, note?, hide?, version?, reason?}` (see [Moderation](#moderation)) | `200` `{target, moderation, item}` | Admins only; behind `requireFeature("moderationV1")`; hides, unhides, asks for changes or asks a question about a post or a comment (a photo only hides or unhides). `403 forbidden`, `400 validation` or `self_moderation`, `404`, `409 conflict`, `422 contact_info` or `unsupported_target`, `503 busy`. Not an MCP tool, no policy row. |
 | `moderation.list` | GET | `/moderation` | query `state` (`open` default, `closed`), `cursor`, `limit` (1 to 50, default 25) | `200` `{items, cursor}` | Admins only (`403`); behind `moderationV1`; the queue, newest first. Not an MCP tool. |
 | `posts.list` | GET | `/posts` | query `cursor`, `limit`, `subject`, `type`, `author`, `visibility` | `200` `{items, cursor}` | Newest first |
@@ -240,7 +244,7 @@ All paths are under `/api`, and every route needs a session, except the `sync-be
 
 The eight notification routes are delegated to `createNotifyHandler` from `@io-kit/notify/server`, with the session's member id as the principal. See [Notifications](#notifications).
 
-Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, the two `moderation.*` routes, with `requireFeature("moderationV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three `onthisday.*` routes, with `requireFeature("onThisDay")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
+Among the routes behind the [feature gate](#feature-gate) are `comments.graduate`, with `requireFeature("graduateV1")`, `media.list` and `media.get`, with `requireFeature("mediaBrowserV1")`, the two `moderation.*` routes, with `requireFeature("moderationV1")`, the two `adminDeletes.post` and `adminDuplicates.list` routes, with `requireFeature("adminDelete")`, the four `subscriptions.*` routes, with `requireFeature("recordSubsV1")`, `links.get` and `links.put`, with `requireFeature("profileLinks")`, the three `onthisday.*` routes, with `requireFeature("onThisDay")`, the three inbox routes (`notifications.inbox.list`, `notifications.inbox.count` and `notifications.inbox.read`), with `requireFeature("inboxV1")`, and the three contribution routes (`contributions.list`, `contributions.stats` and `contributions.site`), with `requireFeature("contribV1")`. The comments, posts, uploads and five push notification routes predate it, and `me.get` is its declared exemption. Every route added from HFY-PLN-002 on declares a feature or a server switch.
 
 Eleven routes are also MCP tools, through the `mcp` member of their `ROUTES` entry: `comments.list`, `comments.create`, `comments.delete`, `posts.list`, `posts.get`, `posts.create` (drafts only) and `posts.delete`, and the editing routes `edit.get`, `changes.post`, `proposals.list` and `proposals.get` (HFY-TSK-211). See [MCP server: Tools](mcp-server.md#tools). `me.get`, `links.get`, `links.put`, the three `onthisday.*` routes, the four `subscriptions.*` routes, the three `contributions.*` routes, the two records routes, `edit.schema`, the two `relationships.*` routes, the two admin routes (`adminDeletes.post`, `adminDuplicates.list`), `proposals.amend`, `proposals.withdraw` and `proposals.decide` are session-only routes with no tool, and the header of [`api/parity/map.yaml`](../../api/parity/map.yaml) says so.
 
@@ -478,6 +482,49 @@ Comments and reactions are implemented in [`comments.js`](../../api/src/comments
 - Each member has at most one reaction per comment, stored at `R#comment:<id>#<member id>`. Sending the emoji you already have removes it and returns `{removed: true}`. Sending a different emoji, or the first one, stores it, replacing any earlier one, and returns `{removed: false, reaction}`. Both return `200`.
 - The route always targets `comment:<id>`. `react` in `comments.js` also accepts the target `root`, returns `404 not_found` for an `attachment:` target and `422 validation` for any other target, but no route reaches any of these.
 - Reactions are single `PutItem` and `DeleteItem` calls, not transactions, and are not audited.
+
+## Media Browser
+
+`GET /api/media` and `GET /api/media/:id` ([`media-browser.js`](../../api/src/media-browser.js); BRD HFY-PLN-004 D-29 to D-40) read the media that members browse. They write nothing, have no MCP tool, and are dark until `mediaBrowserV1` is on or the caller is in the `uat` group. The shapes follow the `@io-kit/media` contract DTOs (`MediaPage`, `MediaCard`, `MediaDetail`, `Tag`); every extra field is optional.
+
+### Sources
+
+| Source | What it supplies |
+| --- | --- |
+| The record store view (`Person`, `Media`, `Tag` heads) | Visibility, MediaRefs and their rects, the origin Tags, titles, years, `change` |
+| `media/index.json` in the site bucket, read through `deps.readMediaIndex` (cached 60 s) | `thumb`, the image key (`s3Key`), whether the original is `missing` |
+| The post store, through the posts source with the caller's own view rules | Published posts and their image attachments |
+| The open `MODQ#open` queue | Hidden `media:` and `mediaref:` targets |
+
+The index is the gate for what shows: a Media with no index entry, or a `missing` one, is not listed yet. A failed read of any source is `503 unavailable` on both routes; the routes never fall back to an open list.
+
+### Sections and origin
+
+`section=media` lists visible Media that do not carry the Gramps Tag `hfy-post`. `section=posts` lists Media tagged `hfy-post`, plus the image attachments of published posts that have not graduated (the pre-backfill rule, D-34). `section=all` merges both for the carousel; each card says which section it belongs to. No item is in both: a post photo whose upload id appears in an attribute value of any Media is treated as graduated and listed only as that Media. `origin` is `post` for `hfy-post`, `upload` for `hfy-web-upload`, and `gramps` for neither. This file is the one reader of those two Tags.
+
+### Visibility
+
+A Media is listed when it is not private, has at least one non-private MediaRef on a live, non-private Person (the rule `isMediaPublished` applies; a test pins the two to the same answers), and no open hidden moderation item names the Media. A hidden `mediaref:` item drops that tag. A post, or a post photo, hidden by moderation is not listed for anyone but an admin. The detail asks `isMediaPublished` as well.
+
+### Cards and the list
+
+`MediaPage` is `{cards, nextCursor, counts}`. A card is `{mediaId, thumbUrl, width, height, section, tagCount, needsTags, title?, year?}` plus the optional `grampsId`, `addedAt` and `thumb`. `thumb` is `{s320, s800, w, h}` with site URLs; `thumbUrl` is the 320 URL, and a card with no thumbnail has no `thumb`, its `thumbUrl` falls back to the original and its `width` and `height` are `0`. A post photo that has not graduated has only its original. `needsTags` is true when no visible Person has a MediaRef to the Media; a post photo that has not graduated is not taggable, so it is never in `needs_tags` or `of_me`. `of_me` lists the Media tagged with the caller's own Person, matched by gramps_id on the server. `counts` are the sizes of both sections under the current `filter`.
+
+**Order and cursor.** Newest first by `addedAt`, ties by id descending. `addedAt` is the Media's Gramps `change` time (the last change of the object: the one per-Media time the store holds), or, for a post photo that has not graduated, the post's `published_at` or `created_at`. The cursor is opaque and holds the `(addedAt, id)` of the last card and a tag of the `(section, filter)` that issued it; a cursor from another listing is `400 validation`. A later insert never repeats or skips a card; a Media that changes while a member pages moves to the top.
+
+### Detail
+
+`MediaDetail` is `{card, imageUrl, description?, origin, originRef?, tags, version}` plus `originBy?`, `commentsSubject`, `previousId` and `nextId`. `tags` are `{personId, mediaId, rect, index, state, person: {displayName, living}}` for each visible MediaRef: `rect` is `[x1, y1, x2, y2]` in integer percent or `null` for the whole image, `index` is the position in that person's media list, and `state` is `applied`. `version` is a digest of the Media head and of each tagged Person head; send it back as the base version. `commentsSubject` is `media:<gramps_id>` (or `post:<id>` for a photo that has not graduated). `previousId` is the next newer item and `nextId` the next older one within `section` (default: the item's own) and `filter`; both are `null` when the item is not in that list.
+
+The origin line: `post` carries `originRef` (the post id, only when the caller can see that post) and `originBy`; `upload` carries `originBy` and, for a person who is not living, `originRef` (their gramps_id); `gramps` carries neither. The origin attributes are defined once, in [`media-origin.js`](../../api/src/media-origin.js), which the browser and every writer import (ruling HFY-P4-R26, BRD D-08): two Gramps Attributes on the Media object, never on a `MediaRef`. `hfy:source` is `post:<post ulid>/<upload id>` for a graduated post photo (the upload id lets the browser list the photo once, as the Media) and `upload` for a member upload; `hfy:added-by` is the author's or uploader's gramps_id. An import carries neither, so its origin line shows nothing. Post graduation writes both in the same batch that creates the Media; a retry or a republish does not add them again.
+
+### Living people
+
+A Person with no death ref is living (rule SYNC-15, the legacy rule the site publishes). For a living person the tag's `person` is `{displayName: "a living family member", living: true}` and a living author or uploader appears as `originBy: {displayName: "a living family member"}` with no id. The tag keeps `personId`, `rect` and `index` so that the tag editor can still address it. Titles and descriptions come from the stored Media, which the sync has already passed through the redaction rules. The routes log failure codes only, never a name.
+
+### Limits of this version
+
+The list reads the store view and the post list on each request, so it is for a family-sized tree. `state` is always `applied`: a pending proposal is not shown. Hidden items follow the strict rule of this browser (admins only), not the owner view of the records API.
 
 ## Record follows
 
@@ -1025,7 +1072,7 @@ The API role needs no new IAM: `s3:PutObject` on `media/*` and `s3:GetObject` on
 
 ## Graduating post photos
 
-HFY-TSK-387-0G (BRD D-10, D-34, E2E-G). When a post is published, each of its image attachments becomes a Gramps `Media` object with a `MediaRef` on the post's author. It is the post counterpart of [Graduating a comment photo](#graduating-a-comment-photo), and uses the same machinery: `applyBatch()` with origin `graduation`, the `media/<handle>.jpg` copy with a S3-computed SHA-256, and the `hfy:source` Media attribute (`post-photo:post:<post id>/<upload id>`). The code is [`post-graduate.js`](../../api/src/post-graduate.js). The cloud store and the renderer remain the only writers of family data.
+HFY-TSK-387-0G (BRD D-10, D-34, E2E-G). When a post is published, each of its image attachments becomes a Gramps `Media` object with a `MediaRef` on the post's author. It is the post counterpart of [Graduating a comment photo](#graduating-a-comment-photo), and uses the same machinery: `applyBatch()` with origin `graduation`, the `media/<handle>.jpg` copy with a S3-computed SHA-256, and the origin attributes `hfy:source` and `hfy:added-by` on the Media (defined under the [media routes](#media-browser), stamped in the batch that creates the Media). The code is [`post-graduate.js`](../../api/src/post-graduate.js). The cloud store and the renderer remain the only writers of family data.
 
 **The switch.** `HFY_POST_GRADUATE=on` turns it on; anything else, including an unset variable, is off, and then the publish paths read and write nothing for it. It is a server switch and has no route. The client flag `postGraduateV1` belongs to the UI task and does not control this code. Like the comment route it needs `HFY_ID_POLICY=mint` and a seeded, writable store; when either is missing the hook writes nothing and logs. Deploying it needs the variable added to the app stack, which is a change set that needs io's go-ahead (see [Deploy the app stack](../how-to/deploy-the-app-stack.md)).
 

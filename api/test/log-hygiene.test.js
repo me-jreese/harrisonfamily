@@ -83,6 +83,7 @@ export const FAMILIES = {
   subscriptions: ["subscriptions.get", "subscriptions.list", "subscriptions.put", "subscriptions.remove"],
   comments: ["comments.list", "comments.create", "comments.update", "comments.delete", "comments.react", "comments.graduate"],
   moderation: ["moderation.post", "moderation.list"],
+  media: ["media.list", "media.get"],
   posts: ["posts.list", "posts.get", "posts.create", "posts.update", "posts.visibility", "posts.delete"],
   uploads: ["uploads.presign"],
   notifications: [

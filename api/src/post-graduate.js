@@ -34,12 +34,12 @@ import { applyBatch, checkStoreGate } from "./sync/apply.js";
 import { policyOf } from "./sync/id-policy.js";
 import { finalKey, hexOfB64 } from "./sync/media.js";
 import { getRecord, getRecordItem, getSyncHead } from "./sync/store.js";
+import { postSource } from "./media-origin.js";
 import { SOURCE_TYPE, classifySyncError, mediaObject } from "./graduate.js";
 
 const unavailable = (code, message) => new HttpError(503, code, message);
 
 export const POST_TAG = "hfy-post";
-export const SOURCE_PREFIX = "post-photo:";
 export const MAX_TAGS_PER_PHOTO = 20;
 /** The switch that turns the whole feature on. Anything but "on" is off. */
 export const postGraduateFromEnv = (env = process.env) => env?.HFY_POST_GRADUATE === "on";
@@ -191,7 +191,7 @@ export function createPostGraduation({ ddb, cmds, table, store, s3, bucket = "ha
       }
       const tag = await tagFor();
       const change = Math.floor(now() / 1000);
-      const media = { ...mediaObject({ handle, desc: item.alt, source: `${SOURCE_PREFIX}post:${post.id}/${item.uploadId}`, change }), tag_list: [tag.handle] };
+      const media = { ...mediaObject({ handle, desc: item.alt, source: postSource(post.id, item.uploadId), addedBy: post.author.id, change }), tag_list: [tag.handle] };
       const blob = { s3_key: finalKey(handle, SOURCE_TYPE), sha256: copied.sha256, ...(copied.size !== undefined ? { size: copied.size } : {}), content_type: SOURCE_TYPE, state: "present" };
       const ops = [];
       const next = () => String(ops.length + 1);
