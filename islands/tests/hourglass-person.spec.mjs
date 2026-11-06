@@ -221,12 +221,12 @@ test("brothers and sisters: the toggle sits in the band, opens in place, sets ar
   await expect(band.locator(".is-sibling")).toHaveCount(0);
 });
 
-test("same ancestors on both sides: the note, the tags and the link to the big tree with the great-grandparents", async ({ page }) => {
+test("same ancestors on both sides: the note, the tags and the link to the outline (the big tree's great-grandparents are cut)", async ({ page }) => {
   await open(page, "pedigree", { width: 375 });
   await ready(page);
   await expect(tree(page).locator(".hfy-tree__note")).toContainText("Delphine and Everett were sister and brother, so Gideon Eastlake and Ottoline Juniper are on both sides of this family.");
-  await expect(tree(page).locator(".hfy-tree__note a")).toHaveText("see them in the big tree");
-  await expect(tree(page).locator(".hfy-tree__note a")).toHaveAttribute("href", /view=tree&focus=I9065.*&ggp=1$/);
+  await expect(tree(page).locator(".hfy-tree__note a")).toHaveText("see them in the outline");
+  await expect(tree(page).locator(".hfy-tree__note a")).toHaveAttribute("href", "/tree/?view=outline&focus=I9065");
   await expect(tree(page).locator(".hfy-tree__both")).toHaveText(["both sides", "both sides"]);
   await expect(tree(page).getByRole("link", { name: "Delphine Eastlake, grandmother, father's side, on both sides of the family" })).toBeVisible();
   expect(await tree(page).locator(".hfy-tree__ln.is-rep").count()).toBe(0); // the small tree draws no gold line: the tags say it

@@ -126,7 +126,7 @@
    From 1100 px (JS sets .is-pane from the same media query it redraws on): a page with the 320 px panel (space-9 x 5) beside the tools and the stage. Card
    sizes, the canvas and every line are placed in JS as inline px from hourglass-big.js, and the tree is never scaled. */
 .hfy-bt {
-  position: fixed; inset: 0; z-index: 1040; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "tools" "main" "bar";
+  position: fixed; inset: 0; z-index: 1040; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "top" "tools" "main" "bar";
   background: var(--io-color-semantic-surface); color: var(--io-color-semantic-text); font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal);
 }
 .hfy-bt.is-pane {

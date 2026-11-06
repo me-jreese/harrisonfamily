@@ -38,7 +38,7 @@ export function mountBig(host, { graph, focus, from, links = {}, notice = "", sy
   const canvas = h("div", "hfy-bt__canvas");
   const stage = h("div", "hfy-bt__stage", { role: "group", "aria-label": "the family tree" }, canvas);
   const status = h("p", "hfy-bt__status", { role: "status" });
-  const bar = h("aside", "hfy-bt__bar", { "aria-label": "who is in the middle" });
+  const bar = h("div", "hfy-bt__bar", { role: "group", "aria-label": "who is in the middle" });
   root.append(h("div", "hfy-bt__top", null, back, h("h2", null, null, "the family tree")), tools, h("div", "hfy-bt__main", null, stage, status), bar);
   host.replaceChildren(root);
 
@@ -130,7 +130,7 @@ export function mountBig(host, { graph, focus, from, links = {}, notice = "", sy
     BT.to.textContent = `back to ${first(home())}`;
     size.textContent = `size: ${L.size.name}`;
     const prev = hg().at(-1);
-    back.setAttribute("aria-label", prev ? `back to ${first(prev)}` : came() ? `back to ${first(came())}'s page` : "back");
+    back.setAttribute("aria-label", prev ? `one step back, to ${first(prev)}` : came() ? `back to ${first(came())}'s page` : "back");
     // the bar (phone) or the panel (from 1100 px)
     const c = m.focus;
     const rel = came() ? (st.f === came() ? (wide ? "the person whose page you came from" : "whose page you came from") : `from ${first(came())}'s page`) : "";

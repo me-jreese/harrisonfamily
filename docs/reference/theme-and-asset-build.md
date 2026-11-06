@@ -73,7 +73,7 @@ Every page with the Eleventy `css/main.css` links the theme layer right after it
 | `30-bootstrap.css` | The Bootstrap 5.3 components that `bs-bridge.css` cannot reach, re-pointed at `--io-*` tokens class by class. Each rule's comment names the `main.css` literal it replaces. |
 | `40-site.css` | The Eleventy site's own rules from `main.css` (gutters, `main` padding, footer and the rest), re-pointed at `--io-*` tokens |
 | `45-person.css` | The person page that `js/person-page.js` renders: the record, the family tree and the lightbox |
-| `46-hourglass.css` | The hourglass tree (`familyVizHourglass`): the person page's small tree and its `tree · cards` switch. It opens with the `--hfy-tree-*` alias block: each name falls back to an existing token until `@io-kit/tokens` ships the `tree-*` tokens, and the theme lint lets this one file read those names |
+| `46-hourglass.css` | The hourglass tree (`familyVizHourglass`): the person page's small tree and its `tree · cards` switch, and the big tree (`.hfy-bt`) on `/tree/?view=tree`. It opens with the `--hfy-tree-*` alias block: each name falls back to an existing token until `@io-kit/tokens` ships the `tree-*` tokens, and the theme lint lets this one file read those names |
 | `60-shell-static.css` | The shell frame before the island loads: `--io-bp-medium-min` and `--io-bp-palette-min` (`43rem`, under the lint's breakpoint tag), the hidden Bootstrap navbar under `html.hfy-shell-v2`, and the placeholder bars painted until the shell mounts |
 | `80-pages.css` | The six repo-owned pages (`.hfy-page`) and the preview-flags banner |
 

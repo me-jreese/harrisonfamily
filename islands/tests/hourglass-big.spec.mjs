@@ -118,7 +118,7 @@ test("the page never scrolls sideways while the stage scrolls inside its own reg
 test("full: the words, the lines and the card edges of the board", async ({ page }) => {
   await open(page, "full", { width: 375 });
   await ready(page);
-  for (const n of ["Rowan Alder, father", "Delia Birchwood, mother", "Corin Alder, brother", "Hugo Larkspur, husband", "Wren Larkspur, son"]) await expect(bt(page).getByRole("button", { name: n })).toBeAttached();
+  for (const n of ["Rowan Alder, father", "Delia Birchwood, mother", "Hugo Larkspur, husband", "Wren Larkspur, daughter"]) await expect(bt(page).getByRole("button", { name: n })).toBeAttached();
   await expect(bt(page).locator(".hfy-bt__lab")).toContainText(["grandparents", "parents", "children", "grandchildren"]);
   expect(await bt(page).locator("svg").count()).toBe(0);
   const lines = await bt(page).locator(".hfy-tree__ln").evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const cs = getComputedStyle(e); return [Math.min(r.width, r.height), cs.position, e.tagName]; }));
@@ -144,7 +144,7 @@ test("zoom in, zoom out and see all step through the four sizes, never scale, an
   await tool(page, "zoom in").click(); await check(2);
   await tool(page, "zoom in").click(); await check(3);
   await expect(tool(page, "zoom in")).toHaveAttribute("aria-disabled", "true");
-  await tool(page, "zoom in").click(); await check(3);
+  await tool(page, "zoom in").click({ force: true }); await check(3); // at the limit nothing happens
   await tool(page, "zoom out").click(); await check(2);
   await tool(page, "see all").click(); await check(0);
   await expect(tool(page, "see all")).toHaveAttribute("aria-pressed", "true");
@@ -180,28 +180,23 @@ test("a tap puts that person in the middle, writes ?focus= with a new history en
   await expect(bt(page).getByRole("status")).toHaveText("now centred on Rowan");
   await expect(bt(page).locator(".hfy-bt__bar h3")).toHaveText("Rowan Alder");
   await expect(bt(page).getByRole("link", { name: "open Rowan's page" })).toHaveAttribute("href", `/person/?id=${rowan}`);
-  // a second tap, then back twice: the top-left back and the browser's back retrace both, the size is kept
+  // a second tap (at a bigger size), then back twice: the top-left back and the browser's back retrace both
   await tool(page, "zoom in").click();
-  const delia = ID["Delia Birchwood"];
-  await bt(page).getByRole("button", { name: /^Delia Birchwood, / }).first().click().catch(() => {});
-  const second = await bt(page).locator('.hfy-bt__canvas [data-k]:not([aria-current]) ').evaluateAll((els) => els.map((e) => e.dataset.k).filter((k) => /^I/.test(k)));
-  expect(second.length).toBeGreaterThan(0);
-  const next = (await search(page)).focus;
-  const stepTo = next === rowan ? second[0] : next;
-  if (next === rowan) await bt(page).locator(`[data-k="${stepTo}"]`).click();
-  expect((await search(page)).focus).toBe(stepTo);
+  await bt(page).getByRole("button", { name: /^Corin Alder, / }).click();
+  await expect(mid(page)).toHaveAttribute("aria-label", "Corin Alder, in the middle now");
+  expect((await search(page)).focus).toBe(ID["Corin Alder"]);
   expect(await page.evaluate(() => history.length)).toBe(len0 + 2);
   expect(await level(page)).toBe(3);
-  await expect(bt(page).locator(".hfy-bt__back")).toHaveAttribute("aria-label", `back to Rowan`);
+  await expect(bt(page).locator(".hfy-bt__back")).toHaveAttribute("aria-label", "one step back, to Rowan");
   await bt(page).locator(".hfy-bt__back").click();
   await expect(mid(page)).toHaveAttribute("aria-label", "Rowan Alder, in the middle now");
   expect((await search(page)).focus).toBe(rowan);
+  expect(await level(page)).toBe(3);
   await page.goBack();
   await expect(mid(page)).toHaveAttribute("aria-label", `${NAME[a]}, in the middle now`);
   expect((await search(page)).focus).toBe(a);
   await page.goForward();
   await expect(mid(page)).toHaveAttribute("aria-label", "Rowan Alder, in the middle now");
-  expect(delia).toBeTruthy();
 });
 
 test("back to {person} puts the page's person back at the starting size, clears the steps, and is disabled at the start", async ({ page }) => {
@@ -236,35 +231,16 @@ test("with no from, back at the start is the browser's back", async ({ page }) =
   await expect(page).toHaveURL("about:blank");
 });
 
-test("great-grandparents: the button shows only with shared ancestors, and draws them once with gold lines and 'both sides' tags", async ({ page }) => {
-  await open(page, "full", { width: 768 });
+test("great-grandparents are cut (the budget, io's order): no button, no row, no gold line; the both-sides tags stay and the small tree's note points at the outline", async ({ page }) => {
+  const id = await open(page, "pedigree", { width: 768, query: "&focus=I9065&from=I9065&ggp=1" });
   await ready(page);
-  await expect(tool(page, "great-grandparents")).toBeHidden();
-  await page.goto("about:blank");
-  const id = await open(page, "pedigree", { width: 768 });
-  await ready(page);
-  const gg = tool(page, "great-grandparents");
-  await expect(gg).toBeVisible();
-  await expect(gg).toHaveAttribute("aria-pressed", "false");
-  await expect(bt(page).getByRole("button", { name: /great-grandfather/ })).toHaveCount(0);
+  await expect(bt(page).getByRole("button", { name: "great-grandparents", exact: true })).toHaveCount(0);
+  await expect(bt(page).getByRole("button", { name: /great-grand/ })).toHaveCount(0);
+  await expect(bt(page).locator(".hfy-bt__lab")).toHaveText(["grandparents", "parents"]);
   expect(await bt(page).locator(".hfy-tree__ln.is-rep").count()).toBe(0);
   await expect(bt(page).locator(".hfy-tree__both")).toHaveCount(2); // the two grandparents who are brother and sister
-  await gg.click();
-  await expect(gg).toHaveAttribute("aria-pressed", "true");
-  await expect(bt(page).getByRole("button", { name: "Gideon Eastlake, great-grandfather, on both sides of the family" })).toHaveCount(1); // drawn once
-  await expect(bt(page).getByRole("button", { name: /^Ottoline Juniper, great-grandmother/ })).toHaveCount(1);
-  expect(await bt(page).locator(".hfy-tree__ln.is-rep").count()).toBeGreaterThan(3);
-  await expect(bt(page).locator(".hfy-tree__both")).toHaveCount(4);
-  await expect(bt(page).locator(".hfy-bt__lab")).toContainText(["great-grandparents"]);
-  expect((await search(page)).ggp).toBe("1");
-  await gg.click();
-  expect((await search(page)).ggp).toBeUndefined();
-  // the small tree's link opens it with them shown
-  await page.goto("about:blank");
-  await open(page, "pedigree", { width: 768, query: `&focus=${id}&from=${id}&ggp=1` });
-  await ready(page);
-  await expect(tool(page, "great-grandparents")).toHaveAttribute("aria-pressed", "true");
-  await expect(bt(page).getByRole("button", { name: /^Gideon Eastlake, great-grandfather/ })).toHaveCount(1);
+  await expect(bt(page).getByRole("button", { name: "Delphine Eastlake, grandmother, father's side, on both sides of the family" })).toHaveCount(1);
+  expect((await search(page)).focus).toBe(id);
 });
 
 test("brothers and sisters open beside the person and half-siblings hang by dashed lines; '+n more' re-centres on that child", async ({ page }) => {
@@ -295,17 +271,15 @@ test("brothers and sisters open beside the person and half-siblings hang by dash
   expect((await search(page)).focus).toBe(ID["Olwen Quillon"]);
 });
 
-test("a parent's other partners show from medium up, not at small", async ({ page }) => {
+test("the parents' other partners are cut (the budget, io's order): the parents' row holds the parents at every size", async ({ page }) => {
   await open(page, "partners", { width: 375 });
   await ready(page);
-  const others = bt(page).getByRole("button", { name: /, (stepmother|mother's partner|father's partner|stepfather)$/ });
-  expect(await level(page)).toBe(1);
-  await expect(others).toHaveCount(0);
+  const check = async () => expect((await bt(page).locator(".hfy-bt__canvas .is-parent").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label").split(", ")[1])))).toEqual(["father", "mother"]);
+  await check();
   await tool(page, "zoom in").click();
-  expect(await level(page)).toBe(2);
-  expect(await others.count()).toBeGreaterThanOrEqual(2);
-  await tool(page, "zoom out").click();
-  await expect(others).toHaveCount(0);
+  await check();
+  await tool(page, "zoom in").click();
+  await check();
 });
 
 test("every card is a real button named with the relationship; the ghosts are text with a button to tell us", async ({ page }) => {
@@ -476,6 +450,14 @@ test("flag off: ?view=tree is an unknown view and the page is what it always was
   expect(await search(page)).toMatchObject({ view: "tree" });
 });
 
+test("a big tree chunk that will not load drops the page to the cards, with a line that says so", async ({ page }) => {
+  await page.route(/\/js\/islands\/chunks\/tree-hourglass-big-/, (r) => r.abort());
+  await open(page, "full", { width: 768 });
+  await expect(page.locator("[data-tree-hourglass-failed]")).toHaveText("the big tree didn't load. the cards below have everyone.");
+  await expect(page.locator("[data-tree-views]")).toBeVisible();
+  await expect(bt(page)).toHaveCount(0);
+});
+
 test("an unknown or merged-away id falls back as the tree page does, with the line that says so", async ({ page }) => {
   await open(page, "full", { width: 768, query: "&focus=I0000&from=I0000" });
   await ready(page);
@@ -491,6 +473,7 @@ test("axe at 375 and 1280 finds nothing", async ({ page }) => {
     await bt(page).locator('[data-k^="sibs"]').click();
     for (const t of ["dark", "light"]) {
       await theme(page, t);
+      await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished))); // the cross-fade is done: axe reads the settled colours
       expect(await axeViolations(page, { include: ".hfy-bt", impacts: ["minor", "moderate", "serious", "critical"] }), `${width} ${t}`).toEqual([]);
     }
   }
@@ -501,11 +484,11 @@ test.describe("screenshots", () => {
     test.skip(!SHOTS, "HFY_SHOTS is the folder the screenshots go in");
     test.setTimeout(300_000);
     mkdirSync(SHOTS, { recursive: true });
-    const cases = { partners: {}, full: {}, pedigree: { query: `&focus=${CASES.pedigree}&from=${CASES.pedigree}&ggp=1` }, siblings: { open: "sibs" }, large: {} };
+    const cases = { partners: {}, full: {}, pedigree: { tall: true }, siblings: { open: "sibs" }, large: { tall: true } };
     for (const width of WIDTHS) {
       for (const [c, o] of Object.entries(cases)) {
         await page.unrouteAll({ behavior: "ignoreErrors" });
-        await open(page, c, { width, height: width >= 1100 ? 900 : 812, query: o.query ?? null });
+        await open(page, c, { width, height: o.tall ? 1500 : width >= 1100 ? 900 : 812 });
         await ready(page);
         if (o.open) await bt(page).locator('[data-k^="sibs"]').click();
         for (const t of ["dark", "light"]) {
