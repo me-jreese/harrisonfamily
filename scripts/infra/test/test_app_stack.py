@@ -720,8 +720,8 @@ class SyncInfra(unittest.TestCase):
         self.assertEqual(sub(by_sid(role, "PhotoRead")["Resource"]).split("}/", 1)[1], "media/*")
         out = by_sid(role, "GraphOutputs")
         self.assertEqual(sorted(out["Action"]), ["s3:DeleteObject", "s3:GetObject", "s3:PutObject"])
-        self.assertEqual(sorted(sub(x).split("}/", 1)[1] for x in out["Resource"]), ["media/faces/*", "person/graph.json"])
-        self.assertEqual(by_sid(role, "FacesList")["Condition"], {"StringLike": {"s3:prefix": ["media/faces/*"]}})
+        self.assertEqual(sorted(sub(x).split("}/", 1)[1] for x in out["Resource"]), ["media/faces/*", "media/thumb/*", "person/graph.json"])
+        self.assertEqual(by_sid(role, "FacesList")["Condition"], {"StringLike": {"s3:prefix": ["media/faces/*", "media/thumb/*"]}})
         self.assertEqual(by_sid(role, "Metrics")["Condition"], {"StringEquals": {"cloudwatch:namespace": "HFY/SyncRender"}})
         for s in statements(role):
             self.assertNotIn("uploads/", str(s.get("Resource")))

@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
+from .thumbs import thumb_field
 from . import search_index
 from .policy import TextGate, default_text_gate, is_private
 from .store import Objects, Store
@@ -136,7 +137,10 @@ def render(
     media_files: Optional[MediaFiles] = None,
     generated_at: str = DEFAULT_GENERATED_AT,
     text_gate: Optional[TextGate] = None,
+    thumbs: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> RenderResult:
+    """``thumbs``: the parsed thumbnail sidecar (``thumbs.parse_sidecar``, HFY-TSK-393); a media entry gains ``thumb`` only when its record was
+    made from the entry's current checksum."""
     gate = text_gate if text_gate is not None else default_text_gate
     store = Store(objects)
     report = RenderReport(excluded_places=len(store.excluded_places))
@@ -235,20 +239,24 @@ def render(
             payload["missing"] = False
             payload["checksum"] = info.get("checksum")
             payload["size"] = info.get("size")
+        thumb = None if payload["missing"] else thumb_field(handle, payload["checksum"], (thumbs or {}).get(handle))
+        if thumb is not None:
+            payload["thumb"] = thumb
         files[f"media/{handle}.json"] = dumps(payload)
         media_properties[handle] = {
             "checksum": payload["checksum"], "size": payload["size"], "missing": payload["missing"],
         }
-        media_manifest.append(
-            {
-                "handle": handle,
-                "grampsId": media.get("gramps_id"),
-                "s3Key": payload["s3Key"],
-                "checksum": payload["checksum"],
-                "size": payload["size"],
-                "missing": payload["missing"],
-            }
-        )
+        entry = {
+            "handle": handle,
+            "grampsId": media.get("gramps_id"),
+            "s3Key": payload["s3Key"],
+            "checksum": payload["checksum"],
+            "size": payload["size"],
+            "missing": payload["missing"],
+        }
+        if thumb is not None:
+            entry["thumb"] = thumb
+        media_manifest.append(entry)
 
     # Person payloads carry the media metadata too (the live ETL writes each person file a second time).
     for gramps_id, payload in person_payloads.items():

@@ -29,3 +29,14 @@ Set `GraphRenderCodeKey` in the same change set that ships the `hfy-api` and `hf
 ## Staleness window
 
 The graph converges within one 15-minute schedule tick of the sync renderer after any change: the tick re-invokes the graph function, which skips only when `SYNC#GRAPH` already matches the head seq, the hidden-item digest and `SYNC#HEAD.expunge_epoch`. This covers a moderation hide or unhide that does not move the store seq, an expunge (`api/scripts/expunge.mjs` rewrites the store in place and raises the epoch, not the seq), a pass skipped because a push session was young, and a failed invoke. An operator can force a rebuild with `{"force": true}`. A face pruned right after `graph.json` is replaced can 404 for a cached older page until it refreshes; this matches the sync renderer.
+
+## Thumbnails
+
+Every invocation also runs the thumbnail step (`graph/cloud/thumbs.mjs`, HFY-TSK-393), which reads originals from `media/` and writes only `media/thumb/*`. No new layer, binary or resource ships: it uses the packaged `sharp`. The function role needs `GraphOutputs` and `FacesList` to name `media/thumb/*` (see `GraphRenderRole` in `infrastructure/cloudformation/app-stack.yaml`), and the data-write guard names `media/thumb/*` in its record statement, so apply both before the first thumbnail pass:
+
+1. `scripts/infra/apply-data-write-guard.sh --dry-run`, then the real run with io's go-ahead.
+2. The app-stack change set (the new `GraphRenderCodeKey` and the role policy), with io's go-ahead.
+3. Invoke once with `{"force": true}`. The result carries a `thumbs` object of counts: `derived`, `reused`, `pending`, `pruned` and `warnings` by code. A large library takes several passes (the step stops 45 seconds before the invocation limit and the next pass continues); `pending` reaches `0` when it is done.
+4. `hfy-sync-render` adds the `thumb` field on its next pass, within one schedule interval. Check with `node api/scripts/sync-admin.mjs render --dry-run --full`, then read one `media/<handle>.json`.
+
+To roll back, deploy the previous code keys. Thumbnails left in `media/thumb/` are inert; delete them only with a break-glass session.
