@@ -96,7 +96,7 @@ export const FAMILIES = {
   ],
   chat: ["chat.directory", "chat.push", "chat.archive"],
   records: ["records.byGrampsId", "records.get", "edit.schema", "edit.get"],
-  changes: ["changes.post", "adminDeletes.post", "adminDuplicates.list", "lifeDates.post"],
+  changes: ["changes.post", "adminDeletes.post", "adminDuplicates.list", "lifeDates.get", "lifeDates.post"],
   relationships: ["relationships.preview", "relationships.post"],
   proposals: ["proposals.list", "proposals.get", "proposals.amend", "proposals.withdraw", "proposals.decide"],
   accessRequests: [

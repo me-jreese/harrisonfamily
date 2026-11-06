@@ -308,3 +308,128 @@ describe("classifyDate", () => {
     expect(classifyDate(date)).toEqual(want);
   });
 });
+
+// ---- GET /api/life-dates (HFY-TSK-388-0D, ruling P4-R29): coarse precision classes only ---------------------------------------------------
+describe("GET /api/life-dates: the coarse classes", () => {
+  const read = (w, who, n, target) => w.call("GET", "/api/life-dates", who, { query: { target: target ?? `Person:${h(n)}` } });
+  const BIRTH = 12;
+  const DEATH = 13;
+  const CASES = [
+    ["no event on file", null, { class: "none", year: null }],
+    ["an event with no date", dt(), { class: "none", year: null }],
+    ["a plain year", dt([0, 0, 1890, false]), { class: "year", year: 1890 }],
+    ["an estimated year", yearDate(1890, true), { class: "about", year: 1890 }],
+    ["a year with the about modifier", dt([0, 0, 1890, false], { modifier: 3 }), { class: "about", year: 1890 }],
+    ["a day and a month", dt([4, 3, 1890, false]), { class: "precise", year: 1890 }],
+    ["a month only", dt([0, 3, 1890, false]), { class: "precise", year: 1890 }],
+    ["a range", dt([4, 3, 1890, false, 9, 8, 1895, false], { modifier: 4 }), { class: "precise", year: 1890 }],
+    ["another calendar", dt([0, 0, 1890, false], { calendar: 1 }), { class: "precise", year: 1890 }],
+    ["a text date with no year", dt([0, 0, 0, false], { modifier: 6, text: "spring of the flood" }), { class: "precise", year: null }],
+  ];
+
+  it.each(CASES)("birth, %s", async (_name, date, want) => {
+    await withEditWorld(async (w) => {
+      const e = date ? ev(1, BIRTH, date) : null;
+      await seed(w, [...(e ? [e] : []), person(60, e ? [e] : [])]);
+      const r = await read(w, ME, 60);
+      expect(r.status).toBe(200);
+      expect(r.body.birth).toEqual(want);
+      expect(r.body.death).toEqual({ class: "none", year: null });
+      expect(r.body.sharedEvent).toEqual({ birth: false, death: false });
+    });
+  });
+
+  it.each(CASES)("death, %s", async (_name, date, want) => {
+    await withEditWorld(async (w) => {
+      const e = date ? ev(2, DEATH, date) : null;
+      await seed(w, [...(e ? [e] : []), person(61, e ? [e] : [])]);
+      const r = await read(w, OTHER, 61);
+      expect(r.status).toBe(200);
+      expect(r.body.death).toEqual(want);
+      expect(r.body.birth).toEqual({ class: "none", year: null });
+      expect(r.body.livingByRule).toBe(!e);
+    });
+  });
+
+  it("the reply is exactly the coarse fields, and a precise date leaks no month, day, range, text or calendar: no digits but the year", async () => {
+    await withEditWorld(async (w) => {
+      const b = ev(1, BIRTH, dt([4, 3, 1890, false, 9, 8, 1895, false], { modifier: 4, calendar: 1, text: "4 March 1890 to 9 August 1895" }));
+      const d = ev(2, DEATH, dt([17, 11, 1962, false]));
+      await seed(w, [b, d, person(62, [b, d])]);
+      const r = await read(w, ME, 62);
+      expect(r.status).toBe(200);
+      expect(Object.keys(r.body).sort()).toEqual(["birth", "death", "livingByRule", "sharedEvent"]);
+      expect(Object.keys(r.body.birth).sort()).toEqual(["class", "year"]);
+      expect(r.body).toMatchObject({ birth: { class: "precise", year: 1890 }, death: { class: "precise", year: 1962 }, livingByRule: false });
+      expect(JSON.stringify(r.body).replace(/1890|1962/g, "")).not.toMatch(/\d/);
+      expect(JSON.stringify(r.body)).not.toMatch(/month|day|range|text|calendar|modifier|quality/i);
+      expect(String(r.headers?.["cache-control"] ?? r.headers?.["Cache-Control"])).toMatch(/private/);
+      expect(String(r.headers?.["cache-control"] ?? r.headers?.["Cache-Control"])).toMatch(/no-store/);
+    });
+  });
+
+  it("the living rule is no death reference: a death event with no date still says they died, and none says living", async () => {
+    await withEditWorld(async (w) => {
+      const born = ev(1, BIRTH, dt([0, 0, 1925, false]));
+      const deadNoYear = ev(2, DEATH, dt());
+      await seed(w, [born, deadNoYear, person(63, [born]), person(64, [born, deadNoYear].map((e) => ({ ...e, handle: e.handle })))]);
+      const living = await read(w, ME, 63);
+      expect(living.body.livingByRule).toBe(true);
+      const dead = await read(w, ME, 64);
+      expect(dead.body.livingByRule).toBe(false);
+      expect(dead.body.death).toEqual({ class: "none", year: null });
+    });
+  });
+
+  it("an event another person also references is flagged sharedEvent for that row only", async () => {
+    await withEditWorld(async (w) => {
+      const b1 = ev(1, BIRTH, dt([0, 0, 1851, false]));
+      const d1 = ev(2, DEATH, dt([0, 0, 1900, false]));
+      await seed(w, [b1, d1, person(65, [b1, d1]), person(66, [b1])]);
+      const r = await read(w, ME, 65);
+      expect(r.body.sharedEvent).toEqual({ birth: true, death: false });
+      expect(r.body.birth).toEqual({ class: "year", year: 1851 });
+    });
+  });
+
+  it("only the primary-role Birth is read (the rule POST uses)", async () => {
+    await withEditWorld(async (w) => {
+      const b1 = ev(1, BIRTH, dt());
+      const b2 = ev(2, BIRTH, dt([0, 0, 1851, false]));
+      await seed(w, [b1, b2, person(67, [b1, b2])]);
+      expect((await read(w, ME, 67)).body.birth).toEqual({ class: "none", year: null });
+    });
+  });
+
+  it.each([
+    ["no target", undefined],
+    ["a record of another class", "Event:abc"],
+    ["a bad handle", "Person:a b"],
+    ["an empty handle", "Person:"],
+    ["a gramps id", "I0001"],
+  ])("%s is 400 validation", async (_name, target) => {
+    await withEditWorld(async (w) => {
+      const r = await w.call("GET", "/api/life-dates", ME, target === undefined ? {} : { query: { target } });
+      expect(r.status).toBe(400);
+      expect(r.body.errors?.[0]?.pointer ?? r.body.error?.errors?.[0]?.pointer ?? "/target").toBe("/target");
+    });
+  });
+
+  it("a person that does not exist is 404, and a request with no sign-in is 401", async () => {
+    await withEditWorld(async (w) => {
+      await seed(w, [person(68)]);
+      expect((await read(w, ME, 0, "Person:nosuchperson")).status).toBe(404);
+      expect((await w.rawCall("GET", "/api/life-dates", { query: { target: `Person:${h(68)}` } })).status).toBe(401);
+    });
+  });
+
+  it("it is read-only: nothing is written and no proposal is made", async () => {
+    await withEditWorld(async (w) => {
+      const b = ev(1, BIRTH, dt([0, 0, 1890, false]));
+      await seed(w, [b, person(69, [b])]);
+      const before = w.ddb.all().length;
+      await read(w, ME, 69);
+      expect(w.ddb.all().length).toBe(before);
+    });
+  });
+});

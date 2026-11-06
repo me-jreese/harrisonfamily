@@ -20,7 +20,7 @@ import { get, backrefs, storeView } from "./index.js";
 import { createRecordGuard } from "./guard.js";
 import { viewRecord } from "./read.js";
 import { EVENT_TYPE, MODIFIER, ROLE_PRIMARY, birthDeathIndex, computeSortval } from "./semantics.js";
-import { HttpError } from "../http.js";
+import { HttpError, json } from "../http.js";
 
 /** The one Source every member-entered life date cites (D-24). Reused by title when it exists. */
 export const SOURCE_TITLE = "harrisonfamily.us member contributions";
@@ -124,7 +124,7 @@ async function primaryEvents(ctx, person) {
   }
   const idx = birthDeathIndex(person, (h) => events.get(h)?.obj);
   const at = (i) => { const ref = arr(person.event_ref_list)[i]; return i >= 0 && isObj(ref) && events.get(ref.ref) ? { handle: ref.ref, ...events.get(ref.ref) } : null; };
-  return { birth: at(idx.birth_ref_index), death: at(idx.death_ref_index) };
+  return { birth: at(idx.birth_ref_index), death: at(idx.death_ref_index), deathRefIndex: idx.death_ref_index };
 }
 
 const eventRef = (ref) => ({ _class: "EventRef", attribute_list: [], citation_list: [], note_list: [], private: false, ref, role: typed("EventRoleType", ROLE_PRIMARY) });
@@ -240,6 +240,37 @@ async function compile(c, parsed, head) {
     }
   }
   return { rows, ops, base_versions, summary, marks_deceased: marks };
+}
+
+// ---- the read route ------------------------------------------------------------------------------------------------------
+const COARSE_CLASS = { empty: "none", year: "year", precise: "precise" };
+
+/**
+ * GET /api/life-dates?target=Person:<handle> (HFY-TSK-388-0D, ruling P4-R29): the coarse precision of the person's primary Birth and Death dates, so the
+ * Life dates island can tell an editable year from a more exact date without the published person JSON, which carries no day or month (R-19).
+ * Computed from the record store with the classifier and the primary-event rule the POST uses. Only a class (none | year | about | precise) and the
+ * year (null when there is none) per row; never a month, day, range, text or calendar. `livingByRule` is the SYNC-15 rule (no death reference) and
+ * `sharedEvent` says whether another person also references the row's event. Read-only; the reply is private and never cached.
+ */
+export async function lifeDatesGet(c) {
+  if (!editingOn()) throw new HttpError(404, "not_found", "no such route");
+  const target = c.query?.target;
+  const m = typeof target === "string" ? /^Person:([A-Za-z0-9_-]{1,64})$/.exec(target) : null;
+  if (!m) throw problem(400, "validation", "the request is not valid", { errors: [{ pointer: "/target", code: "target", detail: "target must look like Person:<handle>" }] });
+  const ctx = c.store;
+  const head = await loadPerson(c, m[1]);
+  const { birth, death, deathRefIndex } = await primaryEvents(ctx, head.obj);
+  const personKey = `Person:${m[1]}`;
+  const row = async (file) => {
+    if (!file) return { row: { class: "none", year: null }, shared: false };
+    const state = classifyDate(file.obj.date);
+    const cls = state.kind === "year" && state.about ? "about" : COARSE_CLASS[state.kind];
+    const shared = (await backrefs(ctx, `Event:${file.handle}`)).some((k) => k !== personKey);
+    return { row: { class: cls, year: state.kind === "empty" || !state.year ? null : state.year }, shared };
+  };
+  const b = await row(birth);
+  const d = await row(death);
+  return json(200, { birth: b.row, death: d.row, livingByRule: deathRefIndex < 0, sharedEvent: { birth: b.shared, death: d.shared } }, { "cache-control": "private, no-store" });
 }
 
 // ---- the route -----------------------------------------------------------------------------------------------------------
