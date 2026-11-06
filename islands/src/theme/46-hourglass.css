@@ -54,9 +54,11 @@
 .hfy-tree__cap { padding-bottom: var(--io-space-1); color: var(--io-color-semantic-text-dim); font-size: var(--io-typography-size-sm); text-align: center; }
 .hfy-tree__gap { position: relative; flex: none; }
 .hfy-tree__ln { position: absolute; display: block; background: var(--hfy-tree-line); }
+.hfy-tree__ln.is-rep { background: var(--hfy-tree-repeat); }
 .hfy-tree__ln.is-dash { background: none; border: 0 dashed var(--hfy-tree-line); }
 .hfy-tree__ln.is-dash.is-v { border-left-width: var(--hfy-tree-line-w); }
 .hfy-tree__ln.is-dash.is-h { border-top-width: var(--hfy-tree-line-w); }
+.hfy-tree__ln.is-dash.is-rep { border-color: var(--hfy-tree-repeat); }
 
 /* A card: a 2 px edge, a role fill and its ink (8 of the 14 role fills are under 3:1 on the ground, so the edge is the boundary). */
 .hfy-tree__card {
@@ -70,7 +72,8 @@
 .hfy-tree__card.is-focus:focus-visible { outline-color: var(--io-color-semantic-focus); }
 .hfy-tree__card.is-parent { background: var(--io-color-semantic-tree-parent); color: var(--io-color-semantic-tree-parent-ink); }
 .hfy-tree__card.is-grandparent { background: var(--io-color-semantic-tree-grandparent); color: var(--io-color-semantic-tree-grandparent-ink); }
-.hfy-tree__card.is-sibling { background: var(--io-color-semantic-tree-sibling); color: var(--io-color-semantic-tree-sibling-ink); }
+/* Brothers and sisters (and their chip and toggle): the raised surface with the same 2 px edge, not the saturated gold of the sibling role fill, which was brighter than every other card in both themes. The words and the dashed line say half. */
+.hfy-tree__card.is-sibling { background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text); }
 .hfy-tree__card.is-spouse { background: var(--io-color-semantic-tree-spouse); color: var(--io-color-semantic-tree-spouse-ink); }
 .hfy-tree__card.is-child { background: var(--io-color-semantic-tree-child); color: var(--io-color-semantic-tree-child-ink); }
 .hfy-tree__card.is-grandchild, .hfy-tree__face.is-more { background: var(--io-color-semantic-tree-grandchild); color: var(--io-color-semantic-tree-grandchild-ink); }
@@ -94,10 +97,10 @@
 .hfy-tree__band { display: flex; flex-direction: column; gap: var(--io-space-2); padding: var(--io-space-2); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-lg); background: var(--hfy-tree-ground); }
 .hfy-tree__tog {
   display: flex; align-items: center; justify-content: space-between; gap: var(--io-space-2); width: 100%; min-height: var(--io-control-h-md); margin: 0; padding: 0 var(--io-space-3);
-  border: var(--hfy-tree-edge-w) solid var(--hfy-tree-edge); border-radius: var(--io-radius-md); background: var(--io-color-semantic-tree-sibling); color: var(--io-color-semantic-tree-sibling-ink);
+  border: var(--hfy-tree-edge-w) solid var(--hfy-tree-edge); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
   font: inherit; font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); text-align: left; cursor: pointer;
 }
-.hfy-tree__tog.is-plain { margin-top: var(--io-space-2); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text); }
+.hfy-tree__tog.is-plain { margin-top: var(--io-space-2); }
 .hfy-tree__tog::after { content: ""; flex: none; width: var(--io-space-2); height: var(--io-space-2); border: solid currentcolor; border-width: 0 var(--hfy-tree-line-w) var(--hfy-tree-line-w) 0; transform: translateY(-25%) rotate(45deg); transition: transform var(--io-motion-duration-base) var(--io-motion-easing-standard); }
 .hfy-tree__tog[aria-expanded="true"]::after { transform: translateY(25%) rotate(-135deg); }
 .hfy-tree__row.is-open { animation: hfy-tree-open var(--io-motion-duration-base) var(--io-motion-easing-enter) both; }
@@ -157,7 +160,10 @@
 @keyframes hfy-bt-b { from { opacity: 0; } to { opacity: 1; } }
 .hfy-bt__lines { position: absolute; inset: 0; pointer-events: none; }
 .hfy-bt__ring { position: absolute; display: block; width: var(--hfy-tree-ring); height: var(--hfy-tree-ring); border: var(--hfy-tree-line-w) solid var(--hfy-tree-line); border-radius: var(--io-radius-pill); background: var(--hfy-tree-ground); }
-.hfy-bt__lab { position: absolute; color: var(--io-color-semantic-text-dim); white-space: nowrap; }
+/* The row names: their holder is a zero-size box that sticks to the stage's left edge, so on a phone they stay in view while the tree scrolls sideways; the ground behind each keeps it
+   readable over a card that slides under it. The labels are placed in JS from the holder's corner, as every other mark is from the canvas's. */
+.hfy-bt__labs { position: sticky; left: 0; z-index: 2; width: 0; height: 0; }
+.hfy-bt__lab { position: absolute; padding: 0 var(--io-space-2); border-radius: var(--io-radius-pill); background: var(--hfy-tree-ground); color: var(--io-color-semantic-text-dim); white-space: nowrap; }
 .hfy-bt__status { position: absolute; inset: auto var(--io-space-3) var(--io-space-3); margin: 0; padding: var(--io-space-2) var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); pointer-events: none; }
 .hfy-bt__status:empty { display: none; }
 .hfy-bt__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -166,6 +172,8 @@
 .hfy-bt__canvas .hfy-tree__card { position: absolute; justify-content: flex-start; margin: 0; font: inherit; cursor: pointer; }
 .hfy-bt__canvas .hfy-tree__card.is-ghost { cursor: default; }
 .hfy-bt__canvas .hfy-tree__card.is-chip { justify-content: center; font-size: var(--io-typography-size-sm); font-weight: var(--io-typography-weight-semibold); }
+/* From medium the cards are tall: the text sits in the middle of the card, not packed at the top. */
+.hfy-bt[data-level="2"] .hfy-tree__card, .hfy-bt[data-level="3"] .hfy-tree__card { justify-content: center; }
 .hfy-bt[data-level="2"] .hfy-tree__nm { font-size: var(--io-typography-size-md); }
 .hfy-bt[data-level="3"] .hfy-tree__nm { font-size: var(--io-typography-size-lg); }
 .hfy-bt[data-level="3"] .hfy-tree__yr { font-size: var(--io-typography-size-md); }
@@ -186,3 +194,8 @@
 .hfy-bt.is-pane .hfy-bt__acts { flex-direction: column; }
 .hfy-bt__btn { display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-h-md); padding: 0 var(--io-space-4); border: 1px solid var(--io-color-semantic-accent); border-radius: var(--io-radius-md); background: var(--io-color-semantic-accent); color: var(--io-color-semantic-accent-text); font-weight: var(--io-typography-weight-semibold); text-decoration: none; }
 .hfy-bt__btn.is-alt { border-color: var(--io-color-semantic-border-strong); background: var(--io-color-semantic-surface); color: var(--io-color-semantic-text); }
+
+/* From 1100 px the big tree is a framed panel under the page's own heading (kept): the bands above and below the frame are tightened and the frame fills the rest of the screen (the heading, its gap and the page padding are 88 px). */
+.hfy-page:has(.hfy-bt.is-pane) { padding-block: var(--io-space-4) var(--io-space-5); }
+.hfy-page:has(.hfy-bt.is-pane) h1 { margin-bottom: var(--io-space-3); font-size: var(--io-typography-size-display-sm); }
+.hfy-bt.is-pane { height: calc(100vh - var(--io-space-9) - var(--io-space-6)); }

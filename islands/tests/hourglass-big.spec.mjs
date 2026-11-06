@@ -231,16 +231,41 @@ test("with no from, back at the start is the browser's back", async ({ page }) =
   await expect(page).toHaveURL("about:blank");
 });
 
-test("great-grandparents are cut (the budget, io's order): no button, no row, no gold line; the both-sides tags stay and the small tree's note points at the outline", async ({ page }) => {
-  const id = await open(page, "pedigree", { width: 768, query: "&focus=I9065&from=I9065&ggp=1" });
+test("great-grandparents: the button shows only with shared ancestors, and draws them once with gold lines and 'both sides' tags", async ({ page }) => {
+  await open(page, "full", { width: 768 });
   await ready(page);
-  await expect(bt(page).getByRole("button", { name: "great-grandparents", exact: true })).toHaveCount(0);
-  await expect(bt(page).getByRole("button", { name: /great-grand/ })).toHaveCount(0);
-  await expect(bt(page).locator(".hfy-bt__lab")).toHaveText(["grandparents", "parents"]);
+  await expect(tool(page, "great-grandparents")).toBeHidden();
+  await expect(bt(page).locator(".hfy-bt__lab")).toHaveText(["grandparents", "parents", "children", "grandchildren"]);
+  await page.goto("about:blank");
+  const id = await open(page, "pedigree", { width: 768 });
+  await ready(page);
+  const gg = tool(page, "great-grandparents");
+  await expect(gg).toBeVisible();
+  await expect(gg).toHaveAttribute("aria-pressed", "false");
+  await expect(bt(page).getByRole("button", { name: /great-grandfather/ })).toHaveCount(0);
   expect(await bt(page).locator(".hfy-tree__ln.is-rep").count()).toBe(0);
   await expect(bt(page).locator(".hfy-tree__both")).toHaveCount(2); // the two grandparents who are brother and sister
-  await expect(bt(page).getByRole("button", { name: "Delphine Eastlake, grandmother, father's side, on both sides of the family" })).toHaveCount(1);
-  expect((await search(page)).focus).toBe(id);
+  await gg.click();
+  await expect(gg).toHaveAttribute("aria-pressed", "true");
+  await expect(bt(page).getByRole("button", { name: "Gideon Eastlake, great-grandfather, on both sides of the family" })).toHaveCount(1); // drawn once
+  await expect(bt(page).getByRole("button", { name: /^Ottoline Juniper, great-grandmother/ })).toHaveCount(1);
+  expect(await bt(page).locator(".hfy-tree__ln.is-rep").count()).toBeGreaterThan(3); // the gold repeat lines to both children of that union
+  await expect(bt(page).locator(".hfy-tree__both")).toHaveCount(4); // the two grandparents and the two great-grandparents
+  await expect(bt(page).locator(".hfy-bt__lab")).toContainText(["great-grandparents"]);
+  expect((await search(page)).ggp).toBe("1");
+  await gg.click();
+  expect((await search(page)).ggp).toBeUndefined();
+  await expect(bt(page).getByRole("button", { name: /great-grandfather/ })).toHaveCount(0);
+  // the small tree's link opens it with them shown
+  await page.goto("about:blank");
+  await open(page, "pedigree", { width: 768, query: `&focus=${id}&from=${id}&ggp=1` });
+  await ready(page);
+  await expect(tool(page, "great-grandparents")).toHaveAttribute("aria-pressed", "true");
+  await expect(bt(page).getByRole("button", { name: /^Gideon Eastlake, great-grandfather/ })).toHaveCount(1);
+  // the great-grandparents are in the address: a reload keeps them
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await ready(page);
+  await expect(bt(page).getByRole("button", { name: /^Gideon Eastlake, great-grandfather/ })).toHaveCount(1);
 });
 
 test("brothers and sisters open beside the person and half-siblings hang by dashed lines; '+n more' re-centres on that child", async ({ page }) => {
@@ -271,15 +296,70 @@ test("brothers and sisters open beside the person and half-siblings hang by dash
   expect((await search(page)).focus).toBe(ID["Olwen Quillon"]);
 });
 
-test("the parents' other partners are cut (the budget, io's order): the parents' row holds the parents at every size", async ({ page }) => {
+test("a parent's other partners show from medium up, not at small, with the step word", async ({ page }) => {
   await open(page, "partners", { width: 375 });
   await ready(page);
-  const check = async () => expect((await bt(page).locator(".hfy-bt__canvas .is-parent").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label").split(", ")[1])))).toEqual(["father", "mother"]);
-  await check();
+  const others = bt(page).getByRole("button", { name: /, (stepmother|mother's partner|father's partner|stepfather)$/ });
+  expect(await level(page)).toBe(1);
+  await expect(others).toHaveCount(0);
   await tool(page, "zoom in").click();
-  await check();
+  expect(await level(page)).toBe(2);
+  expect(await others.count()).toBeGreaterThanOrEqual(2);
+  // beside the parents on the parents' row, the father's side to the left and the mother's to the right
+  const row = await bt(page).locator(".hfy-bt__canvas .is-spouse, .hfy-bt__canvas .is-parent").evaluateAll((els) => els.map((e) => [e.getAttribute("aria-label").split(", ").slice(1).join(", "), Math.round(e.getBoundingClientRect().top)]));
+  const parentsTop = row.find(([w]) => w === "father")[1];
+  expect(row.filter(([w, top]) => top === parentsTop && /partner|step/.test(w)).length).toBeGreaterThanOrEqual(2);
   await tool(page, "zoom in").click();
-  await check();
+  expect(await others.count()).toBeGreaterThanOrEqual(2);
+  await tool(page, "zoom out").click();
+  await tool(page, "zoom out").click();
+  await expect(others).toHaveCount(0);
+});
+
+test("polish: brothers and sisters are not the saturated gold, the text is centred in a tall card, the row names stay in view when the stage scrolls sideways", async ({ page }) => {
+  await open(page, "siblings", { width: 768, theme: "dark" });
+  await ready(page);
+  await bt(page).locator('[data-k^="sibs"]').click();
+  const fills = await bt(page).locator(".hfy-bt__canvas .hfy-tree__card").evaluateAll((els) => Object.fromEntries(els.map((e) => [e.className.replace(/hfy-tree__card |is-chip /g, ""), getComputedStyle(e).backgroundColor])));
+  const sib = fills["is-sibling"];
+  expect(sib, "an opened sibling card exists").toBeTruthy();
+  expect(sib).not.toBe(fills["is-parent"]);
+  const ch = sib.match(/\d+/g).map(Number); // r, g, b: nothing near the gold's (255, 193, 7)
+  expect(Math.max(...ch) - Math.min(...ch), "not a saturated fill").toBeLessThan(60);
+  // medium: the name, years and word sit in the middle of the card, not at its top
+  const gap = await bt(page).locator(".hfy-bt__canvas .is-parent").first().evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    const kids = [...e.children].map((k) => k.getBoundingClientRect());
+    return { above: Math.min(...kids.map((k) => k.top)) - r.top, below: r.bottom - Math.max(...kids.map((k) => k.bottom)) };
+  });
+  await expect(bt(page).locator(".hfy-bt__canvas .is-parent .hfy-tree__nm").first()).toHaveText("Alaric Kestrel"); // the card text is real elements, not "[object HTMLSpanElement]"
+  await expect(bt(page).locator(".hfy-bt__canvas")).not.toContainText("[object");
+  expect(Math.abs(gap.above - gap.below)).toBeLessThan(8);
+  // phone: scroll the stage to its far end; the row names are still inside it
+  await page.goto("about:blank");
+  await open(page, "large", { width: 375 });
+  await ready(page);
+  const labs = await stage(page).evaluate((s) => {
+    s.scrollLeft = s.scrollWidth;
+    const r = s.getBoundingClientRect();
+    return { max: s.scrollWidth - s.clientWidth, labs: [...document.querySelectorAll(".hfy-bt__lab")].map((l) => { const b = l.getBoundingClientRect(); return b.left >= r.left && b.left < r.left + 40 && b.right <= r.right; }) };
+  });
+  expect(labs.max).toBeGreaterThan(100);
+  expect(labs.labs.length).toBeGreaterThan(2);
+  expect(labs.labs.every(Boolean), "every row name is at the stage's left edge").toBe(true);
+});
+
+test("from 1100 px the framed tree fills the screen under the page's heading, with no wide empty bands", async ({ page }) => {
+  await open(page, "full", { width: 1280, height: 900 });
+  await ready(page);
+  const m = await page.evaluate(() => {
+    const f = document.querySelector(".hfy-bt").getBoundingClientRect();
+    const h1 = document.querySelector(".hfy-page h1").getBoundingClientRect();
+    return { top: f.top, bottom: f.bottom, h1bottom: h1.bottom, h1: h1.height, vh: innerHeight };
+  });
+  expect(m.h1).toBeGreaterThan(0); // the page's heading stays
+  expect(m.top - m.h1bottom).toBeLessThan(24);
+  expect(m.vh - m.bottom).toBeLessThan(48);
 });
 
 test("every card is a real button named with the relationship; the ghosts are text with a button to tell us", async ({ page }) => {
@@ -494,11 +574,11 @@ test.describe("screenshots", () => {
     test.skip(!SHOTS, "HFY_SHOTS is the folder the screenshots go in");
     test.setTimeout(300_000);
     mkdirSync(SHOTS, { recursive: true });
-    const cases = { partners: {}, full: {}, pedigree: { tall: true }, siblings: { open: "sibs" }, large: { tall: true } };
+    const cases = { partners: {}, full: {}, pedigree: { tall: true, query: `&focus=${CASES.pedigree}&from=${CASES.pedigree}&ggp=1` }, siblings: { open: "sibs" }, large: { tall: true } };
     for (const width of WIDTHS) {
       for (const [c, o] of Object.entries(cases)) {
         await page.unrouteAll({ behavior: "ignoreErrors" });
-        await open(page, c, { width, height: o.tall ? 1500 : width >= 1100 ? 900 : 812 });
+        await open(page, c, { width, height: o.tall ? 1500 : width >= 1100 ? 900 : 812, query: o.query });
         await ready(page);
         if (o.open) await bt(page).locator('[data-k^="sibs"]').click();
         for (const t of ["dark", "light"]) {

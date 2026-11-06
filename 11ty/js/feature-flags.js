@@ -68,7 +68,7 @@
         "css": "c3d2737a"
       },
       "my-posts": {
-        "js": "add93f63",
+        "js": "dad46e84",
         "css": "3d97e51e"
       },
       "notifications": {
@@ -80,7 +80,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "a15f47af",
+        "js": "ceefb74d",
         "css": "bd2a5788"
       },
       "person-links": {
@@ -96,15 +96,15 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "ef1d518d",
+        "js": "3f4eed78",
         "css": "105346a6"
       },
       "record-moderation": {
-        "js": "8cab6d0e",
+        "js": "f5516465",
         "css": "5b548e69"
       },
       "review": {
-        "js": "8be01fa3",
+        "js": "9e917821",
         "css": "bf26d487"
       },
       "search": {
@@ -120,17 +120,17 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "c7d5a977",
+        "js": "a2309433",
         "css": "c249f04c"
       },
       "tree": {
-        "js": "b5dd2367",
+        "js": "c940501f",
         "css": "3ba8898b"
       }
     },
-    "theme": "6e1cfbef",
+    "theme": "cdb1a48c",
     "manifest": "c0f9b5fc",
-    "sw": "ca02b749"
+    "sw": "31d7ee52"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

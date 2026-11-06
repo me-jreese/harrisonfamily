@@ -1,12 +1,12 @@
 // The hourglass tree's small-tree rows (HFY-TSK-379, flag familyVizHourglass; DIGEST sections 2, 6 and 7). PURE: numbers and plain records in, plain
 // records out; no DOM, no fetch. A plain-DOM renderer reads these records and the model from hourglass-model.js and draws them, so no pass
 // re-derives a relationship or a line. CSS grid places the cards (a cell names its column and span), so the rows carry no pixel extents; the
-// connectors are 2 px strips, {x, y, w, h, dashed}, drawn under the cards (never SVG) from the same column maths the grid uses, so names
-// can wrap without breaking a line. `dashed` means "not known yet" or a half-brother's or half-sister's other marriage. (T-Spec's gold "same people on
-// both sides" line belonged to the big tree's great-grandparents, which are cut; the tag says it.)
+// connectors are 2 px strips, {x, y, w, h, dashed, rep}, drawn under the cards (never SVG) from the same column maths the grid uses, so names
+// can wrap without breaking a line. `dashed` means "not known yet" or a half-brother's or half-sister's other marriage, `rep` (gold) means
+// "the same people on both sides".
 //
 //   smallLayout(model, {width, kidsOpen, sibsOpen})   the small tree's rows for one content width (343 at a 375 phone, 288 at 320)
-//   comb(tops, drops, h, dashed)                      the stem, bar and drops between two rows
+//   comb(tops, drops, h, dashed, rep)                 the stem, bar and drops between two rows
 //
 // The big tree (bigLayout, seeAll, scrollTarget, SIZES, defaultLevel) is in hourglass-big.js, so the person page's chunk never carries it.
 //
@@ -14,25 +14,13 @@
 // 1fr 1.4fr 1fr inside a band with 8 px padding and a 1 px border; four columns for grandparents and children, parents span two. The tree is
 // never scaled: the four big sizes are real sizes, so a tap target never drops under 44 px.
 import { COPY } from "./hourglass-model.js";
+import { DASH, LINE, comb } from "./hourglass-dom.js";
 
-/** Line weight (tree.line.w), strip height between rows, wide breakpoint (the tree's own width), band inset (padding plus border). */
-export const LINE = 2;
+/** Strip height between rows, wide breakpoint (the tree's own width), band inset (padding plus border). The line weight and comb() are in hourglass-dom.js. */
 export const STRIP = 28;
 export const WIDE_MIN = 600;
 export const BAND_INSET = 9;
-
-/**
- * A comb between two rows `h` apart: a stem down from each x in `tops` to the middle, one bar across them and `drops`, and a drop from the
- * middle to each x in `drops`. Strips are centred on their x. Returns [] when there is nothing to join.
- */
-export function comb(tops, drops, h, dashed = false) {
-  const xs = [...tops, ...drops];
-  const ym = Math.round(h / 2);
-  const mn = Math.min(...xs);
-  const mx = Math.max(...xs);
-  const s = (x, y, w, h2) => ({ x, y, w, h: h2, dashed });
-  return xs.length ? [...(mx - mn > 1 ? [s(mn - 1, ym - 1, mx - mn + 2, LINE)] : []), ...tops.map((x) => s(x - 1, 0, LINE, ym)), ...drops.map((x) => s(x - 1, ym, LINE, h - ym))] : [];
-}
+export { LINE, comb };
 
 /**
  * The small tree for a content width. Returns {wide, rows}. `wide` is true from 600 px of the tree's own width (768 and 1280 pages give it 670 and
@@ -60,7 +48,7 @@ export function smallLayout(model, { width: W, kidsOpen = false, sibsOpen = fals
   if (model.both.note) rows.push({ kind: "note", text: model.both.note.text, button: model.both.note.button });
   if (model.noParents) {
     cards(1, [cell(model.parentsGhost, 0)]);
-    gap(comb([W / 2], [W / 2], STRIP, true));
+    gap(comb([W / 2], [W / 2], STRIP, DASH));
   } else {
     const caps = [];
     const gps = [];
@@ -69,10 +57,10 @@ export function smallLayout(model, { width: W, kidsOpen = false, sibsOpen = fals
     model.sides.forEach((s, i) => {
       if (s.parent.ghost) return;
       caps.push(cell(s.caption, i * 2, 2));
-      if (!s.grandparents) { gps.push(cell(s.parentsGhost, i * 2, 2)); dash.push(...comb([side(i)], [side(i)], STRIP, true)); return; }
+      if (!s.grandparents) { gps.push(cell(s.parentsGhost, i * 2, 2)); dash.push(...comb([side(i)], [side(i)], STRIP, DASH)); return; }
       const [k, d] = [[], []];
       s.grandparents.forEach((gp, j) => { gps.push(cell(gp, i * 2 + j)); (gp.ghost ? d : k).push(c4(i * 2 + j)); });
-      if (d.length) dash.push(...comb(d, [side(i)], STRIP, true));
+      if (d.length) dash.push(...comb(d, [side(i)], STRIP, DASH));
       if (k.length) solid.push(...comb(k, [side(i)], STRIP));
     });
     cards(4, caps, { sides: true });
@@ -80,7 +68,7 @@ export function smallLayout(model, { width: W, kidsOpen = false, sibsOpen = fals
     gap([...dash, ...solid]);
     cards(4, model.sides.map((s, i) => cell(s.parent, i * 2, 2)));
     const at = (ghost) => model.sides.flatMap((s, i) => (!!s.parent.ghost === ghost ? [side(i)] : []));
-    gap([...comb(at(true), [W / 2], STRIP, true), ...comb(at(false), [W / 2], STRIP)]);
+    gap([...comb(at(true), [W / 2], STRIP, DASH), ...comb(at(false), [W / 2], STRIP)]);
   }
   // The band: brothers and sisters, the person, partners.
   const sibs = model.siblings;
@@ -101,7 +89,7 @@ export function smallLayout(model, { width: W, kidsOpen = false, sibsOpen = fals
     for (const b of model.blocks) if (b.kids.length && b.partner >= 0 && b.partner < 2) tops.add(fc[2 - b.partner * 2]);
     gap(comb([...tops], shown.slice(0, 4).map((_, i) => c4(i)), STRIP));
     cards(4, shown.map((k, i) => cell(k, i % 4)));
-    if (kids.length > model.children.cap) rows.push({ kind: "toggle", text: kidsOpen ? COPY.fewer : model.children.moreText, open: kidsOpen });
+    if (kids.length > model.children.cap) rows.push({ kind: "toggle", text: kidsOpen ? "show fewer" : model.children.moreText, open: kidsOpen });
     const gk = model.grandchildren;
     if (gk.list.length) {
       const parents = new Set(gk.list.map((c) => c.parent));

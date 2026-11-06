@@ -8,6 +8,9 @@ import { COPY, indexGraph } from "../src/lib/hourglass-model.js";
 import { smallLayout } from "../src/lib/hourglass-layout.js";
 import { BIG_COPY, bigLayout, bigModel as familyModel } from "../src/lib/hourglass-big.js";
 import { GRAPH } from "./fixtures/hourglass-cases.mjs";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const BANNED = /(^|[^a-z])(node|nodes|graph|graphs|chart|charts|pedigree|collapse|collapsed|focus|re-?centre|re-?center|living|deceased|unknown|n\/a)([^a-z]|$)/i;
 const idx = indexGraph(GRAPH);
@@ -59,9 +62,9 @@ test("the strings include the ones the copy list names, built from the fixture's
   for (const s of [
     "father's side", "mother's side", "parents not known yet.", "father not known yet.", "her parents not known yet.", "his parents not known yet.", "not known yet.",
     "1 brother", "6 brothers and sisters", "+5 more children", "show fewer", "grandchildren: Ivy, Jory and Kit", "grandchildren: Arlo, Briar, Cyril, Dove, Ezra and 4 more",
-    "see them in the outline", "wife", "partner", "half brother, father's side", "half sister, mother's side",
-    "half sibling, mother's side", "grandchild", "4 more grandchildren. open the big tree", "hide brothers and sisters",
-    "grandparents", "parents", "children", "grandchildren", "b. 1950", "1920–1990",
+    "see them in the big tree", "wife", "partner", "stepmother", "father's partner", "mother's partner", "half brother, father's side", "half sister, mother's side",
+    "half sibling, mother's side", "great-grandfather", "great-grandmother", "grandchild", "4 more grandchildren. open the big tree", "hide brothers and sisters",
+    "great-grandparents", "grandparents", "parents", "children", "grandchildren", "b. 1950", "1920–1990",
     "Delphine Eastlake, grandmother, father's side, on both sides of the family", "Tamsin Alder, this person. open the big tree", "Tamsin Alder, in the middle now", "Rowan Alder, father",
     "Kit Larkspur, grandchild, Orrin's child", "2 more of Olwen's children. put Olwen in the middle", "6 brothers and sisters. show them"
   ]) assert.ok(all.has(s), `no string reads ${JSON.stringify(s)}`);
@@ -76,7 +79,7 @@ test("the fixed strings of COPY pass the same two checks", () => {
     else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, k);
   };
   for (const [k, v] of [...Object.entries(COPY), ...Object.entries(BIG_COPY)]) walk(v, k);
-  assert.ok(out.length > 25);
+  assert.ok(out.length >= 8, "the shared strings");
   for (const [key, s] of out) {
     if (key === "thanks") { assert.match(s, /^thank you\. tell us in the comments on this page, or text [A-Z]\.$/); continue; }
     assert.doesNotMatch(s, BANNED, `${key}: ${s}`);
@@ -99,25 +102,23 @@ test("the banned-word check itself catches each banned word (and not 'graduated'
   assert.doesNotMatch("Wystan Dunmere, son with Alma", BANNED);
 });
 
-// The big tree's own strings are inline literals in lib/tree-hourglass-big.js (no copy object: the keys cost bytes under the 25 KB budget), so the same two
-// checks read the literals from the source: every quoted or template string of it, comments gone, is lower case and has no banned word. Strings that are
-// code, not words (the `focus` address parameter, the Escape key name), are named here.
-test("the big tree's inline strings are lower case and have no banned word", async () => {
-  const { transform } = await import("esbuild");
-  const { readFileSync } = await import("node:fs");
-  const src = readFileSync(new URL("../src/lib/tree-hourglass-big.js", import.meta.url), "utf8");
-  const { code } = await transform(src, { loader: "js" });
-  const CODE = new Set(["focus", "Escape", "popstate", "ggp"]);
-  const found = [...code.matchAll(/"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)].map((m) => (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, "x").replace(/\\(?:x([0-9A-Fa-f]{2})|u([0-9A-Fa-f]{4}))/g, (_, a, b) => String.fromCharCode(parseInt(a || b, 16)))).filter((s) => s && !CODE.has(s));
-  assert.ok(found.length > 40, `only ${found.length} literals were read`);
-  for (const s of found) {
-    assert.doesNotMatch(s, BANNED, `a banned word in ${JSON.stringify(s)}`);
-    assert.equal(s, s.toLowerCase(), `capitals in ${JSON.stringify(s)}`);
+// The strings used in one place are literals in the source that uses them (the model's ghosts and notes, the renderers' labels), not entries of COPY. The model's reach
+// the tests above through the layout and model output; the renderers' do not, so this reads every source file that holds copy and checks each multi-word literal the
+// same two ways: no banned word, lower case. Class lists, selectors, media queries and the like are skipped by what they contain; a `${...}` stands for a name.
+test("the string literals in the sources that hold copy are lower case and say no banned word", () => {
+  const lib = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "lib");
+  const files = ["hourglass-model.js", "hourglass-big.js", "hourglass-layout.js", "hourglass-dom.js", "tree-hourglass.js", "tree-hourglass-big.js"];
+  const SKIP = /hfy-|aria-|data-|\bpx\b|\bfr\b|min-width|prefers-|[()[\]<>=#{}|]|\/\w/;
+  let n = 0;
+  for (const f of files) {
+    const src = readFileSync(join(lib, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+    for (const m of src.matchAll(/"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)) {
+      const s = (m[1] ?? m[2]).replace(/\$\{[^}]*\}/g, "n");
+      if (!/[a-z]{2,} [a-z]{2,}/i.test(s) || SKIP.test(s) || s === COPY.thanks) continue; // the thank-you names J. by initial: checked by its own pattern above
+      n += 1;
+      assert.doesNotMatch(s, BANNED, `${f}: ${JSON.stringify(s)} says a banned word`);
+      assert.equal(withoutNames(s), withoutNames(s).toLowerCase(), `${f}: ${JSON.stringify(s)} has capitals`);
+    }
   }
-  for (const s of ["the family tree", "zoom in", "zoom out", "see all", "great-grandparents", "already in the middle", "how are we related?", "see this as", "see this family as", "the whole-family poster", "whose page you came from", "the person whose page you came from",
-    "tap someone to put them in the middle. the buttons zoom. the back button takes you to who you had before."]) {
-    if (s === "great-grandparents") assert.ok(!found.includes(s), "the great-grandparents button is cut");
-    else assert.ok(found.includes(s), `the big tree has no string ${JSON.stringify(s)}`);
-  }
-  for (const s of ["now centred on x", "open x's page", "back to x", "back to x's page", "size: x", "from x's page"]) assert.ok(found.includes(s), `the big tree has no string ${JSON.stringify(s)}`);
+  assert.ok(n > 40, `only ${n} literals were checked`);
 });

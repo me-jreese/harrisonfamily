@@ -31,7 +31,7 @@ test("the remembered view is cards only when cards were chosen; a storage that t
 
 test("bigHref names the big tree for the person and the page they came from, and takes only the ids the tree page takes", () => {
   assert.equal(bigHref("I9007", "I9007"), "/tree/?view=tree&focus=I9007&from=I9007");
-  assert.equal(bigHref("I9007", "I9020"), "/tree/?view=tree&focus=I9007&from=I9020");
+  assert.equal(bigHref("I9007", "I9020", "&ggp=1"), "/tree/?view=tree&focus=I9007&from=I9020&ggp=1");
   assert.equal(bigHref("I9007", "bad id!"), "/tree/?view=tree&focus=I9007", "a from that does not match is left out");
   for (const bad of ["", "a b", "../x", "x".repeat(33), "I1&focus=I2", null, undefined, 7]) assert.equal(bigHref(bad, "I9007"), null, String(bad));
   // the same pattern as the tree page's own link (lib/tree-link.js): both accept and refuse the same ids

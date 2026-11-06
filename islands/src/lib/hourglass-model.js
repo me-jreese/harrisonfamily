@@ -29,41 +29,28 @@
 export const CAP_CHILDREN = 4;
 export const CAP_GRANDCHILDREN = 6;
 
-/** Every string the small tree and the model build (T-Copy, DIGEST section 4): lower case, names keep their capitals. The big tree's are in hourglass-big.js. */
+/**
+ * The strings more than one file uses (T-Copy, DIGEST section 4): lower case, names keep their capitals. A string used in one place is a literal there (the model's
+ * ghosts and notes here, the renderers' labels in tree-hourglass.js and tree-hourglass-big.js); tests/hourglass-copy.test.mjs checks those literals too.
+ */
 export const COPY = {
   sides: ["father's side", "mother's side"],
-  notKnown: "not known yet.",
-  parentsNotKnown: "parents not known yet.",
-  parentNotKnown: ["father not known yet.", "mother not known yet."],
-  grandparentsNotKnown: { m: "his parents not known yet.", f: "her parents not known yet.", u: "their parents not known yet." },
   tellUs: "know who? tell us",
   thanks: "thank you. tell us in the comments on this page, or text J.",
-  fewer: "show fewer",
-  also: "also with",
   bothSides: "both sides",
-  bothAria: "on both sides of the family",
-  seeOutline: "see them in the outline",
-  openBig: "open the big tree",
-  prefer: "prefer a list?",
-  outline: "outline",
-  table: "table",
   hideSiblings: "hide brothers and sisters",
-  moreChildren: (n) => `+${n} more children`,
   moreChip: (n) => `+${n} more`,
-  showSiblings: (text) => `${text}. show them`,
-  openBigAria: (name) => `open the big tree, centred on ${name}`,
-  thisPerson: (name) => `${name}, this person. open the big tree`,
-  moreGrandchildren: (n) => `${n} more grandchildren. open the big tree`
+  showSiblings: (text) => `${text}. show them`
 };
 
 // kind -> "male|female|neutral"
 const WORDS = {
-  parent: "father|mother|parent", gp: "grandfather|grandmother|grandparent",
+  parent: "father|mother|parent", gp: "grandfather|grandmother|grandparent", ggp: "great-grandfather|great-grandmother|great-grandparent",
   sib: "brother|sister|sibling", half: "half brother|half sister|half sibling", child: "son|daughter|child", gk: "grandson|granddaughter|grandchild",
-  wed: "husband|wife|spouse"
+  wed: "husband|wife|spouse", step: "stepfather|stepmother|step-parent"
 };
 
-/** The relationship word for a kind (parent, gp, sib, half, child, gk, wed) and a sex ("m", "f", else neutral). */
+/** The relationship word for a kind (parent, gp, ggp, sib, half, child, gk, wed, step) and a sex ("m", "f", else neutral). */
 export const relWord = (kind, sex) => WORDS[kind].split("|").at([..."mf"].indexOf(sex)); // -1 reads the last: the neutral word
 
 /** "husband" / "wife" / "spouse" for a married union, "partner" for every other type. `sex` is the partner's. */
@@ -84,31 +71,32 @@ const tokens = (s) => String(s || "").trim().replace(/^(?:rev|dr|mr|mrs|ms|miss)
 /** The first given name ("Rosalind" for "Rosalind Marguerite"), else the first word of the name. */
 export const firstName = (p) => tokens(p.given)[0] || tokens(p.name)[0] || "";
 
-/** "Rosalind Quillon-Ashby": the first given name and the surname; the name's first and last words when either is missing. */
-export function shortName(p) {
+// The first and last name of a person: the first given name and the surname, else the name's first and last words (one word when there is only one).
+const pair = (p) => {
   const f = tokens(p.given)[0];
   const s = String(p.surname || "").trim();
   const w = tokens(p.name);
-  return f && s ? `${f} ${s}` : w.length > 2 ? `${w[0]} ${w[w.length - 1]}` : w.join(" ");
-}
+  return f && s ? [f, s] : w.length > 1 ? [w[0], w.at(-1)] : w;
+};
+
+/** "Rosalind Quillon-Ashby": the first given name and the surname; the name's first and last words when either is missing. */
+export const shortName = (p) => pair(p).join(" ");
 
 /** The years line: "1880–1942", "b. 1950", "d. 1942", or "" with no year. A "c. " goes before an approximate year; no word for a missing one. */
 export function yearsText(p) {
-  const [b, d] = [p.birthYear, p.deathYear].map((v) => (Number.isInteger(v) ? v : null));
+  const [b, d] = [p.birthYear, p.deathYear].map((v) => Number.isInteger(v) && v);
   const c = p.yearApprox ? "c. " : "";
-  return b !== null && d !== null ? `${c}${b}–${d}` : b !== null ? `b. ${c}${b}` : d !== null ? `d. ${c}${d}` : "";
+  return b && d ? `${c}${b}–${d}` : b ? `b. ${c}${b}` : d ? `d. ${c}${d}` : "";
 }
 
-const push = (map, key, v) => (map.has(key) ? map.get(key).push(v) : map.set(key, [v]));
+/** "Ann", "Ann and Bo", "Ann, Bo and Cy"; "" for none. */
+const andList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : xs[0] || "");
+export const push = (map, key, v) => (map.has(key) ? map.get(key).push(v) : map.set(key, [v]));
 const uniq = (list) => [...new Set(list)];
 
 /** The graph's own face crops only (faces/<id>-<hash>.webp); anything else is initials. Up to two letters for the initials avatar. */
 const faceOf = (f) => (/^faces\/[A-Za-z0-9_-]+\.webp$/.test(f) ? `/media/${f}` : null);
-const initialsOf = (p) => {
-  const w = tokens(p.name);
-  const l = p.given && p.surname ? [String(p.given).trim(), String(p.surname).trim()] : w.length > 1 ? [w[0], w[w.length - 1]] : w;
-  return l.map((x) => [...x][0]).join("").toUpperCase() || "?";
-};
+const initialsOf = (p) => pair(p).map((x) => [...x][0]).join("").toUpperCase() || "?";
 
 function slotsOf(ids, people) {
   const [a, b] = ids;
@@ -147,20 +135,15 @@ export function parentUnion(idx, id) {
 }
 
 const person = (idx, id) => idx.people.get(id);
-const yearOf = (idx, id) => (Number.isInteger(person(idx, id).birthYear) ? person(idx, id).birthYear : Infinity);
+const yearOf = (idx, id) => person(idx, id).birthYear ?? Infinity;
 const byBirth = (idx, ids, key = (x) => x) => [...ids].sort((a, b) => yearOf(idx, key(a)) - yearOf(idx, key(b)));
 const other = (u, id) => u.partners.find((x) => x !== id) || null;
 
 /** [{id, unions, type}] the person's partners once each, in the file order of their unions; `type` is "married" when any union with them is. */
 export function partnersOf(idx, id) {
-  const out = [];
-  for (const u of idx.asPartner.get(id) || []) {
-    const o = other(u, id);
-    if (!o) continue;
-    const hit = out.find((x) => x.id === o);
-    if (hit) hit.unions.push(u); else out.push({ id: o, unions: [u] });
-  }
-  return out.map((o) => ({ ...o, type: o.unions.some((u) => u.type === "married") ? "married" : o.unions[0].type }));
+  const by = new Map();
+  for (const u of idx.asPartner.get(id) || []) { const o = other(u, id); if (o) push(by, o, u); }
+  return [...by].map(([pid, unions]) => ({ id: pid, unions, type: unions.some((u) => u.type === "married") ? "married" : unions[0].type }));
 }
 
 /**
@@ -172,7 +155,7 @@ export function card(idx, id, role, word, extra = {}) {
   const { side, both, aria, ...rest } = extra;
   return {
     id, role, name: p.name, short: shortName(p), first: firstName(p), initials: initialsOf(p), face: faceOf(p.face), sex: "mf".includes(p.sex || "u") ? p.sex : "u", years: yearsText(p), word,
-    aria: aria || ariaName(p.name, word, side, both && COPY.bothAria), both: !!both, ...rest
+    aria: aria || ariaName(p.name, word, side, both && "on both sides of the family"), both: !!both, ...rest
   };
 }
 
@@ -187,8 +170,7 @@ function sharedText(idx, couple, kids) {
   const ks = kids.map((k) => person(idx, k));
   const t = ks.map((k) => k.sex).join("");
   const pair = /^f+$/.test(t) ? "sisters" : /^m+$/.test(t) ? "brothers" : { fm: "sister and brother", mf: "brother and sister" }[t] || "siblings";
-  const who = ks.map(firstName);
-  const list = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.pop()}` : who[0] || "";
+  const list = andList(ks.map(firstName));
   const ps = couple.slots.filter(Boolean).map((x) => person(idx, x));
   const sur = (ps[0] || {}).surname || "";
   const names = ps.length === 2 && sur !== ps[1].surname ? ps.map((p) => `${firstName(p)} ${p.surname || ""}`.trim()).join(" and ") : `${ps.map(firstName).join(" and ")} ${sur}`.trim();
@@ -215,8 +197,8 @@ export function familyModel(idx, id) {
   const sexOf = (x) => person(idx, x).sex;
   const pu = parentUnion(idx, id);
   const raw = [0, 1].map((i) => {
-    const pid = pu ? pu.slots[i] : null;
-    return { i, pid, gu: pid ? parentUnion(idx, pid) : null };
+    const pid = pu?.slots[i];
+    return { i, pid, gu: pid && parentUnion(idx, pid) };
   });
   // Both sides: grandparents who are brothers or sisters (they share a parent union), and a grandparent who stands under both sides.
   const byUnion = new Map();
@@ -226,9 +208,9 @@ export function familyModel(idx, id) {
   const bothIds = new Set([...shared.flatMap((s) => s.kids), ...sideIds[0].filter((g) => sideIds[1].includes(g))]);
   const sides = raw.map(({ i, pid, gu }) => ({
     i, caption: pid ? COPY.sides[i] : null,
-    parent: pid ? card(idx, pid, "parent", relWord("parent", sexOf(pid))) : ghost(COPY.parentNotKnown[i]),
-    grandparents: gu ? gu.slots.map((g) => (g ? card(idx, g, "grandparent", relWord("gp", sexOf(g)), { side: COPY.sides[i], both: bothIds.has(g) }) : ghost(COPY.notKnown))) : null,
-    parentsGhost: pid && !gu ? ghost(COPY.grandparentsNotKnown[sexOf(pid)] || COPY.grandparentsNotKnown.u) : null
+    parent: pid ? card(idx, pid, "parent", relWord("parent", sexOf(pid))) : ghost(`${i ? "mother" : "father"} not known yet.`),
+    grandparents: gu ? gu.slots.map((g) => (g ? card(idx, g, "grandparent", relWord("gp", sexOf(g)), { side: COPY.sides[i], both: bothIds.has(g) }) : ghost("not known yet."))) : null,
+    parentsGhost: pid && !gu ? ghost(`${{ m: "his", f: "her" }[sexOf(pid)] || "their"} parents not known yet.`) : null
   }));
   // The person's row.
   const partners = partnersOf(idx, id).map((o) => card(idx, o.id, "spouse", partnerWord(o.type, sexOf(o.id)), { type: o.type }));
@@ -240,7 +222,7 @@ export function familyModel(idx, id) {
       if (seen.has(k)) return;
       seen.add(k);
       const sex = sexOf(k);
-      sibs.push(card(idx, k, "sibling", half ? `${relWord("half", sex)}, ${COPY.sides[i]}` : relWord("sib", sex), { half, halfSide: half ? i : null, via: half ? via : null, unionId: u.id }));
+      sibs.push(card(idx, k, "sibling", half ? `${relWord("half", sex)}, ${COPY.sides[i]}` : relWord("sib", sex), { half, halfSide: i, via: half ? via : null, unionId: u.id }));
     };
     for (const k of pu.kids) add(k, false, null, null, pu);
     pu.slots.forEach((pid, i) => {
@@ -252,44 +234,37 @@ export function familyModel(idx, id) {
   const seenKid = new Set([id]);
   const seenGk = new Set([id]);
   const withKids = (idx.asPartner.get(id) || []).filter((u) => u.kids.length);
+  const fresh = (seen) => (k) => !seen.has(k) && seen.add(k);
   const blocks = withKids.map((u) => {
     const o = other(u, id);
-    const kids = [];
-    for (const k of byBirth(idx, u.kids)) {
-      if (seenKid.has(k)) continue;
-      seenKid.add(k);
+    const kids = byBirth(idx, u.kids).filter(fresh(seenKid)).map((k) => {
       const first = firstName(person(idx, k));
-      const grandchildren = [];
-      for (const pu2 of idx.asPartner.get(k) || []) {
-        for (const g of byBirth(idx, pu2.kids)) {
-          if (seenGk.has(g)) continue;
-          seenGk.add(g);
-          const gs = sexOf(g);
-          grandchildren.push(card(idx, g, "grandchild", relWord("gk", gs), { parent: k, aria: ariaName(person(idx, g).name, relWord("gk", gs), `${first}'s ${relWord("child", gs)}`) }));
-        }
-      }
-      kids.push({ card: card(idx, k, "child", relWord("child", sexOf(k)) + (withKids.length > 1 && o ? ` with ${firstName(person(idx, o))}` : "")), grandchildren });
-    }
+      const grandchildren = (idx.asPartner.get(k) || []).flatMap((pu2) => byBirth(idx, pu2.kids)).filter(fresh(seenGk)).map((g) => {
+        const gk = relWord("gk", sexOf(g));
+        return card(idx, g, "grandchild", gk, { parent: k, aria: ariaName(person(idx, g).name, gk, `${first}'s ${relWord("child", sexOf(g))}`) });
+      });
+      return { card: card(idx, k, "child", relWord("child", sexOf(k)) + (withKids.length > 1 && o ? ` with ${firstName(person(idx, o))}` : "")), grandchildren };
+    });
     return { unionId: u.id, partner: o ? partners.findIndex((p) => p.id === o) : -1, kids };
   });
-  const childList = blocks.flatMap((b, bi) => b.kids.map((k) => ({ ...k.card, block: bi })));
+  const childList = blocks.flatMap((b) => b.kids.map((k) => k.card));
   const gkList = blocks.flatMap((b) => b.kids.flatMap((k) => k.grandchildren));
   const shown = gkList.length > CAP_GRANDCHILDREN ? CAP_GRANDCHILDREN - 1 : gkList.length;
   const more = gkList.length - shown;
   const gk = gkList.slice(0, shown).map((g) => g.first);
-  const namesText = !gkList.length ? "" : `grandchildren: ${more ? `${gk.join(", ")} and ${more} more` : gk.length > 1 ? `${gk.slice(0, -1).join(", ")} and ${gk[gk.length - 1]}` : gk[0]}`;
+  const namesText = gkList.length ? `grandchildren: ${andList(more ? [...gk, `${more} more`] : gk)}` : "";
   return {
     id,
-    focus: card(idx, id, "focus", "", { aria: COPY.thisPerson(f.name) }),
+    focus: card(idx, id, "focus", "", { aria: `${f.name}, this person. open the big tree` }),
     empty: !pu && !partners.length && !childList.length && !siblings.length,
     noParents: !pu,
-    parentsGhost: pu ? null : ghost(COPY.parentsNotKnown),
+    parentsGhost: pu ? null : ghost("parents not known yet."),
     sides: pu ? sides : null,
-    both: { ids: [...bothIds], shared, note: shared.length ? { text: sharedText(idx, idx.unions.get(shared[0].unionId), shared[0].kids), button: COPY.seeOutline } : null },
+    both: { ids: [...bothIds], shared, note: shared.length ? { text: sharedText(idx, idx.unions.get(shared[0].unionId), shared[0].kids), button: "see them in the big tree" } : null },
     siblings: { list: siblings, text: sibText(siblings), count: siblings.length },
     partners,
     blocks,
-    children: { list: childList, cap: CAP_CHILDREN, moreText: childList.length > CAP_CHILDREN ? COPY.moreChildren(childList.length - CAP_CHILDREN) : "" },
-    grandchildren: { list: gkList, shown, more, namesText, moreAria: more ? COPY.moreGrandchildren(more) : "" }
+    children: { list: childList, cap: CAP_CHILDREN, moreText: childList.length > CAP_CHILDREN ? `+${childList.length - CAP_CHILDREN} more children` : "" },
+    grandchildren: { list: gkList, shown, more, namesText, moreAria: more ? `${more} more grandchildren. open the big tree` : "" }
   };
 }
