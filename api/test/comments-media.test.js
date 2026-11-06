@@ -55,10 +55,10 @@ describe("media thread visibility", () => {
 
   it("create and react follow the same gate; a public media thread takes a comment and lists it", async () => {
     const { source } = build((id) => id === "O0001");
-    const created = await source(member).create({ threadId: "media:O0001", body: "a synthetic remark" });
-    expect(created.threadId).toBe("media:O0001");
-    expect((await source(member).list("media:O0001")).items.map((c) => c.body)).toEqual(["a synthetic remark"]);
-    expect(await code(source(member).create({ threadId: "media:O0002", body: "x" }))).toBe("not_found");
+    const created = await source(member).create("media:O0001", { body: "a synthetic remark" });
+    expect(created.id).toBeTruthy();
+    expect((await source(member).list("media:O0001")).thread.comments.map((c) => c.body)).toEqual(["a synthetic remark"]);
+    expect(await code(source(member).create("media:O0002", { body: "x" }))).toBe("not_found");
     expect(await code(source(member).react("media:O0002", created.id, "👍"))).toBe("not_found");
   });
 
