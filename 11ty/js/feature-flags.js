@@ -982,6 +982,14 @@
     }
   });
 
+  // HFY-TSK-216: moderationV1 and moderationRecordsV1 together mount the record moderation controls on the person page (island record-moderation): a
+  // "moderate story" control under each story and a "moderate photo" control in the lightbox, for an admin only (the island checks /api/me; the server
+  // re-checks every call). It listens to the person page's two events, so person-page.js is not touched. With either flag off nothing is requested.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true || flags.moderationRecordsV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("record-moderation", { onError() { /* the page stands without the moderation controls */ } });
+  });
+
   // HFY-TSK-142: chatV1 loads the chat island (the roster panel and the docked chats, the chat entry in the bar's chat slot, and on /chat/ the
   // page). The island needs a signed-in member: on every page the bundle is requested only for a signed-in session, and the static /chat/
   // page requests it always so that a signed-out visitor gets "sign in to chat." from the island. With the flag off nothing is requested and
