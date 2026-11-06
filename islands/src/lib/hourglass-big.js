@@ -6,11 +6,58 @@
 //   seeAll(model, opts, viewport)              "see all": the faces-only layout and whether it fits the viewport
 //   scrollTarget(layout, viewport)             where to scroll so the person sits in the middle of the viewport
 //   defaultLevel(viewportWidth), SIZES         the four big-tree card sizes and the one a viewport starts at
-import { COPY } from "./hourglass-model.js";
+//   bigModel(index, id)                        the model of hourglass-model.js plus what only the big tree draws: the parents' other
+//                                              partners (`sides[i].others`), the great-grandparents (`ggp`, a grandparent's `up`) and `focus.ariaBig`
+import { COPY, card, familyModel, parentUnion, partnersOf, relWord } from "./hourglass-model.js";
 import { LINE } from "./hourglass-layout.js";
 
 const RING = 10;
 const PAD = 24;
+
+/** The big tree's own strings (T-Copy): the row names on the ground and the chips and names that only it has. */
+export const BIG_COPY = {
+  rows: { "-3": "great-grandparents", "-2": "grandparents", "-1": "parents", 1: "children", 2: "grandchildren" },
+  inMiddle: (name) => `${name}, in the middle now`,
+  moreOfChildren: (n, first) => `${n} more of ${first}'s children. put ${first} in the middle`
+};
+
+/** What a parent's other partner is to the focus person: "stepmother" for a married union, else "father's partner" / "mother's partner". */
+export const stepWord = (unionType, parentSex, sex) => (unionType === "married" ? relWord("step", sex) : `${parentSex === "f" ? "mother's" : parentSex === "m" ? "father's" : "parent's"} partner`);
+
+/**
+ * The model of one focus person for the big tree: familyModel plus `sides[i].others` ([card with `unionIds`] the parent's other partners with step
+ * words), `ggp` ([{unionId, shared, slots:[card|null, card|null]}] the great-grandparents, one entry per union of a grandparent's parents; `shared`
+ * when two or more grandparents are its children) and, on each grandparent card, `up` (the id of that union).
+ */
+export function bigModel(idx, id) {
+  const m = familyModel(idx, id);
+  if (!m) return null;
+  const pu = parentUnion(idx, id);
+  const byUnion = new Map();
+  const sexOf = (x) => idx.people.get(x).sex;
+  m.focus.ariaBig = BIG_COPY.inMiddle(m.focus.name);
+  for (const s of m.sides || []) {
+    s.others = [];
+    if (s.parent.ghost) continue;
+    for (const o of partnersOf(idx, s.parent.id)) {
+      if (pu.partners.includes(o.id)) continue;
+      const unions = o.unions.filter((u) => u !== pu);
+      s.others.push(card(idx, o.id, "spouse", stepWord(o.type, sexOf(s.parent.id), sexOf(o.id)), { unionIds: unions.map((u) => u.id) }));
+    }
+    for (const g of s.grandparents || []) {
+      const up = g.ghost ? null : parentUnion(idx, g.id);
+      if (!up) continue;
+      g.up = up.id;
+      if (!byUnion.has(up.id)) byUnion.set(up.id, []);
+      byUnion.get(up.id).push(g.id);
+    }
+  }
+  m.ggp = [...byUnion].map(([unionId, kids]) => {
+    const shared = kids.length > 1; // a grandparent under both sides counts twice
+    return { unionId, shared, slots: idx.unions.get(unionId).slots.map((g) => (g ? card(idx, g, "grandparent", relWord("ggp", sexOf(g)), { both: shared }) : null)) };
+  });
+  return m;
+}
 
 /** The four big-tree sizes (T-Spec): faces only, small, medium, large. nw/nh card, gx/gy column and row gap, av photo, all px. */
 export const SIZES = [
@@ -127,7 +174,7 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
       k.shown.forEach((gc, j) => { person(gc, 2, s0 + acc + j); k.gxs.push(s0 + acc + j); });
       if (k.more) {
         const gx = s0 + acc + k.shown.length;
-        add({ k: "chip", g: 2, x: gx, role: "grandchild", label: lv === 0 ? `+${k.more}` : COPY.moreChip(k.more), aria: COPY.moreOfChildren(k.more, k.k.card.first), act: "go", target: k.k.card.id });
+        add({ k: "chip", g: 2, x: gx, role: "grandchild", label: lv === 0 ? `+${k.more}` : COPY.moreChip(k.more), aria: BIG_COPY.moreOfChildren(k.more, k.k.card.first), act: "go", target: k.k.card.id });
         k.gxs.push(gx);
       }
       acc += k.sw;
@@ -219,7 +266,7 @@ export function bigLayout(model, level, { sibsOpen = false, ggp = false } = {}) 
     return { ...base, card: c, role: c.role, name: lv >= 2 ? c.name : c.short, text: lv > 0, showBoth: c.both && lv > 0, current, aria: current ? c.ariaBig : c.aria };
   });
   const labels = [];
-  for (let g = gmin; g <= gmax; g += 1) if (COPY.rows[g]) labels.push({ text: COPY.rows[g], x: 8, y: Y(g) - 26, g });
+  for (let g = gmin; g <= gmax; g += 1) if (BIG_COPY.rows[g]) labels.push({ text: BIG_COPY.rows[g], x: 8, y: Y(g) - 26, g });
   return {
     level: lv, size: L, nodes, strips, rings, labels,
     width: maxX - minX + 2 * PAD, height: Y(gmax) + L.nh + PAD, centre: { x: PX(0), y: Y(0) + L.nh / 2 },

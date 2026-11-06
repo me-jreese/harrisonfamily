@@ -4,15 +4,18 @@
 // the numbers are the spec's (T-Spec, DIGEST section 2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { indexGraph, familyModel, COPY } from "../src/lib/hourglass-model.js";
-import { BAND_INSET, FACE, LINE, STRIP, comb, smallLayout } from "../src/lib/hourglass-layout.js";
-import { SIZES, bigLayout, defaultLevel, scrollTarget, seeAll } from "../src/lib/hourglass-big.js";
+import { indexGraph, COPY } from "../src/lib/hourglass-model.js";
+import { BAND_INSET, LINE, STRIP, comb } from "../src/lib/hourglass-layout.js";
+import { small as smallLayout } from "./fixtures/hourglass-extents.mjs";
+import { BIG_COPY, SIZES, bigLayout, bigModel as familyModel, defaultLevel, scrollTarget, seeAll } from "../src/lib/hourglass-big.js";
 import { CASES, GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const idx = indexGraph(GRAPH);
 const model = (c) => familyModel(idx, CASES[c]);
 const WIDTHS = { 320: 288, 375: 343, 768: 670, 1280: 710 };
 const EPS = 1e-6;
+const FACE = 44; // the grandchild faces' size and gap in 46-hourglass.css (tests/hourglass-person.spec.mjs measures them in a browser)
+const FACE_GAP = 4;
 
 const rowsOf = (layout, kind) => layout.rows.filter((r) => r.kind === kind);
 const kinds = (layout) => layout.rows.map((r) => r.kind);
@@ -51,8 +54,9 @@ function assertSmallGeometry(layout, label) {
       }
     }
     if (row.kind === "faces") {
+      // The stylesheet lays the faces out (44 px each, a 4 px gap, wrapping): up to six fit one row of the narrowest tree (288 px).
       const n = row.items.length + (row.more ? 1 : 0);
-      assert.ok(n * row.size + (n - 1) * row.gap <= W + EPS || row.perRow < n, `${label}: the faces fit one row or wrap`);
+      assert.ok(n <= 6 && 6 * FACE + 5 * FACE_GAP <= 288, `${label}: the faces fit one row`);
     }
   }
 }
@@ -72,7 +76,7 @@ test("the small tree at 375: four columns of 79.75 with 8 px gaps, parents span 
   assert.equal(L.gap, 8);
   assert.equal(L.avatar, 32);
   assert.ok(Math.abs(L.colW - 79.75) < EPS, "(343 - 3 * 8) / 4");
-  assert.deepEqual(kinds(L), ["cards", "cards", "gap", "cards", "gap", "band", "gap", "cards", "gap", "faces", "actions"]);
+  assert.deepEqual(kinds(L), ["cards", "cards", "gap", "cards", "gap", "band", "gap", "cards", "gap", "faces"], "the footer (open the big tree, prefer a list) is the renderer's");
   const [sides, gps, , parents] = L.rows;
   assert.deepEqual(sides.cells.map((c) => [c.item, c.col, c.span]), [["father's side", 0, 2], ["mother's side", 2, 2]]);
   assert.deepEqual(gps.cells.map((c) => c.col), [0, 1, 2, 3]);
@@ -84,9 +88,10 @@ test("the small tree at 375: four columns of 79.75 with 8 px gaps, parents span 
   assert.ok(Math.abs(L.centres.side[1] - (gps.cells[2].x + gps.cells[3].x + gps.cells[3].w) / 2) < EPS);
   const band = rowsOf(L, "band")[0];
   assert.deepEqual(band.person.cols, [1, 1.4, 1]);
-  const [left, mid, right] = band.person.cells;
+  const [left, mid, right] = band.person.all;
   assert.ok(Math.abs(mid.w / left.w - 1.4) < 1e-9 && Math.abs(right.w - left.w) < EPS);
-  assert.equal(left.item, null, "no second partner: a spacer");
+  assert.equal(left.item, null, "no second partner: no cell, a spacer in the grid");
+  assert.deepEqual(band.person.cells.map((c) => c.col), [1, 2], "an absent partner has no cell: CSS grid keeps the person in column two");
   assert.equal(mid.item.id, m.focus.id);
   assert.equal(right.item.name, "Hugo Larkspur", "the first partner is on the right");
   assert.ok(Math.abs(mid.x + mid.w / 2 - 343 / 2) < EPS, "the person is in the middle");
@@ -123,10 +128,9 @@ test("the gap between columns is 8 under 600 and 12 from 600; the grandchildren 
   assert.equal(six[0].cells.length, 3);
   assert.deepEqual(six[0].cells.map((c) => c.col), [0, 1, 2]);
   assert.ok(Math.abs(six[0].cells[0].w - (600 - 5 * 12) / 6) < EPS, "six columns with 12 px gaps");
-  assert.deepEqual(wide.rows.map((r) => r.kind).slice(-3), ["gap", "cards", "actions"]);
+  assert.deepEqual(wide.rows.map((r) => r.kind).slice(-3), ["cards", "gap", "cards"]);
   // faces: 44 px, with the names line the model wrote
   const f = rowsOf(narrow, "faces")[0];
-  assert.equal(f.size, FACE);
   assert.deepEqual(f.items.map((c) => c.name), ["Ivy Hollin", "Jory Hollin", "Kit Larkspur"]);
   assert.equal(f.names, "grandchildren: Ivy, Jory and Kit");
   assert.equal(f.more, null);
@@ -138,11 +142,7 @@ test("six grandchild faces still fit one row at 320 (288 px): 6 x 44 plus five g
   const f = rowsOf(L, "faces")[0];
   assert.equal(f.items.length, 5);
   assert.deepEqual(f.more, { text: "+4", aria: "4 more grandchildren. open the big tree" });
-  assert.equal(f.gap, 4);
-  assert.ok(6 * f.size + 5 * f.gap <= 288);
-  assert.equal(f.perRow, 6);
-  const at375 = rowsOf(smallLayout(m, { width: WIDTHS[375] }), "faces")[0];
-  assert.equal(at375.gap, 8, "the gap grows back to the column gap when there is room");
+  assert.ok(6 * FACE + 5 * FACE_GAP <= 288, "the four-pixel gap of the stylesheet fits six faces in the narrowest tree");
   const wide = rowsOf(smallLayout(m, { width: WIDTHS[768] }), "cards").filter((r) => r.cols === 6)[0];
   assert.equal(wide.cells.length, 6);
   assert.deepEqual(wide.cells[5].item, { chip: true, text: "+4 more", aria: "4 more grandchildren. open the big tree" }, "five cards and a '+n more' chip");
@@ -177,13 +177,11 @@ test("case: no parents. one dashed ghost, a dashed stem, and no grandparent row"
   assert.equal(rowsOf(L, "band")[0].toggle, null, "no brothers and sisters, no toggle");
 });
 
-test("case: one parent. the unknown side is a spacer with a dashed stem; the known side keeps its captions and combs", () => {
+test("case: one parent. the unknown side has no cells (the grid leaves the columns empty) and a dashed stem; the known side keeps its caption and combs", () => {
   const L = smallLayout(model("oneParent"), { width: 343 });
   const [sides, gps, gap1, parents, gap2] = L.rows;
-  assert.deepEqual(sides.cells.map((c) => [c.item, c.col]), [[null, 0], ["mother's side", 2]]);
-  assert.equal(gps.cells[0].item, null);
-  assert.equal(gps.cells[0].span, 2);
-  assert.deepEqual(gps.cells.slice(1).map((c) => c.item.name), ["Barnaby Meadowby", "Coralie Northam"]);
+  assert.deepEqual(sides.cells.map((c) => [c.item, c.col]), [["mother's side", 2]]);
+  assert.deepEqual(gps.cells.map((c) => [c.item.name, c.col]), [["Barnaby Meadowby", 2], ["Coralie Northam", 3]]);
   assert.equal(gap1.strips.every((s) => !s.dashed), true);
   assert.equal(parents.cells[0].item.text, "father not known yet.");
   assert.equal(parents.cells[0].span, 2);
@@ -244,11 +242,10 @@ test("a person with one partner and children: the comb hangs from the person and
   assert.deepEqual(tops.map((x) => Math.round(x * 100) / 100), [171.5, Math.round(L.centres.person[2] * 100) / 100]);
 });
 
-test("a person with nobody around them: only the person's band and the actions", () => {
+test("a person with nobody around them: only the person's band under the one dashed ghost", () => {
   const L = smallLayout(model("alone"), { width: 343 });
-  assert.deepEqual(kinds(L), ["cards", "gap", "band", "actions"]);
+  assert.deepEqual(kinds(L), ["cards", "gap", "band"]);
   assert.equal(model("alone").empty, true);
-  assert.deepEqual(L.rows.at(-1), { kind: "actions", openBig: "open the big tree", aria: "open the big tree, centred on Isolde Cobbler", prefer: "prefer a list?", outline: "outline", table: "table" });
 });
 
 // ---- the big tree ----
@@ -501,7 +498,7 @@ test("every viewport of the boards: the default size lays out, scrolls to the pe
 
 test("the big tree has the model's copy for chips and ghosts, and row labels come from COPY", () => {
   const L = bigLayout(model("pedigree"), 2, { ggp: true });
-  assert.deepEqual(L.labels.map((l) => l.text), [COPY.rows[-3], COPY.rows[-2], COPY.rows[-1]]);
+  assert.deepEqual(L.labels.map((l) => l.text), [BIG_COPY.rows[-3], BIG_COPY.rows[-2], BIG_COPY.rows[-1]]);
 });
 
 // Review fixes (pass 1, round 2): unique connectors, the closed chip's line, offsets that fit the gap, see all and the scroll target, the ggp rule.

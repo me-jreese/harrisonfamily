@@ -4,9 +4,9 @@
 // The existing yearsLabel of lib/tree-data.js says "years unknown"; the new tree never uses it, and this test fails if a string ever does.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { COPY, familyModel, indexGraph } from "../src/lib/hourglass-model.js";
+import { COPY, indexGraph } from "../src/lib/hourglass-model.js";
 import { smallLayout } from "../src/lib/hourglass-layout.js";
-import { bigLayout } from "../src/lib/hourglass-big.js";
+import { BIG_COPY, bigLayout, bigModel as familyModel } from "../src/lib/hourglass-big.js";
 import { GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const BANNED = /(^|[^a-z])(node|nodes|graph|graphs|chart|charts|pedigree|collapse|collapsed|focus|re-?centre|re-?center|living|deceased|unknown|n\/a)([^a-z]|$)/i;
@@ -59,7 +59,7 @@ test("the strings include the ones the copy list names, built from the fixture's
   for (const s of [
     "father's side", "mother's side", "parents not known yet.", "father not known yet.", "her parents not known yet.", "his parents not known yet.", "not known yet.",
     "1 brother", "6 brothers and sisters", "+5 more children", "show fewer", "grandchildren: Ivy, Jory and Kit", "grandchildren: Arlo, Briar, Cyril, Dove, Ezra and 4 more",
-    "see them in the big tree", "open the big tree", "wife", "partner", "stepmother", "father's partner", "mother's partner", "half brother, father's side", "half sister, mother's side",
+    "see them in the big tree", "wife", "partner", "stepmother", "father's partner", "mother's partner", "half brother, father's side", "half sister, mother's side",
     "half sibling, mother's side", "great-grandfather", "great-grandmother", "grandchild", "4 more grandchildren. open the big tree", "hide brothers and sisters",
     "great-grandparents", "grandparents", "parents", "children", "grandchildren", "b. 1950", "1920–1990",
     "Delphine Eastlake, grandmother, father's side, on both sides of the family", "Tamsin Alder, this person. open the big tree", "Tamsin Alder, in the middle now", "Rowan Alder, father",
@@ -75,7 +75,7 @@ test("the fixed strings of COPY pass the same two checks", () => {
     else if (Array.isArray(v)) v.forEach((x) => walk(x, key));
     else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, k);
   };
-  for (const [k, v] of Object.entries(COPY)) walk(v, k);
+  for (const [k, v] of [...Object.entries(COPY), ...Object.entries(BIG_COPY)]) walk(v, k);
   assert.ok(out.length > 25);
   for (const [key, s] of out) {
     if (key === "thanks") { assert.match(s, /^thank you\. tell us in the comments on this page, or text [A-Z]\.$/); continue; }

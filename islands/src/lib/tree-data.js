@@ -31,6 +31,13 @@ export async function loadGraph(fetcher, { signal } = {}) {
   }
 }
 
+/**
+ * The graph once per page mount: `cache` ({} per mount) holds the promise, so two features that want the same graph.json fetch it once. A load that
+ * is not "ready" is never kept, so a later ask tries again; a rejection is passed on and not kept either.
+ */
+export const cachedGraph = (cache, fetcher) =>
+  (cache.promise ||= loadGraph(fetcher).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; }));
+
 /** The sign-in link for a visitor the gate refused: the edge sign-in, back to this very page afterwards. */
 export const signInHref = (loc) => `/auth/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`;
 

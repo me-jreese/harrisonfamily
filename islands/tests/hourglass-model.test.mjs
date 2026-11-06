@@ -2,12 +2,14 @@
 // one test group per case of the T-Case boards, plus the small rules (words, years, names, the parent-union rule) on tiny inline graphs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CAP_CHILDREN, CAP_GRANDCHILDREN, COPY, ariaName, familyModel, firstName, indexGraph, parentUnion, partnerWord, relWord, shortName, sibText, stepWord, yearsText } from "../src/lib/hourglass-model.js";
+import { CAP_CHILDREN, CAP_GRANDCHILDREN, COPY, ariaName, familyModel, firstName, indexGraph, parentUnion, partnerWord, relWord, shortName, sibText, yearsText } from "../src/lib/hourglass-model.js";
+import { BIG_COPY, bigModel, stepWord } from "../src/lib/hourglass-big.js";
 import { initials } from "../src/lib/navigator-model.js";
 import { CASES, GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const idx = indexGraph(GRAPH);
 const model = (c) => familyModel(idx, CASES[c]);
+const big = (c) => bigModel(idx, CASES[c]);
 const names = (cards) => cards.map((c) => c.name);
 
 /** A tiny inline graph: people as [id, sex, birth], unions as [id, type, partners, [child ids or [id, rel]]]. */
@@ -34,7 +36,8 @@ test("case: a full family. two generations up (father's side then mother's), the
   const m = model("full");
   assert.equal(m.focus.name, "Tamsin Alder");
   assert.equal(m.focus.aria, "Tamsin Alder, this person. open the big tree");
-  assert.equal(m.focus.ariaBig, "Tamsin Alder, in the middle now");
+  assert.equal(big("full").focus.ariaBig, "Tamsin Alder, in the middle now", "the big tree's name for the middle person is added by bigModel");
+  assert.equal(m.focus.ariaBig, undefined);
   assert.equal(m.noParents, false);
   assert.equal(m.empty, false);
   const [fa, mo] = m.sides;
@@ -46,13 +49,12 @@ test("case: a full family. two generations up (father's side then mother's), the
   assert.equal(fa.grandparents[1].aria, "Mabry Fennick, grandmother, father's side");
   assert.equal(mo.grandparents[0].aria, "Edmund Birchwood, grandfather, mother's side");
   assert.deepEqual(m.both, { ids: [], shared: [], note: null });
-  assert.equal(m.ggp.length, 0);
+  assert.equal(big("full").ggp.length, 0);
   assert.equal(m.siblings.text, "1 brother");
   assert.equal(m.siblings.list[0].half, false);
   assert.deepEqual(m.partners.map((p) => [p.name, p.word]), [["Hugo Larkspur", "husband"]]);
   assert.deepEqual(names(m.children.list), ["Wren Larkspur", "Orrin Larkspur", "Sefa Larkspur"]);
   assert.deepEqual(m.children.list.map((c) => c.word), ["daughter", "son", "child"], "an adopted child reads like a birth child; no sex gives the neutral word");
-  assert.equal(m.children.hidden, 0);
   assert.equal(m.children.moreText, "");
   assert.deepEqual(names(m.grandchildren.list), ["Ivy Hollin", "Jory Hollin", "Kit Larkspur"]);
   assert.equal(m.grandchildren.list[2].aria, "Kit Larkspur, grandchild, Orrin's child");
@@ -98,7 +100,7 @@ test("case: a large family. nine children sorted by birth year, the cap of four,
   const m = model("large");
   assert.equal(m.children.list.length, 9);
   assert.equal(m.children.cap, CAP_CHILDREN);
-  assert.equal(m.children.hidden, 5);
+  assert.equal(m.children.list.length - m.children.cap, 5);
   assert.equal(m.children.moreText, "+5 more children");
   const years = m.children.list.map((c) => c.years);
   assert.deepEqual(years, ["b. 1964", "b. 1966", "b. 1967", "b. 1970", "b. 1972", "b. 1975", "b. 1977", "b. 1979", "b. 1981"], "oldest first even though the file lists them out of order");
@@ -130,9 +132,11 @@ test("case: brothers and sisters opened. full and half, half flagged with the si
   assert.equal(s.list[4].aria, "Gareth Kestrel, half brother, father's side");
   assert.notEqual(s.list[4].unionId, s.list[0].unionId, "a half-sibling belongs to the parent's other union");
   // The parents' other partners, with the words a step or an unmarried partner gets.
-  assert.deepEqual(m.sides[0].others.map((o) => [o.name, o.word]), [["Fenella Sparrow", "father's partner"]]);
-  assert.deepEqual(m.sides[1].others.map((o) => [o.name, o.word]), [["Ignatius Rowanford", "stepfather"]]);
-  assert.ok(m.sides[0].others[0].unionIds.includes(s.list[4].unionId));
+  const bm = big("siblings");
+  assert.deepEqual(bm.sides[0].others.map((o) => [o.name, o.word]), [["Fenella Sparrow", "father's partner"]]);
+  assert.deepEqual(bm.sides[1].others.map((o) => [o.name, o.word]), [["Ignatius Rowanford", "stepfather"]]);
+  assert.ok(bm.sides[0].others[0].unionIds.includes(s.list[4].unionId));
+  assert.equal(m.sides[0].others, undefined, "the small tree's model has no other partners");
   // Father's parents are recorded, mother's are not.
   assert.equal(m.sides[0].grandparents.length, 2);
   assert.equal(m.sides[1].grandparents, null);
@@ -152,7 +156,7 @@ test("sibText: one, all brothers, all sisters, mixed, none", () => {
 });
 
 test("case: the same ancestors on both sides. brother and sister as grandparents give the note, the tags and one great-grandparent union", () => {
-  const m = model("pedigree");
+  const m = big("pedigree");
   assert.equal(m.both.shared.length, 1);
   assert.equal(m.both.note.text, "Delphine and Everett were sister and brother, so Gideon Eastlake and Ottoline Juniper are on both sides of this family.");
   assert.equal(m.both.note.button, "see them in the big tree");
@@ -207,8 +211,9 @@ test("case: a person with several partners. union order, spouse words only for m
   assert.deepEqual(m.blocks.map((b) => b.kids.length), [2, 1]);
   assert.equal(m.partners.slice(2).length, 2, "partners three and four are the 'also with' chips");
   // Step words: a father's second marriage, a mother's unmarried partner.
-  assert.deepEqual(m.sides[0].others.map((o) => [o.name, o.word]), [["Fern Oakley", "stepmother"]]);
-  assert.deepEqual(m.sides[1].others.map((o) => [o.name, o.word]), [["Rolf Cobbler", "mother's partner"]]);
+  const bm = big("partners");
+  assert.deepEqual(bm.sides[0].others.map((o) => [o.name, o.word]), [["Fern Oakley", "stepmother"]]);
+  assert.deepEqual(bm.sides[1].others.map((o) => [o.name, o.word]), [["Rolf Cobbler", "mother's partner"]]);
   assert.deepEqual(m.siblings.list.map((c) => [c.name, c.word]), [["Sibyl Dunmere", "half sister, father's side"]]);
   // A mother's own parents recorded with the mother alone: the father slot is a ghost, the mother's slot a card.
   assert.deepEqual(m.sides[1].grandparents.map((g) => (g.ghost ? g.text : `${g.name}, ${g.word}`)), ["not known yet.", "Odalys Fennick, grandmother"]);
@@ -222,7 +227,7 @@ test("parent union rule: the union with a birth link wins even when listed secon
   const none = model("adoptedFirst");
   assert.deepEqual(names(none.sides.map((s) => s.parent)), ["Quentin Cobbler", "Prudence Cobbler"], "no birth link anywhere: the first union");
   assert.deepEqual(none.siblings.list.map((c) => [c.name, c.word]), [["Rhys Cobbler", "brother"]], "an adopted brother reads brother");
-  assert.deepEqual(none.sides[0].others.map((o) => [o.name, o.word]), [["Tove Sparrow", "father's partner"]]);
+  assert.deepEqual(big("adoptedFirst").sides[0].others.map((o) => [o.name, o.word]), [["Tove Sparrow", "father's partner"]]);
   const u = parentUnion(idx, CASES.adoptedBirth);
   assert.equal(Object.values(u.rel.get(CASES.adoptedBirth)).includes("birth"), true);
   assert.equal(parentUnion(idx, CASES.noParents), null);
@@ -260,7 +265,6 @@ test("rows are de-duplicated by id: a partner with two unions, a child listed tw
   assert.equal(m.partners.length, 1, "one card for the partner of two unions");
   assert.equal(m.partners[0].type, "married", "married when any union with them is");
   assert.equal(m.partners[0].word, "wife");
-  assert.deepEqual(m.partners[0].unionIds, ["u1", "u2"]);
   assert.deepEqual(m.children.list.map((c) => c.id), ["r", "s"], "r is listed in both unions and shown once");
   assert.deepEqual(m.grandchildren.list.map((c) => c.id), ["t"], "t is the child of two of the children and shown once");
   const sib = familyModel(g, "r");
@@ -352,7 +356,7 @@ test("ariaName joins the name and the parts that are there", () => {
 
 test("every person of the fixture builds a model with a card for each role the words name", () => {
   for (const p of GRAPH.people) {
-    const m = familyModel(idx, p.id);
+    const m = bigModel(idx, p.id);
     assert.ok(m, p.id);
     assert.equal(m.focus.id, p.id);
     assert.equal(m.empty, !m.sides && !m.partners.length && !m.children.list.length && !m.siblings.count);
@@ -381,7 +385,7 @@ test("COPY holds the verbatim strings the model hands out", () => {
   assert.equal(COPY.openBigAria("Bram Example"), "open the big tree, centred on Bram Example");
   assert.equal(COPY.showSiblings("4 brothers and sisters"), "4 brothers and sisters. show them");
   assert.equal(COPY.hideSiblings, "hide brothers and sisters");
-  assert.equal(COPY.moreOfChildren(2, "Ada"), "2 more of Ada's children. put Ada in the middle");
+  assert.equal(BIG_COPY.moreOfChildren(2, "Ada"), "2 more of Ada's children. put Ada in the middle");
   assert.equal(COPY.moreGrandchildren(2), "2 more grandchildren. open the big tree");
-  assert.deepEqual([-3, -2, -1, 1, 2].map((g) => COPY.rows[g]), ["great-grandparents", "grandparents", "parents", "children", "grandchildren"]);
+  assert.deepEqual([-3, -2, -1, 1, 2].map((g) => BIG_COPY.rows[g]), ["great-grandparents", "grandparents", "parents", "children", "grandchildren"]);
 });

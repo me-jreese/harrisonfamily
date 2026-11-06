@@ -12,7 +12,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { transform } from "esbuild";
+import { build as esbuildBuild, transform } from "esbuild";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,8 +32,18 @@ export const BUDGET = {
   lifelinesCss: 5 * KB,
   // HFY-TSK-308 (viz-v2-faces-tab, viz ADR 11 / viz-v2-faces-tab AC4): the lazy faces tab chunk, loaded only when the familyVizFaces view opens.
   facesJs: 15 * KB,
-  facesCss: 5 * KB
+  facesCss: 5 * KB,
+  // HFY-TSK-379 (viz-hourglass-p1/p2, viz-hourglass-addendum.md section 5): the hourglass tree's script (the person page's small tree and, later, the big tree)
+  // at most 25 KB gzip, and its CSS partial 5 KB gzip. io's brief asks the same script for 25 KB MINIFIED (HOURGLASS_MIN below), the stricter of the two.
+  hourglassJs: 25 * KB,
+  hourglassCss: 5 * KB
 };
+
+// The brief's stricter measure (io, HFY-TSK-379): minified bytes, no gzip. The whole hourglass script, every module the small and big tree load, all chunks
+// together, is at most 25 KB; the person page's chunk (data adapter, small layout, renderer) at most 14 KB, which leaves the big tree 11 KB (its layout,
+// toolbar, history, keyboard). Until pass 3 builds the big tree's chunk, its layout (lib/hourglass-big.js) is measured from source and counted in the total;
+// the diagnostic line says how much of the 25 KB is left for pass 3's toolbar, history and keyboard code.
+export const HOURGLASS_MIN = { total: 25 * KB, person: 14 * KB };
 
 const read = (f) => readFileSync(f, "utf8");
 const gz = (f) => gzipSync(readFileSync(f)).length;
@@ -118,8 +128,9 @@ test("the old 120 KB chart-chunk budget line is gone from the tests", () => {
   }
 });
 
-test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk, 25 and 5 KB for the lifelines, 15 and 5 KB for the faces tab)", () => {
-  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024, lifelinesJs: 25 * 1024, lifelinesCss: 5 * 1024, facesJs: 15 * 1024, facesCss: 5 * 1024 });
+test("the budgets are the amended numbers (35 and 15 KB for the navigator, 60 KB for the entry, 10 KB for the kinship chunk, 25 and 5 KB for the lifelines, 15 and 5 KB for the faces tab, 25 and 5 KB for the hourglass)", () => {
+  assert.deepEqual(BUDGET, { navigatorJs: 35 * 1024, navigatorCss: 15 * 1024, entryJs: 60 * 1024, kinshipJs: 10 * 1024, lifelinesJs: 25 * 1024, lifelinesCss: 5 * 1024, facesJs: 15 * 1024, facesCss: 5 * 1024, hourglassJs: 25 * 1024, hourglassCss: 5 * 1024 });
+  assert.deepEqual(HOURGLASS_MIN, { total: 25 * 1024, person: 14 * 1024 });
 });
 
 // The lifelines chunk (lib/tree-lifelines.jsx): a lazy import of tree.js beside the navigator's, never a static one. Its own stylesheet source is
@@ -191,4 +202,46 @@ test("the faces tab chunk is lazy and at most 15 KB gzip JS and 5 KB gzip CSS", 
   assert.ok(js <= BUDGET.facesJs, `faces JS is ${kb(js)} gzip, over the 15 KB budget`);
   assert.ok(css > 256 && css <= BUDGET.facesCss, `faces CSS is ${kb(css)} gzip, over the 5 KB budget`);
   assert.match(read(join(out, "tree.css")), /hfy-faces__grid/);
+});
+
+// HFY-TSK-379 (viz-hourglass-p2, flag familyVizHourglass): the hourglass tree's script, all lazy. lib/tree-link.js (in the person entry) imports `hourglass-ui` (the
+// tree/cards switch), which imports `tree-hourglass` (data adapter, small layout, renderer) only when the tree is the view. Chunks the person page already loads for the
+// card mini view (the graph loader, shared with `person-mini`) are not the hourglass's, so they are subtracted, as the shell's and the entry's are.
+// The big tree's layout (lib/hourglass-big.js) is not in a page yet: it is measured from its source with the shared modules left out, as the chunk it will join.
+test("the hourglass chunks are lazy, at most 25 KB gzip JS and 5 KB gzip CSS, and at most 25 KB minified in all with the person-page chunk at most 14 KB", async (t) => {
+  const entry = join(out, "person.js");
+  const shellSet = staticClosure(join(out, "shell.js"));
+  const entrySet = staticClosure(entry);
+  const named = (from, re) => dynamicTargets(from).filter((f) => re.test(f.split("\\").join("/")));
+  const ui = named(entry, /\/chunks\/hourglass-ui-[A-Za-z0-9_-]+\.js$/);
+  assert.equal(ui.length, 1, "person.js must import exactly one hourglass-ui chunk dynamically");
+  assert.ok(!entrySet.has(ui[0]), "the hourglass UI is a static import of the entry: it is not lazy");
+  const trees = named(ui[0], /\/chunks\/tree-hourglass-[A-Za-z0-9_-]+\.js$/);
+  assert.equal(trees.length, 1, "hourglass-ui must import exactly one tree-hourglass chunk dynamically");
+  assert.ok(!staticClosure(ui[0]).has(trees[0]), "the tree-hourglass chunk is a static import of the UI: it is not lazy");
+  const mini = named(entry, /\/chunks\/person-mini-[A-Za-z0-9_-]+\.js$/);
+  assert.equal(mini.length, 1);
+  const own = (chunk) => minus(minus(minus(staticClosure(chunk), shellSet), entrySet), staticClosure(mini[0]));
+  const personSet = own(trees[0]);
+  const uiSet = minus(own(ui[0]), personSet);
+  const bytes = (files) => [...files].reduce((n, f) => n + readFileSync(f).length, 0);
+  // the big tree's layout from source: model and layout are the person chunk's, so they stay external
+  const bigSrc = join(testsDir, "..", "src", "lib", "hourglass-big.js");
+  const big = await esbuildBuild({ entryPoints: [bigSrc], bundle: true, minify: true, format: "esm", write: false, external: ["./hourglass-model.js", "./hourglass-layout.js"] });
+  const bigMin = big.outputFiles[0].contents.length;
+  const bigGz = gzipSync(big.outputFiles[0].contents).length;
+  const personMin = bytes(personSet);
+  const totalMin = personMin + bytes(uiSet) + bigMin;
+  const js = sum(personSet) + sum(uiSet) + bigGz;
+  const cssSrc = read(join(testsDir, "..", "src", "theme", "46-hourglass.css"));
+  const cssGz = gzipSync((await transform(cssSrc, { loader: "css", minify: true })).code).length;
+  t.diagnostic(`hourglass minified: person chunk ${kb(personMin)} (${[...personSet].map((f) => f.slice(out.length + 1)).join(", ")}) of ${kb(HOURGLASS_MIN.person)}, switch ${kb(bytes(uiSet))}, big layout ${kb(bigMin)}, total ${kb(totalMin)} of ${kb(HOURGLASS_MIN.total)}, ${kb(HOURGLASS_MIN.total - totalMin)} left for pass 3's toolbar, history and keyboard; gzip ${kb(js)} of ${kb(BUDGET.hourglassJs)}; CSS ${kb(cssGz)} of ${kb(BUDGET.hourglassCss)}`);
+  assert.ok(personMin > 4096, "the tree-hourglass chunk measured as nearly empty: the test is not looking at it");
+  assert.ok(personMin <= HOURGLASS_MIN.person, `the person-page chunk is ${kb(personMin)} minified, over the 14 KB the brief leaves it`);
+  assert.ok(totalMin <= HOURGLASS_MIN.total, `the hourglass script is ${kb(totalMin)} minified before the big tree's toolbar, history and keyboard, over the brief's 25 KB`);
+  assert.ok(js <= BUDGET.hourglassJs, `the hourglass script is ${kb(js)} gzip, over the 25 KB budget`);
+  assert.ok(cssGz > 256 && cssGz <= BUDGET.hourglassCss, `the hourglass CSS is ${kb(cssGz)} gzip, over the 5 KB budget`);
+  // the rules really ship in the theme (served on /person/ and /tree/), and no chart or graph library came in
+  assert.match(read(join(out, "..", "..", "css", "hfy-theme.css")), /\.hfy-tree__card/);
+  assert.doesNotMatch([...personSet, ...uiSet].map(read).join(""), /d3-|svg-pan|cytoscape|dagre|elkjs|createElementNS/);
 });

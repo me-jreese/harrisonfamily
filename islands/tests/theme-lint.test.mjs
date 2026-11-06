@@ -27,6 +27,9 @@ const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
 const REPO_PAGES = ["11ty/posts/index.html", "11ty/me/index.html", "11ty/me/notifications/index.html", "11ty/me/links/index.html", "11ty/me/inbox/index.html", "11ty/tree/index.html", "11ty/edit/index.html", "11ty/edit/family/index.html", "11ty/me/review/index.html", "11ty/me/requests/index.html", "11ty/admin/sync/index.html", "11ty/join/index.html", "11ty/chat/index.html", "11ty/offline.html"];
 const ALIAS_FILE = "src/theme/10-kit-aliases.css";
+// The hourglass partial (HFY-TSK-379) opens with one alias block of --hfy-tree-* names that fall back to existing --io-* tokens until the new tree tokens ship
+// in @io-kit/tokens; the rest of that one file may read them. No other file may, and nothing else outside --io-* / --bs-* is readable.
+const TREE_FILE = "src/theme/46-hourglass.css";
 const ALLOW_BP = /lint-allow:\s*bp tokens pending/;
 
 // ---------------------------------------------------------------------------------------------------------------- parser
@@ -164,6 +167,7 @@ export function lintDeclarations(decls, file) {
     if (d.prop.startsWith("--io-bp-") && d.allowBp) continue;
     if (!aliasFile) {
       for (const m of value.matchAll(/var\(\s*(--[\w-]+)/g)) {
+        if (file === TREE_FILE && /^--hfy-tree-/.test(m[1])) continue;
         if (!/^--(io|bs)-/.test(m[1])) findings.push(`${at}  <- reads ${m[1]} (only --io-* / --bs-* may be read)`);
       }
     }
@@ -277,6 +281,9 @@ test("the linter catches literals and honours its exemptions", () => {
     "gap: 2em"
   ]);
   assert.deepEqual(lintCss(".x { color: var(--fg); }", ALIAS_FILE), [], "the kit-alias file may read the short names");
+  assert.deepEqual(lintCss(".x { border-color: var(--hfy-tree-edge); }", TREE_FILE), [], "the hourglass partial may read its own --hfy-tree-* aliases");
+  assert.equal(lintCss(".x { border-color: var(--hfy-tree-edge); }", "src/theme/45-person.css").length, 1, "no other file may");
+  assert.equal(lintCss(".x { border-color: var(--hfy-other); }", TREE_FILE).length, 1, "and only those names");
   assert.equal(lintHtml('<main style="padding:16px;font-family:system-ui,sans-serif"></main>', "p.html").length, 2);
   assert.ok(globToRegExp("src/theme/{30,40,45}-*.css").test("src/theme/40-legacy-type.css"));
   assert.ok(!globToRegExp("src/theme/{30,40,45}-*.css").test("src/theme/60-shell-static.css"));

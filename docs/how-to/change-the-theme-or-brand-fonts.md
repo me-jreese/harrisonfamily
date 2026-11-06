@@ -34,7 +34,7 @@ Do the part that matches your change.
 
 #### Edit a theme partial
 
-1. Choose the partial by what it covers. [Theme and asset build: Partials](../reference/theme-and-asset-build.md#partials) lists the seven partials. The build imports every file in `islands/src/theme/` whose name is two digits, a hyphen and a name ending in `.css`, such as `50-gallery.css`, in ascending order, after the token files. It ignores other names. A new partial therefore takes its place in the cascade from its number.
+1. Choose the partial by what it covers. [Theme and asset build: Partials](../reference/theme-and-asset-build.md#partials) lists the eight partials. The build imports every file in `islands/src/theme/` whose name is two digits, a hyphen and a name ending in `.css`, such as `50-gallery.css`, in ascending order, after the token files. It ignores other names. A new partial therefore takes its place in the cascade from its number.
 2. Write the rule with tokens only: `var(--io-*)`, or `var(--bs-*)` where a Bootstrap variable is meant. Never write a literal colour, a `px`, `rem` or `em` length, or a font name. Step 2 checks this.
 3. Leave `11ty/css/main.css` alone. It is Eleventy output and is never edited. The theme loads right after it, so a theme rule wins wherever its selector is at least as specific.
 4. Put no site rules in `10-kit-aliases.css`. It only maps the short variables that the kit packages read to `--io-*` tokens, and it is the one file allowed to read them.
