@@ -40,7 +40,7 @@ eq "KeepMe is preserved untouched" "$(jq -cS '.Statement[] | select(.Sid == "Kee
 eq "the stale guard statement is replaced, not duplicated" "$(jq -c '[.Statement[].Sid] | sort' "$T/merged.json")" '["HfyDataWriteGuardMediaDelete","HfyDataWriteGuardRecords","KeepMe"]'
 eq "records statement: Put and Delete on exactly the record patterns" \
   "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardRecords") | [.Effect, .Principal, (.Action | sort), (.Resource | map(sub("^arn:aws:s3:::[^/]+/"; "")))]' "$T/merged.json")" \
-  '["Deny","*",["s3:DeleteObject","s3:DeleteObjectVersion","s3:PutObject"],["person/*.json","family/*","event/*","note/*","place/*","media/*.json"]]'
+  '["Deny","*",["s3:DeleteObject","s3:DeleteObjectVersion","s3:PutObject"],["person/*.json","family/*","event/*","note/*","place/*","media/*.json","media/thumb/*"]]'
 eq "media statement: Delete on media/* only" \
   "$(jq -c '.Statement[] | select(.Sid == "HfyDataWriteGuardMediaDelete") | [.Effect, (.Action | sort), (.Resource | map(sub("^arn:aws:s3:::[^/]+/"; "")))]' "$T/merged.json")" \
   '["Deny",["s3:DeleteObject","s3:DeleteObjectVersion"],["media/*"]]'
@@ -72,7 +72,7 @@ put = by["HfyDataWriteGuardRecords"]; delete_media = by["HfyDataWriteGuardMediaD
 NOT_DATA = {"uploads/*", "README.md"}
 data = [e for e in exclude if e not in NOT_DATA]
 print("every data exclude is denied for Put:", all(e in put or (e == "media/*" and "media/*.json" in put and "media/*" in delete_media) for e in data))
-print("every Put deny is an exclude (media/*.json via media/*):", all(p in exclude or (p == "media/*.json" and "media/*" in exclude) for p in put))
+print("every Put deny is an exclude (media/*.json via media/*):", all(p in exclude or (p in ("media/*.json", "media/thumb/*") and "media/*" in exclude) for p in put))
 print("only known non-data excludes are left out:", sorted(e for e in exclude if e not in put and e != "media/*") == sorted(NOT_DATA))
 print("the exclude list still has the data prefixes:", len(data) >= 5)
 src = [str(p.relative_to(root / "11ty")) for p in (root / "11ty").rglob("*") if p.is_file()]
@@ -113,7 +113,7 @@ contains "a role outside the exceptions is denied on person/<id>.json (AccessDen
 contains "the deploy role can Put person/index.html" "$OUT" "ok    allowed   harrisonfamily-github-deploy-role"
 contains "the deploy role cannot Put person/x.json" "$OUT" "ok    explicitDeny harrisonfamily-github-deploy-role"
 contains "hfy-api cannot Put media/x.json" "$OUT" "explicitDeny hfy-api-role"
-eq "all 19 probes passed" "$(echo "$OUT" | grep -c '^ok ')" 19
+eq "all 21 probes passed" "$(echo "$OUT" | grep -c '^ok ')" 21
 check "simulate-custom-policy was the API used" grep -q 'iam simulate-custom-policy' "$STUB_DIR/calls.log"
 check "the simulation changed nothing" test ! -f "$STUB_DIR/policy-writes.log"
 # The matrix has teeth: against a policy without the guard (the stub aws drops every Deny statement from the resource policy), the deny probes must FAIL.

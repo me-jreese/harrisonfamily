@@ -903,12 +903,14 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/person/graph.json
                   - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/faces/*
+                  # HFY-TSK-393: the derived thumbnails and their sidecar (media/thumb/index.json)
+                  - !Sub arn:${AWS::Partition}:s3:::${MediaBucket}/media/thumb/*
               - Sid: FacesList
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource: !Sub arn:${AWS::Partition}:s3:::${MediaBucket}
                 Condition:
-                  StringLike: { "s3:prefix": ["media/faces/*"] }
+                  StringLike: { "s3:prefix": ["media/faces/*", "media/thumb/*"] }
               # A failure raises the renderer's own RenderError alarm (same namespace and metric).
               - Sid: Metrics
                 Effect: Allow

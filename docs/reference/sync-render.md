@@ -83,7 +83,19 @@ The renderer owns exactly these keys, and its writer and deleter refuse any othe
 - `person/<gramps_id>.json` (and the `person/<old id>.json` merged-person stubs, [above](#merged-person-stubs)), `person/index.json`, `person/search-index.json`;
 - `family|event|note|place|media/<handle>.json`, `place/index.json`, `media/index.json`.
 
-Never touched: `person/index.html` and every other shell file, `person/graph.json` and `person/search-store.json` (the graph builder's), media binaries (`media/<handle><ext>`; only `api/scripts/expunge.mjs --record Media:<handle>` deletes one, with the record's history), `media/faces/*`, `media/tree_*.svg`, `media/.staging/*` and `uploads/*`. A tampered manifest listing such a key is ignored, and the key is dropped from the manifest on the next save.
+Never touched: `person/index.html` and every other shell file, `person/graph.json` and `person/search-store.json` (the graph builder's), media binaries (`media/<handle><ext>`; only `api/scripts/expunge.mjs --record Media:<handle>` deletes one, with the record's history), `media/faces/*`, `media/thumb/*` (the graph renderer's, read here only as the sidecar below), `media/tree_*.svg`, `media/.staging/*` and `uploads/*`. A tampered manifest listing such a key is ignored, and the key is dropped from the manifest on the next save.
+
+## Media thumbnails
+
+Derived thumbnails are produced by `hfy-graph-render`, not by this Lambda: the graph renderer already decodes originals with `sharp`, and this zip is standard library only. For each image in the rendered `media/index.json` (so only media this renderer published, moderation overlay included) it writes two JPEGs, 320 px and 800 px on the long edge (quality 80, EXIF and ICC stripped, orientation applied, never upscaled), to `media/thumb/<handle>-<first 8 hex of the original's checksum>-<size>.jpg`, and records them in one sidecar, `media/thumb/index.json` (`{"version": 1, "thumbs": {<handle>: {"checksum", "w", "h"}}}`). The key scheme is `gramps/hfygramps/render/thumbs.py` and `graph/cloud/thumbs.mjs`, pinned to each other by tests.
+
+This Lambda reads the sidecar at the start of each pass and, for every media entry that has an original and a sidecar record made from the entry's current checksum, adds a `thumb` object to its `media/index.json` entry and to `media/<handle>.json`:
+
+```json
+"thumb": { "s320": "media/thumb/<handle>-<sha8>-320.jpg", "s800": "media/thumb/<handle>-<sha8>-800.jpg", "w": 4000, "h": 3000 }
+```
+
+`w` and `h` are the pixel size of the original after its EXIF orientation is applied; the two thumbnails have that aspect ratio and are never larger than the original. The keys are computed from the handle and the checksum, never read from the sidecar. A missing original, a record made from another checksum (a replaced original), or no sidecar gives no `thumb` field at all. A changed sidecar digest (stored in `SYNC#RENDER.thumbs_digest`) makes the next pass due even when the store seq did not move, so a thumbnail reaches the media files within one schedule interval of the graph renderer writing it. An unreadable sidecar fails the pass (the schedule retries) rather than rendering every entry without its `thumb`. Originals are never written; the renderers are the only principals the data-write guard lets write `media/thumb/*`.
 
 ## Guards
 
