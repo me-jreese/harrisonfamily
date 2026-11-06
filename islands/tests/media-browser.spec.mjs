@@ -78,6 +78,32 @@ for (const [name, viewport] of VIEWPORTS) {
       await shot(page, testInfo, `list-${name}`);
     });
 
+    test("HFY-TSK-405: no section opens on media; ?section=posts opens post images; one h1 on the list; the detail keeps its h1; back returns to media", async ({ page }) => {
+      const state = await open(page, "/all-media/");
+      await expect(page.getByRole("link", { name: /Photo M0001/ })).toBeVisible();
+      expect(state.lists[0]).toMatchObject({ section: "media" });
+      expect(page.url()).toContain("section=media");
+      await expect(page.getByRole("button", { name: new RegExp(`^${L.sectionMedia}`, "i") })).toHaveAttribute("aria-pressed", "true");
+      const visibleH1 = await page.locator("h1").evaluateAll((els) => els.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== "hidden"; }).map((e) => e.textContent.trim()));
+      expect(visibleH1).toEqual(["all media"]);
+      await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+      await expect(page.getByRole("heading", { level: 1, name: "all media" })).toBeVisible();
+      await page.getByRole("link", { name: /Photo M0002/ }).click();
+      await expect(page.getByRole("heading", { level: 1, name: "Picnic by the lake" })).toBeVisible();
+      await page.goBack();
+      await expect(page.getByRole("link", { name: /Photo M0001/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: new RegExp(`^${L.sectionMedia}`, "i") })).toHaveAttribute("aria-pressed", "true");
+      expect(page.url()).toContain("section=media");
+    });
+
+    test("HFY-TSK-405: ?section=posts opens on post images and the address is left alone", async ({ page }) => {
+      const state = await open(page, "/all-media/?section=posts");
+      await expect(page.getByRole("link", { name: /Photo M0001/ })).toBeVisible();
+      expect(state.lists[0]).toMatchObject({ section: "posts" });
+      expect(page.url()).toContain("section=posts");
+      await expect(page.getByRole("button", { name: new RegExp(`^${L.sectionPosts}`, "i") })).toHaveAttribute("aria-pressed", "true");
+    });
+
     test("more pages load on scroll and the end line follows; a filter chip changes the request and the address", async ({ page }) => {
       const state = await open(page, "/all-media/?section=media", {
         list: (q, n) => (q.get("filter") === "needs_tags" ? { cards: [], nextCursor: null, counts: { media: 0, posts: 0 } }

@@ -72,8 +72,8 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "731cdd9a",
-        "css": "b72e84e6"
+        "js": "796f6920",
+        "css": "8a72419a"
       },
       "media-carousel": {
         "js": "d7381324",

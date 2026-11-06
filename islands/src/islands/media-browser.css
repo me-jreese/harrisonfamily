@@ -17,6 +17,9 @@
 /* all media: the list is the browser's grid in the flow, not the editor's absolute snap-grid overlay */
 .io-media-grid-wrap > .io-media-grid { position: static; inset: auto; pointer-events: auto; background-image: none; background-size: auto; }
 
+/* HFY-TSK-405: the static page already carries the one h1 ("all media"); the kit's own list title and breadcrumb leaf repeat it, so the kit's h1 is dropped from the page */
+.io-media-page > .io-media-page-title { display: none; }
+
 /* detail: the stage is the photo's own shape (--io-media-aspect is set by the overlay) and the photo shows through every layer of the tag overlay */
 .io-media-detail-main > .io-media-stage { width: min(100%, calc(70dvh * var(--io-media-aspect, 1000))); max-height: none; margin-inline: auto; }
 .io-media-stage > .io-media-overlay { display: block; overflow: visible; background: transparent; pointer-events: none; }
