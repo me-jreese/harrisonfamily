@@ -199,6 +199,29 @@ test("a tap puts that person in the middle, writes ?focus= with a new history en
   await expect(mid(page)).toHaveAttribute("aria-label", "Rowan Alder, in the middle now");
 });
 
+test("a stage that changes size (a phone's address bar or keyboard) keeps the middle person centred until the visitor moves it, and then leaves it alone", async ({ page }) => {
+  await open(page, "full", { width: 375, height: 800 });
+  await ready(page);
+  await expect(page.locator(".hfy-bt__top [data-tree-ctx]")).toBeVisible();
+  // untouched: the stage shrinking puts the middle person back in the middle
+  await page.setViewportSize({ width: 375, height: 640 });
+  await page.waitForTimeout(150);
+  const still = await offCentre(page);
+  expect(still.dx).toBeLessThan(8);
+  expect(still.dy).toBeLessThan(8);
+  // moved by the visitor (a wheel over the stage): the next resize keeps where they are
+  await stage(page).hover();
+  await page.mouse.wheel(0, 120);
+  await page.waitForTimeout(150);
+  const moved = await offCentre(page);
+  expect(moved.dy).toBeGreaterThan(40);
+  await page.setViewportSize({ width: 375, height: 560 });
+  await page.waitForTimeout(150);
+  const after = await offCentre(page);
+  expect(Math.abs(after.y - moved.y)).toBeLessThan(2);
+  expect(after.dy).toBeGreaterThan(40);
+});
+
 test("back to {person} puts the page's person back at the starting size, clears the steps, and is disabled at the start", async ({ page }) => {
   const a = await open(page, "full", { width: 375 });
   await ready(page);
