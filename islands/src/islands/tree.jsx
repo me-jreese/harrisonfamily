@@ -125,6 +125,23 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
     }).catch(fail);
     return () => { live = false; api?.destroy(); setTop(null); };
   }, [graph]);
+  // The chip can make the top bar a row taller (a phone wraps it under the title), which shortens the stage after the chunk centred the middle person in it. Put them
+  // back in the middle when the stage changes size: once for the chip arriving, and again for a name that wraps differently or a phone turned on its side.
+  useEffect(() => {
+    const stage = top && host.current?.querySelector(".hfy-bt__stage");
+    if (!stage || typeof ResizeObserver === "undefined") return undefined;
+    const centre = () => {
+      const a = stage.querySelector("[aria-current]")?.getBoundingClientRect();
+      if (!a) return;
+      const b = stage.getBoundingClientRect();
+      stage.scrollTo({ left: stage.scrollLeft + a.left + a.width / 2 - b.left - b.width / 2, top: stage.scrollTop + a.top + a.height / 2 - b.top - b.height / 2, behavior: "auto" });
+    };
+    let seen = false; // the observer reports once when it starts
+    const ro = new ResizeObserver(() => { if (seen) centre(); seen = true; });
+    ro.observe(stage);
+    centre();
+    return () => ro.disconnect();
+  }, [top]);
   const name = graph.person(focus)?.name;
   return (
     <>
