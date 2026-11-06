@@ -10,7 +10,8 @@
     "test:contract": "node --test tests/*.test.mjs",
     "check:islands": "node build.mjs --check",
     "lint:css": "node --test tests/theme-lint.test.mjs",
-    "measure:search": "node scripts/measure-search-p95.mjs"
+    "measure:search": "node scripts/measure-search-p95.mjs",
+    "report:bundles": "node scripts/bundle-report.mjs"
   },
   "engines": {
     "node": ">=22"

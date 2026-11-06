@@ -5,6 +5,7 @@ import { CommentError } from "@io-kit/comments";
 import { ApiError } from "./api.js";
 import { GUARD_CODES, GUARD_COPY, learnFromRefusal, precheck } from "./contact-precheck.js";
 import { PHOTO_COPY } from "./photo.js";
+import { COPY as MOD_COPY, commentTarget, createModerationClient, errorLine, versionOf } from "./moderation.js";
 
 const CODES = new Set(["unauthenticated", "forbidden", "not_found", "validation", "step_up_required", "self_react", "cursor_invalid", "server"]);
 
@@ -57,22 +58,65 @@ function refuseContactInfo(body, asPromise = false) {
   throw err;
 }
 
-/** `onAdded(comment)` fires after the server stored a new comment (the island's 3 s "posted" ping). */
-export function createHfyCommentSource(api, { onAdded } = {}) {
+// The kit's error code for a refused moderation call (its row error shows the message, which is the DS line).
+function moderationCode(e) {
+  if (!(e instanceof ApiError)) return "server";
+  if (e.code === "self_moderation") return "self_moderation";
+  if (e.code === "contact_info" || e.code === "dob_not_allowed") return "validation";
+  return e.status === 403 ? "forbidden" : e.status === 404 ? "not_found" : "server";
+}
+
+/**
+ * `onAdded(comment)` fires after the server stored a new comment (the island's 3 s "posted" ping).
+ * `moderation: true` (flag moderationV1, HFY-TSK-191) adds the kit's optional `moderate(threadId, id, {action, note?, hide?})`: POST /api/moderation
+ * for the comment, resolving the comment as this admin now sees it; `onModerated(input)` fires after the server accepted it (the island's ping).
+ * A refusal rejects with a CommentError whose message is the DS line, which the kit shows under the comment while its form stays open.
+ */
+export function createHfyCommentSource(api, { onAdded, moderation = false, onModerated } = {}) {
   const enc = encodeURIComponent;
+  const client = createModerationClient(api);
+  // The version an admin saw (edited_at, else created_at) goes with the action: the server answers 409 when the comment moved since.
+  const seen = new Map();
+  const remember = (r) => {
+    for (const c of r?.thread?.comments ?? []) seen.set(c.id, c);
+    return r;
+  };
+  // A comment this session made or changed is as current as a listed one.
+  const keep = (c) => {
+    if (c && typeof c === "object" && c.id) seen.set(c.id, c);
+    return c;
+  };
   return {
     // `order` (asc, the default, or desc) goes through as GET /api/comments?order=; a cursor is bound to the order that issued it.
-    list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit, order: opts.order } }), "list"),
+    list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit, order: opts.order } }), "list").then(remember),
+    ...(moderation ? {
+      async moderate(threadId, id, input) {
+        let r;
+        try {
+          r = await client.act(commentTarget(threadId, id), input, versionOf(seen.get(id)));
+        } catch (e) {
+          const err = new CommentError(moderationCode(e), await errorLine(e), input.action === "ask" || input.action === "request_changes" ? "note" : undefined);
+          err.cause = e;
+          throw err;
+        }
+        const next = r?.item;
+        if (!next || typeof next !== "object") throw new CommentError("server", MOD_COPY.failed);
+        seen.set(id, next);
+        onModerated?.(input, r);
+        return next;
+      },
+    } : {}),
     async create(threadId, input) {
       refuseContactInfo(input.body);
       const photos = Array.isArray(input.attachments) && input.attachments.length ? input.attachments : null;
       // The last client step for the photo captions too (the composer's own pre-check normally holds a hit before it gets here).
       for (const a of photos ?? []) refuseContactInfo(a.alt);
       const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(photos ? { attachments: photos } : {}), ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");
+      keep(c);
       if (onAdded) onAdded(c);
       return c;
     },
-    edit: (threadId, id, input) => refuseContactInfo(input.body, true) || wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit"),
+    edit: (threadId, id, input) => refuseContactInfo(input.body, true) || wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit").then(keep),
     async delete(threadId, id, opts = {}) {
       await wrap(api.del(`/comments/${enc(id)}`, { query: { subject: threadId, reason: opts.reason } }), "delete");
     },

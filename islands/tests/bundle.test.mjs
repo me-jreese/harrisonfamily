@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLEAN, CONTROL, bundleReport, formatReport, reachable as reachableFiles } from "../scripts/bundle-report.mjs";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
@@ -86,4 +87,25 @@ test("HFY-TSK-158: the family-section button is its own small bundle and the wiz
   for (const name of ["shell", "person"]) {
     for (const abs of reachable(`${name}.js`)) assert.doesNotMatch(readFileSync(abs, "utf8"), /data-hfy-wizard-ready/, `${name}.js loads the wizard (${abs.slice(out.length + 1)})`);
   }
+});
+
+test("HFY-TSK-191: the bundle report finds no Cloudscape in the person, posts, timeline and my-posts bundles after the content 0.3.x bump (npm run report:bundles)", () => {
+  const rows = bundleReport(out);
+  assert.deepEqual(rows.map((r) => r.island), [...CLEAN, CONTROL]);
+  for (const r of rows.filter((x) => CLEAN.includes(x.island))) {
+    assert.deepEqual(r.cloudscapeJs, [], `${r.island} loads Cloudscape code`);
+    assert.equal(r.cloudscapeCss, false, `${r.island}.css carries Cloudscape styles`);
+    assert.ok(r.jsBytes > 0 && r.cssBytes > 0);
+  }
+  // The control: the search island does load Cloudscape, so a clean row is a finding and not a blind marker.
+  const search = rows.find((r) => r.island === CONTROL);
+  assert.ok(search.cloudscapeJs.length > 0 && search.cloudscapeCss, "the control row (search) no longer shows Cloudscape: is the marker still awsui?");
+  assert.match(formatReport(rows), /none\s*\n.*none/);
+});
+
+test("HFY-TSK-191: the timeline never loads the R-18 detector up front: moderation's note pre-check is a lazy chunk (lib/moderation-ui.jsx)", () => {
+  // The detector holds the birthday keyword list ("bday"); the timeline is public and never writes, so only the admin's ask form fetches it.
+  const { static: now, all } = reachableFiles(join(out, "timeline.js"));
+  assert.ok(!now.some((f) => /bday/.test(readFileSync(f, "utf8"))), "the detector is in the timeline's static bundle");
+  assert.ok(all.some((f) => /bday/.test(readFileSync(f, "utf8"))), "the lazy chunk with the detector is not reachable: is the pre-check import gone?");
 });

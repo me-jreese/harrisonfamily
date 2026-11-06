@@ -3,12 +3,14 @@
 import "@io-kit/content/content.css";
 import "../posts.css";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { PostCard, useTimeline } from "@io-kit/content/react";
+import { ArticleView, PostCard, useTimeline } from "@io-kit/content/react";
 import { api } from "./api.js";
-import { createHfyContentSource } from "./content-source.js";
+import { createHfyContentSource, norm } from "./content-source.js";
 import { formatTime, watchTimeTitles } from "./time.js";
 import { authorHref } from "./person-name.jsx";
 import { CappedSection } from "./capped.jsx";
+import { PhotoControls, ModerateControl, PostEditForm, PostNotice, useModerator, usePhotoSlots } from "./moderation-ui.jsx";
+import { COPY as MOD_COPY, createModerationClient, moderationVisible, pingFor, photoTarget, postPhotoId, postTarget, versionOf } from "./moderation.js";
 
 export { formatTime };
 export const source = createHfyContentSource(api);
@@ -31,7 +33,8 @@ export const friendlyError = (e) => (isSignedOut(e) ? COPY.signedOut : COPY.fail
 
 
 /** PostCard / ArticleView labels: lowercase; the meta line is "name · time" (no "by"). */
-export const CARD_LABELS = { by: "", edit: "edit", delete: "delete", open: "open", publish: "publish", withdraw: "withdraw", draft: "draft", withdrawn: "withdrawn" };
+export const CARD_LABELS = { by: "", edit: "edit", delete: "delete", open: "open", publish: "publish", withdraw: "withdraw", draft: "draft", withdrawn: "withdrawn", hidden: "hidden", photoHidden: MOD_COPY.photoHidden };
+const moderation = createModerationClient(api);
 
 /** A banner with the signed-out line gets its "sign in" as a link (a 44px target, posts.css `.hfy-banner a`). */
 export function ErrorText({ text }) {
@@ -119,7 +122,9 @@ export function usePosts(filter, { limit = 20 } = {}) {
       return false;
     }
   };
-  return { ...state, reload: () => load(null), more: () => load(state.cursor), remove, prepend: (p) => setState((s) => ({ ...s, items: [p, ...s.items.filter((q) => q.id !== p.id)] })) };
+  // A post as the server now shows it (after a moderation action or the author's edit): swapped in place, in the list it is in.
+  const replace = (post) => setState((s) => ({ ...s, items: s.items.map((p) => (p.id === post.id ? post : p)) }));
+  return { ...state, reload: () => load(null), more: () => load(state.cursor), remove, replace, prepend: (p) => setState((s) => ({ ...s, items: [p, ...s.items.filter((q) => q.id !== p.id)] })) };
 }
 
 /** `delete this post?` -> delete / keep, inline under the card. Focus moves to "keep" (the safe answer) and back to the card's delete. */
@@ -170,27 +175,101 @@ const initialOf = (label) => (String(label || "").trim().match(/\p{L}|\p{N}/u)?.
  * (no avatar slot) and it has no footer slot, so its actions row cannot hold the comments link. HFY: the avatar is drawn beside the kit's
  * meta row (posts.css), and the row renders its own footer (the kit's delete is not wired, so its actions row stays empty and hidden).
  */
-export function PostRow({ post, link, remove }) {
+export function PostRow({ post, link, remove, replace }) {
   const [asking, setAsking] = useState(false);
   const del = useRef(null);
+  const card = useRef(null);
   const canDelete = Boolean(post.can?.delete && remove);
+  const m = usePostModeration(post, replace, card);
   const keep = () => {
     setAsking(false);
     requestAnimationFrame(() => del.current?.focus());
   };
-  const author = post.author?.label || "";
   return (
-    <li className="hfy-posts__item hfy-posts__post">
-      <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(author)}</span>
+    <li className="hfy-posts__item hfy-posts__post" ref={card} data-hfy-post-kind={m.kind}>
+      <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(m.author)}</span>
       <PostCard post={post} {...CARD_PROPS} />
-      {(link || canDelete) && (
+      {m.chrome}
+      {(link || canDelete || m.moderate) && (
         <div className="hfy-posts__footer" data-hfy-post-footer>
-          {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={author ? `comments on ${author}'s post` : undefined}>comments</a>}
+          {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={m.author ? `comments on ${m.author}'s post` : undefined}>comments</a>}
           {canDelete && <button type="button" className="hfy-btn hfy-btn--quiet" ref={del} aria-expanded={asking} onClick={() => setAsking(true)}>{CARD_LABELS.delete}</button>}
+          {m.control}
         </div>
       )}
+      {m.ping}
       {asking && <ConfirmDelete onDelete={() => remove(post)} onKeep={keep} />}
     </li>
+  );
+}
+
+/**
+ * The moderation of one post, shared by the feed's PostRow and the single-post page's article view (HFY-TSK-191), so a story or an article
+ * gets the same notice, per-photo controls, edit form and ping as a post. Off (moderationV1 default), every piece is null and nothing draws.
+ * Who is looking decides the notice; the item's own can.moderate (the server's) decides the control, so it appears on a post, a story (a post
+ * about a person), an article and each of their photos only when the server says this viewer may moderate. `ref` is the card's element
+ * (the kit draws the photos inside it). Returns the pieces to place: `chrome` (notice, photo controls, edit form), `control` (the
+ * "moderate" button, for the footer), `ping`, and `moderate`, `kind`, `author`.
+ */
+export function usePostModeration(post, replace, ref) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [ping, setPing] = usePing();
+  const mod = useModerator();
+  const on = mod?.enabled === true;
+  const viewer = mod?.viewer ?? null;
+  const own = on && viewer?.id != null && viewer.id === post.author?.id;
+  const admin = on && viewer?.admin === true && !own;
+  const moderate = on && !own && post.can?.moderate === true;
+  const slots = usePhotoSlots(ref, post, moderate);
+  // One moderation call: the response's `item` is the post as this admin now sees it, swapped in.
+  const act = async (target, input) => {
+    const r = await moderation.act(target, input, versionOf(post));
+    replace?.(r?.item ? norm(r.item) : await source.get(post.id));
+    setPing(pingFor(input.action, { photo: target.kind === "photo" }));
+  };
+  const unhide = async () => {
+    setBusy(true);
+    try { await act(postTarget(post), { action: "unhide" }); } catch { setPing(MOD_COPY.failed, 6000); } finally { setBusy(false); }
+  };
+  const save = async (body) => {
+    const next = await source.update(post.id, { body });
+    replace?.(next);
+    setEditing(false);
+    setPing(next.moderation ? "saved." : MOD_COPY.pingSaved);
+  };
+  const kind = post.type !== "post" ? "article" : post.subject ? "story" : "post";
+  return {
+    on,
+    moderate,
+    kind,
+    author: post.author?.label || "",
+    chrome: on ? (
+      <>
+        <PostNotice moderation={post.moderation} own={own} admin={admin} canEdit={Boolean(post.can?.edit)} busy={busy} onUnhide={unhide} onEdit={() => setEditing(true)} />
+        <PhotoControls slots={slots} act={(attachment, input) => act(photoTarget(postTarget(post), postPhotoId(attachment)), input)} />
+        {editing && <PostEditForm post={post} onSave={save} onCancel={() => setEditing(false)} />}
+      </>
+    ) : null,
+    control: moderate ? <ModerateControl moderation={post.moderation} onAct={(input) => act(postTarget(post), input)} name={kind} /> : null,
+    ping: on ? <Ping text={ping} /> : null,
+  };
+}
+
+/**
+ * The single-post page's view of a post that is not a plain post (a story-length article): the kit's ArticleView with the same moderation
+ * as a feed row (HFY-TSK-191), `replace` swapping in the item as the server now shows it.
+ */
+export function ArticleRow({ post, replace }) {
+  const card = useRef(null);
+  const m = usePostModeration(post, replace, card);
+  return (
+    <div className="hfy-posts__item" ref={card} data-hfy-post-kind={m.kind}>
+      <ArticleView post={post} {...CARD_PROPS} />
+      {m.chrome}
+      {m.moderate && <div className="hfy-posts__footer" data-hfy-post-footer>{m.control}</div>}
+      {m.ping}
+    </div>
   );
 }
 
@@ -209,7 +288,11 @@ export function EmptyPosts({ action }) {
  * what the cap clipped, then asks for the next page. `showEmpty` false draws no empty state (a viewer who is not the owner has nothing to add).
  */
 export function PostList({ posts, link = true, emptyAction, capped = false, showEmpty = true }) {
-  const { items, cursor, status, error, more, remove } = posts;
+  const { items: all, cursor, status, error, more, remove, replace } = posts;
+  // The server never sends a hidden post to anyone but its author and admins; with moderationV1 on, a stray one is dropped here. Off, the list
+  // is exactly what the server sent.
+  const mod = useModerator();
+  const items = mod?.enabled === true ? all.filter((p) => moderationVisible(p, mod.viewer)) : all;
   const ref = useTimeTitles();
   return (
     <div className="hfy-posts__feed" ref={ref}>
@@ -220,7 +303,7 @@ export function PostList({ posts, link = true, emptyAction, capped = false, show
           {items.length > 0 && (() => {
             const list = (
               <ul className="hfy-posts__list">
-                {items.map((p) => <PostRow key={p.id} post={p} link={link} remove={remove} />)}
+                {items.map((p) => <PostRow key={p.id} post={p} link={link} remove={remove} replace={replace} />)}
               </ul>
             );
             return capped
