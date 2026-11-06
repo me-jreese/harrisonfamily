@@ -9,6 +9,7 @@ import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
+import { lifeDatesPost } from "./records/life-dates.js";
 import { adminDeletesPost, adminDuplicatesList } from "./records/admin-delete.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
@@ -333,6 +334,11 @@ export const ROUTES = defineRoutes([
   {
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (MCP tool hfy_changes_submit)",
     gate: editingGate(), handler: changesPost,
+  },
+  // POST /api/life-dates (HFY-TSK-387-0F; BRD D-17..D-28): the simplified Born and Died years compiled into the suggestion POST /api/changes would take. No MCP tool.
+  {
+    name: "lifeDates.post", method: "POST", path: "/life-dates", summary: "Suggest a person's birth and death years {target: Person:<handle>, birth?: {year, about?}, death?: {year, about?} | {unknown: true}, confirm?, base_versions?, dry_run?} with an Idempotency-Key header (not for dry_run): year only (1600 to this year, died not before born), never a day or month. Always one suggestion for an admin to approve (an admin's own included); an approved row updates the Birth or Death on file or adds one, with a citation on the shared member-contributions source. 201 {applied: null, proposal, summary, marks_deceased, rows: {birth?, death?}} where a row is {status: proposed|unchanged|precise_on_file|shared_event, action?: create|update, current?: {year, about?}}; 200 with proposal null and unchanged true when no row needs a suggestion (a more exact date on file is never overwritten); 200 {confirm_needed: true, reason: lifespan_over_120, lifespan} (nothing saved) until the request is resent with confirm true; 200 {plan, summary, marks_deceased, rows} for dry_run; 400 validation (errors[].code year_range, death_before_birth, unknown_field), 404 not_found, 409 version_conflict, 422 from the privacy guard (no MCP tool)",
+    gate: editingGate(), handler: lifeDatesPost,
   },
   // Admin web deletes and the possible-duplicate queue (HFY-TSK-295; Q2-15 per the decision-sheet default, pending io's recorded answer; review IF-03). Dark until the adminDelete flag is on (or the caller is uat) AND
   // HFY_EDITING is on; then a member is 403 not_allowed. A delete is compiled to EditOps and takes the /api/changes pipeline (step-up within 900 s, the
