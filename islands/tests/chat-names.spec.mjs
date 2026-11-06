@@ -14,6 +14,10 @@ const FLAGS = { authV2: true, shellV2: true, navMe: true, notifyV2: true, search
 const people = [...PEOPLE, { id: LABEL_ONLY, label: "Guest Example" }];
 
 async function wire(context, hub) {
+  // HFY-TSK-385: the roster panel starts collapsed; this spec reads its rows, so it remembers "open" as a member who opened it would.
+  await context.addInitScript(() => {
+    try { if (localStorage.getItem("hfy:chat:panel") === null) localStorage.setItem("hfy:chat:panel", "open"); } catch { /* storage blocked */ }
+  });
   await context.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await context.route("**/_data/flags.json", (r) => r.fulfill({ json: FLAGS }));
   await context.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: ME, grampsId: ME, label: "Sam Example", exp: Math.floor(Date.now() / 1000) + 3600 } }));

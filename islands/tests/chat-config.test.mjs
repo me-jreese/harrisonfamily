@@ -27,7 +27,7 @@ const read = (...p) => readFileSync(join(repo, ...p), "utf8");
 // ------------------------------------------------------------------------------------------------------------ Q2-16 defaults
 
 test("Q2-16 host options: the verified original behaviours are on; auto-open and post-creation policy changes are off", () => {
-  const o = resolveShellOptions(shellOptionsFor({ narrow: false, medium: false, navigate() {} }));
+  const o = resolveShellOptions(shellOptionsFor({ narrow: false, navigate() {} }));
   // ON: docked moles with pop-out; the title-bar flash and the tab-title flash; q to focus search
   assert.equal(o.dock, true);
   assert.equal(o.popOut, true);
@@ -47,7 +47,7 @@ test("Q2-16 host options: the verified original behaviours are on; auto-open and
 });
 
 test("Q2-16 conversation options: typed emoticons, typing and 'has entered text', sparse 'sent at' lines are on", () => {
-  const o = resolveShellOptions(shellOptionsFor({ narrow: false, medium: false, navigate() {} })).conversation;
+  const o = resolveShellOptions(shellOptionsFor({ narrow: false, navigate() {} })).conversation;
   assert.deepEqual(o, { emoticons: true, typingLine: true, enteredText: true, sentAtLines: true, sentAtGapMs: 5 * 60 * 1000 });
   assert.deepEqual({ ...CONVERSATION_OPTIONS }, o);
   // a typed emoticon is shown as an emoji; the stored text is never changed (renderBody only draws)
@@ -81,7 +81,7 @@ test("Q2-16: chat web push is a per-user setting that starts off, and appears on
 });
 
 test("the pop-out is /chat/?c=<id>&popout=1 and the page reads the same URL back", () => {
-  const o = resolveShellOptions(shellOptionsFor({ narrow: false, medium: false, navigate() {} }));
+  const o = resolveShellOptions(shellOptionsFor({ narrow: false, navigate() {} }));
   const url = o.popOutUrl("dm:I9001:I9002");
   assert.equal(url, "/chat/?c=dm%3AI9001%3AI9002&popout=1");
   const search = url.slice(url.indexOf("?"));
@@ -94,18 +94,16 @@ test("the pop-out is /chat/?c=<id>&popout=1 and the page reads the same URL back
   assert.equal(convFromSearch("?c=" + "x".repeat(201)), null);
 });
 
-test("the panel starts open from 64rem, collapsed between 43rem and 64rem, and nothing docks under 43rem (chat.md 15.1, 15.3, 15.4)", () => {
-  const wide = shellOptionsFor({ narrow: false, medium: false, navigate() {} });
-  const medium = shellOptionsFor({ narrow: false, medium: true, navigate() {} });
-  const phone = shellOptionsFor({ narrow: true, medium: true, navigate() {} });
-  assert.equal(wide.defaultPanelOpen, true);
-  assert.equal(medium.defaultPanelOpen, false);
+test("the panel starts collapsed at every width, and nothing docks under 43rem (chat.md 15.1, 15.3, 15.4)", () => {
+  const wide = shellOptionsFor({ narrow: false, navigate() {} });
+  const phone = shellOptionsFor({ narrow: true, navigate() {} });
+  assert.equal(wide.defaultPanelOpen, false);
   assert.equal(phone.defaultPanelOpen, false);
   assert.equal(wide.dock, true);
   assert.equal(phone.dock, false);
   const seen = [];
   phone.onOpen("dm:I9001:I9002");
-  const nav = shellOptionsFor({ narrow: true, medium: true, navigate: (u) => seen.push(u) });
+  const nav = shellOptionsFor({ narrow: true, navigate: (u) => seen.push(u) });
   nav.onOpen("dm:I9001:I9002");
   assert.deepEqual(seen, ["/chat/?c=dm%3AI9001%3AI9002"], "with docking off, opening a chat goes to the page");
 });
