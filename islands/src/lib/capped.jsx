@@ -36,7 +36,7 @@ export function CappedSection({
   // The latest props and state, read by the observers and the measure pass without re-subscribing them.
   const live = useRef({});
   live.current = { wide, steps, hasMore, loading, onMore, revealSelector, onReveal, itemSelector, clipSelector, view };
-  const awaiting = useRef(null); // the item count when a page was asked for; the cap rises when more items than this show up
+  const awaiting = useRef(null); // { last, count } when a page was asked for: the last item then and the item count; the cap rises when items show up after `last`
   const focusAt = useRef(null); // the item index to focus once it is visible
   const bumpedAt = useRef(-1); // the `steps` value a raise was already requested from, so one measure burst raises once
   const revealed = useRef(null); // the selector whose item was already announced to onReveal
@@ -88,7 +88,12 @@ export function CappedSection({
 
     // A page was asked for: when it arrives the cap rises one step and focus goes to its first item; if the fetch ended with nothing new, stop waiting.
     if (awaiting.current !== null) {
-      if (items.length > awaiting.current) { focusAt.current = awaiting.current; awaiting.current = null; raise(); }
+      // New items arrive after the last item that was there. A comment the viewer posts meanwhile lands before it (newest first), so it neither
+      // counts as the page nor moves focus; if the last item itself went away, fall back to the count.
+      const { last, count } = awaiting.current;
+      const at = last ? items.indexOf(last) : -1;
+      const first = at >= 0 ? (at + 1 < items.length ? at + 1 : -1) : (items.length > count ? count : -1);
+      if (first >= 0) { focusAt.current = first; awaiting.current = null; raise(); }
       else if (!live.current.loading) awaiting.current = null;
     }
 
@@ -126,6 +131,7 @@ export function CappedSection({
   const showButton = view.clipped || view.hidden > 0 || hasMore;
   const onClick = () => {
     const { view: v, hasMore: more, loading: busy, onMore: ask } = live.current;
+    if (busy) return; // aria-disabled, not disabled: a disabled button would drop keyboard focus to the body while the page loads
     if (v.hidden > 0 || v.clipped) {
       if (v.hidden > 0) focusAt.current = v.items - v.hidden; // the hidden items are the tail, so the first one is items - hidden
       bumpedAt.current = -1;
@@ -133,7 +139,8 @@ export function CappedSection({
       return;
     }
     if (more && !busy && ask) {
-      awaiting.current = v.items;
+      const list = clipOf()?.querySelectorAll(live.current.itemSelector) ?? [];
+      awaiting.current = { last: list[list.length - 1] ?? null, count: v.items };
       bumpedAt.current = -1;
       ask();
     }
@@ -144,7 +151,7 @@ export function CappedSection({
       <div className="hfy-capped__body" ref={body}>{children}</div>
       {showButton && (
         <div className="hfy-capped__bar">
-          <button type="button" className="hfy-btn hfy-capped__more" onClick={onClick} disabled={loading} data-hfy-capped-more>{loading ? "loading…" : label}</button>
+          <button type="button" className="hfy-btn hfy-capped__more" onClick={onClick} aria-disabled={loading ? "true" : undefined} data-hfy-capped-more>{loading ? "loading…" : label}</button>
         </div>
       )}
     </div>

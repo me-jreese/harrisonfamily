@@ -168,12 +168,13 @@ export const SOCIAL_MORE = "show older comments";
 export const SOCIAL_PAGE = 8;
 // Anchors load at most this many extra pages looking for `#comment-<ulid>` (BRD2 section 8).
 const ANCHOR_PAGES = 5;
+export const ANCHOR_MISSED = "couldn't find that comment. it may have been deleted.";
 
 /** Kit `renderMore` target: renders nothing and reports the pager state upward, so the host's CappedSection button drives paging. */
 function MoreBridge({ state, report, loadRef }) {
   useEffect(() => {
     loadRef.current = state.loadMore;
-    report((p) => (p.hasMore === state.hasMore && p.loading === state.loading ? p : { hasMore: state.hasMore, loading: state.loading }));
+    report((p) => (p.known && p.hasMore === state.hasMore && p.loading === state.loading ? p : { hasMore: state.hasMore, loading: state.loading, known: true }));
   });
   return null;
 }
@@ -233,14 +234,16 @@ export function Comments({ subject, social = false }) {
     }
   }, []);
   // The social column's paging and anchor: the kit pager state comes up through MoreBridge; the hash names the comment to find.
-  const [pager, setPager] = useState({ hasMore: false, loading: false });
+  // `known` is false until the kit pager has reported once, so a thread that has not loaded yet is never read as "no more pages".
+  const [pager, setPager] = useState({ hasMore: false, loading: false, known: false });
   const loadRef = useRef(null);
   const renderMore = useCallback((state) => <MoreBridge state={state} report={setPager} loadRef={loadRef} />, []);
   const [anchor, setAnchor] = useState(() => (social ? commentFromHash(location.hash) : null));
   const pages = useRef(0);
+  const [missed, setMissed] = useState(false); // the anchor's comment is not in what could be loaded
   useEffect(() => {
     if (!social) return undefined;
-    const on = () => { pages.current = 0; setAnchor(commentFromHash(location.hash)); };
+    const on = () => { pages.current = 0; setMissed(false); setAnchor(commentFromHash(location.hash)); };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, [social]);
@@ -249,8 +252,9 @@ export function Comments({ subject, social = false }) {
   const signedIn = Boolean(sid);
   useEffect(() => {
     if (!social || !anchorSelector || !signedIn || !root.current) return;
-    if (root.current.querySelector(anchorSelector)) return; // CappedSection raises the cap and calls onReveal
-    if (pager.hasMore && !pager.loading && pages.current < ANCHOR_PAGES) { pages.current += 1; loadRef.current?.(); }
+    if (root.current.querySelector(anchorSelector)) { setMissed(false); return; } // CappedSection raises the cap and calls onReveal
+    if (!pager.known || pager.loading) return;
+    if (pager.hasMore && pages.current < ANCHOR_PAGES) { pages.current += 1; loadRef.current?.(); } else setMissed(true); // no more pages, or the 5 extra were spent
   }, [social, anchorSelector, signedIn, pager]);
   const onReveal = useCallback((el) => {
     root.current?.querySelectorAll("[data-hfy-target]").forEach((n) => n.removeAttribute("data-hfy-target"));
@@ -265,6 +269,7 @@ export function Comments({ subject, social = false }) {
   return (
     <section className={social ? "hfy-comments hfy-social__col" : "hfy-comments"} {...(social ? { id: "hfy-person-comments" } : {})} aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
       <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
+      {social && missed && <p className="hfy-ping" role="status" data-hfy-anchor-missed>{ANCHOR_MISSED}</p>}
       {(session === undefined || (viewer && flags === undefined)) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
       {session !== undefined && !viewer && (
         <div className="hfy-comments__signin" data-hfy-signin>

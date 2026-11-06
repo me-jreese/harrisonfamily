@@ -16,12 +16,13 @@ const ON = "/person/?id=I9001&hfy_flags=personV2,postsV2,contribV1";
 const OFF = "/person/?id=I9001&hfy_flags=personV2,postsV2";
 
 const comment = (n) => ({ id: ULID(n), threadId: "person:I9001", author: ANN, body: `Synthetic comment number ${n}. It says something short and kind about the day.`, created_at: T0, can: { edit: false, delete: false, react: true } });
-const story = (n) => ({ id: ULID(n), type: "post", author: ANN, subject: "I9001", body: `Synthetic story number ${n}, told in a few plain words so the card has some height to it.`, attachments: [], visibility: "published", created_at: T0, updated_at: T0, can: { edit: false, delete: false, publish: false } });
+const story = (n, body = `Synthetic story number ${n}, told in a few plain words so the card has some height to it.`) => ({ id: ULID(n), type: "post", author: ANN, subject: "I9001", body, attachments: [], visibility: "published", created_at: T0, updated_at: T0, can: { edit: false, delete: false, publish: false } });
 
-async function stub(page, { me = VISITOR, comments = 30, stories = 12, person = PERSON } = {}) {
-  const s = { me, commentGets: [], postGets: [], commentPosts: [], external: [] };
+async function stub(page, { me = VISITOR, comments = 30, stories = 12, person = PERSON, storyBody } = {}) {
+  // s.fail: the later comment pages answer 500 after s.delay ms
+  const s = { me, commentGets: [], postGets: [], commentPosts: [], external: [], fail: false, delay: 0 };
   const all = Array.from({ length: comments }, (_, i) => comment(i + 1)); // 1 is the oldest
-  const tales = Array.from({ length: stories }, (_, i) => story(100 + i + 1));
+  const tales = Array.from({ length: stories }, (_, i) => story(100 + i + 1, storyBody));
   page.on("request", (q) => { if (new URL(q.url()).hostname !== "127.0.0.1") s.external.push(q.url()); });
   await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
   await page.route("**/person/I9001.json", (r) => r.fulfill({ json: person }));
@@ -29,10 +30,16 @@ async function stub(page, { me = VISITOR, comments = 30, stories = 12, person = 
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: me.id, grampsId: me.id, label: me.label } }));
   await page.route("**/auth/refresh", (r) => r.fulfill({ status: 401, json: { error: "no refresh" } }));
   await page.route("**/api/me", (r) => r.fulfill({ json: { id: me.id, label: me.label, admin: false, can: { moderate: false, graduate: false, approve: false } } }));
-  await page.route("**/api/comments**", (r) => {
+  await page.route("**/api/comments**", async (r) => {
     const req = r.request();
     const u = new URL(req.url());
     if (req.method() === "GET") {
+      const from0 = Number(u.searchParams.get("cursor") || 0);
+      if (s.fail && from0 > 0) { // the page is asked for, takes s.delay ms, then fails
+        s.commentGets.push({ order: u.searchParams.get("order") || "asc", limit: Number(u.searchParams.get("limit") || 50), cursor: u.searchParams.get("cursor") });
+        await new Promise((done) => setTimeout(done, s.delay));
+        return r.fulfill({ status: 500, json: { error: "boom" } });
+      }
       const order = u.searchParams.get("order") || "asc";
       const limit = Number(u.searchParams.get("limit") || 50);
       const from = Number(u.searchParams.get("cursor") || 0);
@@ -91,6 +98,9 @@ test("contribV1 on: #hfy-person-social is filled with the comments and the contr
   expect(await social.evaluate((el) => [...el.querySelector(".hfy-social").children].map((c) => c.id))).toEqual(["hfy-person-comments", "hfy-person-contributions"]);
   await expect(social.getByRole("heading", { name: "comments" })).toBeVisible();
   await expect(social.getByRole("heading", { name: "contributions" })).toBeVisible();
+  // the host for hfy-person-contrib-ui is empty and marked; no empty-state line is drawn before that task owns the feed
+  expect(await page.locator("#hfy-person-contributions [data-hfy-contrib-host]").evaluate((el) => el.childElementCount + el.textContent.trim().length)).toBe(0);
+  await expect(page.locator("#hfy-person-contributions").getByText("no contributions yet")).toHaveCount(0);
   expect(await page.locator("#person-content > #hfy-person-comments").count(), "the comments host is no longer a sibling of the social host").toBe(0);
 });
 
@@ -210,6 +220,36 @@ test("an anchor to a comment that does not exist stops after 5 extra pages", asy
   await expect.poll(() => s.commentGets.length).toBe(6);
   await page.waitForTimeout(400);
   expect(s.commentGets.length).toBe(6);
+  // the viewer is told, not left with a silent stop
+  await expect(thread(page).getByRole("status").filter({ hasText: "couldn't find that comment" })).toBeVisible();
+});
+
+test("an anchor to a comment that is found shows no 'couldn't find' line", async ({ page }) => {
+  await stub(page);
+  await open(page, `${ON}#comment-${ULID(12)}`);
+  await expect(page.locator(`#comment-${ULID(12)}`)).toHaveAttribute("data-hfy-target", "");
+  await expect(thread(page).locator("[data-hfy-anchor-missed]")).toHaveCount(0);
+});
+
+test("'show older comments' keeps keyboard focus while a page loads, and when the page fails", async ({ page }) => {
+  const s = await stub(page);
+  await open(page);
+  const older = thread(page).getByRole("button", { name: "show older comments" });
+  s.delay = 1500;
+  s.fail = true;
+  // keep pressing Enter on the button (it is focused again each time: a raise moves focus onto a revealed item) until the page is asked for
+  for (let i = 0; i < 10 && s.commentGets.length === 1; i += 1) {
+    await older.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(60);
+  }
+  expect(s.commentGets).toHaveLength(2);
+  // the button is aria-disabled, never disabled, so focus is still on it mid-load ("loading…" is its name then) and after the failure
+  const btn = thread(page).locator("[data-hfy-capped-more]");
+  await expect(btn).toHaveAttribute("aria-disabled", "true");
+  expect(await btn.evaluate((el) => el === document.activeElement && !el.disabled)).toBe(true);
+  await expect(btn).not.toHaveAttribute("aria-disabled", "true"); // the failed page is over
+  expect(await btn.evaluate((el) => el === document.activeElement), "focus is still on the button once the fetch ended with nothing new").toBe(true);
 });
 
 // ---- AC4: stories ----------------------------------------------------------------------------------------------------------------------
@@ -236,6 +276,18 @@ test("stories: every signed-in viewer sees published posts with subject=<id>, 5 
   expect(s.postGets[1]).toMatchObject({ limit: 5, subject: "I9001", visibility: "published", cursor: "5" });
   await expect(mine.locator(".hfy-posts__list > li")).toHaveCount(10);
   expect(await noHScroll(page)).toBe(true);
+});
+
+test("stories: a story's markdown goes through the HFY SanitizePolicy in the list (no external image, no mailto)", async ({ page }) => {
+  const body = "a line about the day\n\n![tracker](https://tracker.example.test/pixel.png)\n\n[write](mailto:someone@example.test) and [site](https://example.com/x)";
+  const s = await stub(page, { me: VISITOR, stories: 2, storyBody: body });
+  await open(page);
+  const mine = page.locator("[data-hfy-my-posts]");
+  await expect(mine.locator(".hfy-posts__list > li").first()).toBeAttached();
+  expect(await mine.locator(".kit-md img").count()).toBe(0);
+  expect(await mine.locator('a[href^="mailto:"]').count()).toBe(0);
+  await expect(mine.getByRole("link", { name: "site" }).first()).toHaveAttribute("href", "https://example.com/x");
+  expect(s.external.filter((u) => u.includes("tracker.example.test")), "the image host was never asked").toEqual([]);
 });
 
 test("stories: the owner keeps the composer, and a person with no stories shows a visitor nothing extra", async ({ page }) => {

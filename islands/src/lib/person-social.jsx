@@ -6,14 +6,15 @@ import "../social.css";
 import { Comments } from "./comments-ui.jsx";
 
 /**
- * The contributions column's host. This task owns the host and the layout; hfy-person-contrib-ui draws the feed in it. Until then the
- * column is its heading and the empty line, which is also what a person with no contributions shows.
+ * The contributions column's host. This task owns the host and the layout; hfy-person-contrib-ui draws the feed in it, and with it the empty
+ * line for a person with none (the design lists that state only for a real empty feed). Until it lands the column is its heading and an empty
+ * host, `[data-hfy-contrib-host]`, which that task fills; contribV1 stays off until then.
  */
 export function ContributionsHost() {
   return (
     <section className="hfy-social__col" id="hfy-person-contributions" aria-labelledby="hfy-person-contributions-h" data-hfy-contributions>
       <h2 className="hfy-h" id="hfy-person-contributions-h">contributions</h2>
-      <p className="hfy-social__empty">no contributions yet.</p>
+      <div className="hfy-social__contrib" data-hfy-contrib-host />
     </section>
   );
 }

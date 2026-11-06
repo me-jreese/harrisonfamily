@@ -16,6 +16,8 @@
 .hfy-capped__bar { margin-block-start: var(--io-space-3); }
 /* Below 43rem the older button is full width; every size keeps the 44 px target. */
 .hfy-capped__more { inline-size: 100%; min-block-size: var(--io-control-tap-min); }
+/* While a page loads the button is aria-disabled, not disabled, so keyboard focus stays on it. */
+.hfy-capped__more[aria-disabled="true"] { opacity: 0.5; cursor: progress; }
 @media (min-width: 43rem) {
   .hfy-capped__more { inline-size: auto; }
 }

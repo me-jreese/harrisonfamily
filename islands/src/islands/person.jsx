@@ -77,16 +77,16 @@ async function init() {
     }
   } catch { /* keep the legacy notes */ }
   if (social) {
-    // The host is the person-page-mount-points one: the last child of #person-content, hidden until an island fills it.
-    let host = document.getElementById("hfy-person-social");
+    // The host is the person-page-mount-points one: the last child of #person-content, hidden until an island fills it. person-page.js owns it,
+    // so a missing host is a regression there: say so rather than build one here; the comments then stay where the flag-off page has them.
+    const host = document.getElementById("hfy-person-social");
     if (!host) {
-      host = document.createElement("div");
-      host.id = "hfy-person-social";
-      content.appendChild(host);
+      console.error("hfy person: #hfy-person-social is missing, so the social row is not drawn");
+    } else {
+      host.hidden = false;
+      mountInto(host, <PersonSocial id={id} />);
+      return;
     }
-    host.hidden = false;
-    mountInto(host, <PersonSocial id={id} />);
-    return;
   }
   // Interface contract (f): the comments host follows life, family, photos and stories; #hfy-person-social (HFY-TSK-137) stays the last child.
   mountAt((h) => { const social = document.getElementById("hfy-person-social"); if (social && social.parentElement === content) content.insertBefore(h, social); else content.appendChild(h); }, <Comments subject={`person:${id}`} />, "hfy-person-comments");
