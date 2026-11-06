@@ -128,9 +128,9 @@
         "css": "894963fd"
       }
     },
-    "theme": "dfa9daaf",
+    "theme": "e3e1c277",
     "manifest": "c0f9b5fc",
-    "sw": "6ae112ff"
+    "sw": "68923a3d"
   };
   /* hfy-asset-versions:end */
   // path + "?v=" + version; the bare path when the version is unknown (an unstamped checkout), exactly the pre-versioning URL.

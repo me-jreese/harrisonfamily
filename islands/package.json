@@ -28,7 +28,7 @@
     "@io-kit/search": "1.0.1",
     "@io-kit/search-ui": "1.0.10",
     "@io-kit/shell": "0.6.6",
-    "@io-kit/tokens": "0.4.1",
+    "@io-kit/tokens": "0.6.0",
     "@playwright/test": "1.64.0",
     "@tanstack/react-form": "1.33.5",
     "esbuild": "0.28.2",
