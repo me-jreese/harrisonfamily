@@ -42,7 +42,7 @@ Privacy constraints that already bind:
 **In scope:**
 - recording the research decision (§4);
 - three data prerequisites that can start now: the graph JSON, face crops and offline geocoding, plus the generation index (§5);
-- the MVP (the `/tree/` page as the family tab destination, the accessible outline and focus navigator, and the research-chosen visual), then v2 (places, time, kinship finder, Graphviz retirement, cloud-store regeneration);
+- the MVP (the `/tree/` page as the family tab destination, the accessible outline and focus navigator, and the research-chosen visual), then v2 (places, time, kinship finder, Graphviz retirement, cloud-store regeneration). The Graphviz retirement is on hold since 2026-11-05: the person page gets a small, expandable visual tree first (P2-R117, [the addendum](viz-hourglass-addendum.md));
 - budgets (§11, §12).
 
 **Non-goals:**
@@ -88,7 +88,7 @@ Privacy constraints that already bind:
             lib/family-graph.js (index, queries, kinship)  ->  FocusNavigator + GenerationOutline (always)
                                                             ->  ChartView (lazy chunk, research-chosen)
                                                             ->  v2 layers: Places (lazy), Time (lazy)
-      /person/?id=X  ->  "see in the family tree" link -> /tree/?focus=X   (v2: embedded mini focus view replaces Graphviz)
+      /person/?id=X  ->  "see in the family tree" link -> /tree/?focus=X   (v2: embedded mini focus view replaces Graphviz; superseded 2026-11-05, see viz-hourglass-addendum.md)
 ```
 
 ## 4. Research intake and gating
@@ -153,7 +153,7 @@ These are fixed regardless of the research outcome. They are invariants, and the
   - There is no v2 places layer (VIZ-D11).
 - **In the ADR:** the desktop and 375 px layouts (its 4.5), what is precomputed (4.6), the additive graph.json fields `layout` and `photoEdges` (4.7), the cut (4.8) and the 1-3 day task re-cut (section 9).
 
-**Fallback (not used, because io did not reject Q2-13).** If io had rejected the recommendation, the fallback was a **focus+context hourglass**:
+**Fallback (not used, because io did not reject Q2-13).** Superseded in part on 2026-11-05 (P2-R117): the hourglass is now built for the person page, beside the cards and not instead of them; see [the addendum](viz-hourglass-addendum.md). If io had rejected the recommendation, the fallback was a **focus+context hourglass**:
 - **Desktop:** 2 generations up, 2 generations down, partners beside, siblings in a collapsed row, with photo nodes.
 - **Phone:** the focus navigator of §9.3.
 - **Chart engine:** a small permissive layout (a d3-hierarchy-class tidy tree, one for ancestors and one for descendants) rendered as DOM or SVG buttons. That keeps every node focusable.
@@ -569,7 +569,7 @@ The page URL contract:
 1. **The family route.** `Shell()` remaps `family` to `/tree/`, in the same pattern as the `notifyV2` remap at `shell.jsx:178`. There is no sub swap. The static `NAV` constant keeps `/private/`, so the registry assertion in `family-route.test.mjs:46-51` still holds and the gated-prefix guard still passes, since `/tree/` is not a data prefix.
 2. **The current tab.** `family` is current on `/tree/` and its sub-paths. A person page reached from the tree still marks no tab (the R74 rule for other people's pages is unchanged).
 3. **The redirect.** `familyUrl()` returns `/tree/` for everyone, signed in or not. The `/tree/` page shell is public and static; its data fetch 401 sends signed-out visitors to the sign-in and back to `/tree/`. So `/private/` and old bookmarks land on the tree.
-4. **The person page.** `person-page.js` adds a "see in the family tree" link to `/tree/?focus=<id>` in `#person-family-section` (`11ty/person/index.html:153-159`), shown only when `familyViz` is on. The Graphviz frame stays until v2 (`viz-v2-retire-graphviz`).
+4. **The person page.** `person-page.js` adds a "see in the family tree" link to `/tree/?focus=<id>` in `#person-family-section` (`11ty/person/index.html:153-159`), shown only when `familyViz` is on. The Graphviz frame stays until v2 (`viz-v2-retire-graphviz`). Superseded 2026-11-05 (P2-R117): it stays until the hourglass tree has shipped and io approves; see [the addendum](viz-hourglass-addendum.md).
 5. **The icon.** The family tab icon stays a `currentColor` mask (`islands/src/shell.css:296-326`). A tree glyph is optional and local to HFY.
 
 **Coordination with R-20 (nav domain).** R-20 moves the own page to "me" and the gear to settings.
@@ -668,7 +668,8 @@ The chart is a supplementary view:
 | `familyVizKinship` | `false` | v2 "how are we related" panel | `familyViz` |
 | `familyVizFaces` | `false` | v2 Faces: "pictured with" chips and the faces tab on `/tree/` | `familyViz`; the published graph's `photoEdges` |
 | `familyVizBigTree` | `false` | v2 desktop big-tree poster (64rem and wider) | `familyViz`; the published graph's `layout` block |
-| `familyVizPersonMini` | `false` | v2: the person page shows a mini focus view instead of the Graphviz frame | `familyViz` |
+| `familyVizPersonMini` | `false` | v2: the card-based mini focus view on the person page (HFY-TSK-289). It no longer retires Graphviz: the retirement is on hold until the hourglass has shipped and io approves (P2-R117). Kept, default off, to be placed or dropped by the approved hourglass mockups | `familyViz` |
+| `familyVizHourglass` | `false` | the person page's small, expandable visual tree (the hourglass); planned by HFY-TSK-379, see [the addendum](viz-hourglass-addendum.md) | `familyViz` |
 | `familyVizJourneys` | `false` | v3 Journeys map (replaces `familyVizPlaces`; there is no v2 places layer) | `familyViz`; the `map/` basemap (G-map) and the CSP `worker-src 'self'` |
 
 `familyVizPlaces` is retired: it becomes `familyVizJourneys` in v3 (BRD2 section 11.6). `familyVizFaces` and `familyVizBigTree` are new in v2. Each v2 and v3 flag flips on its own, after its own D-11 audit and io approval (`viz-v2-flips`, `viz-v3-flip`).
@@ -711,6 +712,7 @@ Preview and UAT on prod use `?hfy_flags=familyViz` (session-scoped, with the pre
 4. **W3–W4, MVP:** page shell, outline and navigator, then the chart. Everything deploys with `familyViz` off. io runs UAT on prod with `?hfy_flags=familyViz`.
 5. **W4–W5, flip:** the D-11 audit, then io approval (G-prod), then the flags deploy first and the Dropbox flags sync (HFY-R70). This should be in the same release group as the R-20 nav flip. There is no data step at flip time, because the graph is already live behind the gate.
 6. **W5–W6, v2:** each layer goes behind its own flag, with its own D-11 audit and io approval.
+   - Superseded 2026-11-05 (P2-R117): Graphviz retires after the hourglass (`familyVizHourglass`) has shipped and io approves, in HFY-TSK-290 as io re-scopes it; see [the addendum](viz-hourglass-addendum.md). Read `familyVizPersonMini` in the next bullet as `familyVizHourglass`; its handoff and delete steps stand.
    - Graphviz retires last (`familyVizPersonMini`), after its flip. A handoff to io then drops `build_family_tree_media.py` from the runbook; the next `--delete` sync removes `media/tree_*.svg`.
    - `viz-graph-cloud-source` lands when the sync domain's renderer exists.
 
@@ -746,7 +748,7 @@ Preview and UAT on prod use `?hfy_flags=familyViz` (session-scoped, with the pre
 
 | id | question | default | needs io |
 |---|---|---|---|
-| VIZ-D1 | Which visualization approach is adopted? | **Decided:** the verified recommendation in the viz ADR DOC-A4FBA13AE98A (§4.3). The MVP is Concept A, the Family Card Navigator. v2 adds C-lite lifelines, Faces and a desktop big-tree poster laid out by d3-dag 1.2.2 at build time. v3 adds Journeys. The ADR's budget changes are in §11. The hourglass in §4.3 was the fallback and is not used. | **answered:** io's sheet answer to Q9 (Q2-13), "all approved. proceed.", on 2026-10-13 (DOC-C31D9E3DD932; recorded verbatim in ADR 4.1) |
+| VIZ-D1 | Which visualization approach is adopted? | **Decided:** the verified recommendation in the viz ADR DOC-A4FBA13AE98A (§4.3). The MVP is Concept A, the Family Card Navigator. v2 adds C-lite lifelines, Faces and a desktop big-tree poster laid out by d3-dag 1.2.2 at build time. v3 adds Journeys. The ADR's budget changes are in §11. The hourglass in §4.3 was the fallback and is not used. Amended 2026-11-05 (P2-R117): the hourglass is built for the person page, beside the cards (VIZ-D13). | **answered:** io's sheet answer to Q9 (Q2-13), "all approved. proceed.", on 2026-10-13 (DOC-C31D9E3DD932; recorded verbatim in ADR 4.1) |
 | VIZ-D2 | How is the graph served? | Static `person/graph.json` plus `media/faces/` under existing gated prefixes, with no API route | no |
 | VIZ-D3 | What is the builder's input contract? | `_class`-tagged Gramps JSON lines (the cloud-store snapshot format), streamed from a read-only SQLite copy in the interim | no |
 | VIZ-D4 | Which living-person fields go in the graph? | Name, birth year, birth city and primary-photo face crop, matching `person/index.json` and the hero. Never a day or month. Gramps private objects are excluded. | no (no new exposure) |
@@ -758,6 +760,7 @@ Preview and UAT on prod use `?hfy_flags=familyViz` (session-scoped, with the pre
 | VIZ-D10 | Is the viz a kit package or local to HFY? | Local to HFY. A tokens patch only if the ADR needs one. | no |
 | VIZ-D11 | What is the basemap? | **Settled by the ADR:** v3 Journeys uses maplibre-gl 6.14.0 (exact pin, never v5), pmtiles 4.5.0 and @protomaps/basemaps 5.7.2. They run over a self-hosted maxzoom-11 PMTiles extract under `map/`, with versioned file names and a Cloudflare Cache Rule, behind gate G-map. There is no SVG places layer in v2. | no (settled by the ADR); G-map is io's go-ahead for the upload and the Cache Rule |
 | VIZ-D12 | Era bands in the v2 time layer, and the chapter copy of v3 Journeys (Q2-14), on hard history such as slavery, Reconstruction and the Great Migration | Ship decades only. Add era bands, or Journeys chapter titles and copy, only from a copy list io approves. | **yes** (tone of hard history is io's call) |
+| VIZ-D13 | Does the person page keep a visual tree? | **Decided 2026-11-05 (P2-R117):** yes. A small, expandable, native hourglass (2 generations up, 2 down, partners beside, siblings collapsed, photo nodes) behind `familyVizHourglass`, beside the card views and not instead of them. The Graphviz retirement waits for it. See [the addendum](viz-hourglass-addendum.md). | **answered:** io, 2026-11-05 (P2-R117); mockups need io's approval |
 
 ## 19. Tasks
 

@@ -9,6 +9,8 @@
 | Inputs | DOC-E61DCBFAFA5F (the visualization report), DOC-363B23B01410 (its claim-by-claim verification), DOC-C31D9E3DD932 (the decision sheet, `decisions-for-io.md`), DOC-2CFAE07B546C (io's founding intent), BRD2 sections 2.2, 6.5, 11.6 and Appendix C, `viz.md`, `chat.md` (Cloudflare facts only), `tasks.json` |
 | Written | 2026-10-13, orchestrator draft for docstore storage |
 
+Amended 2026-11-05 (P2-R117, HFY-TSK-379): Concept A stands, and the hourglass fallback recorded in 4.1 is now also built, for the person page and beside the cards. The Graphviz retirement waits for it. See [viz-hourglass-addendum.md](viz-hourglass-addendum.md).
+
 All people, ids, places and years in examples are invented (`I9001`, "Ada Example", "Riverton"). This ADR holds no real name, personal date, gramps_id or contact detail. Library release dates and ruling dates are not personal data.
 
 Sheet item Q10 (Gmail habits) belongs to the chat ADR. Nothing here depends on it.
@@ -129,7 +131,7 @@ The plan already handles each one.
 | family-chart | 0.9.0 | LICENSE.txt MIT; npm package.json says ISC (A1) | 2025-10-21, dormant since (A2, A3) | 46.6 KB with d3; 28.5 KB UMD without (A5) | Default d3-zoom captures one-finger drag and page scroll; a `zoom_polite` option exists but is off by default (A6) | Rejected |
 | Topola | 3.10.4 | Apache-2.0 (A7) | 2026-09-04, 8 releases in 2026 (A8) | 46.1 KB (bundlephobia); 52.7 KB full ESM; CommonJS-only (A10) | Static SVG, no zoom or touch code (A11) | Reference only |
 | elkjs | 0.12.0 | EPL-2.0 OR GPL-3.0-or-later (A17) | 2026-07-17 (A18) | 433-467 KB (A19) | Layout only; Web Worker build (A20) | Rejected |
-| d3-hierarchy | 3.1.2 | ISC (A21) | 2022 (A22); justified only as the hourglass fallback engine | 5.65 KB full; about 1.9 KB tree-only (A22) | Layout only | Fallback only if io rejects Q9 |
+| d3-hierarchy | 3.1.2 | ISC (A21) | 2022 (A22); justified only as the hourglass fallback engine | 5.65 KB full; about 1.9 KB tree-only (A22) | Layout only | Fallback only if io rejects Q9. Since 2026-11-05 (P2-R117) the starting point of the person page's hourglass, see the [addendum](viz-hourglass-addendum.md) |
 | d3-flextree | 2.1.2 | WTFPL (A24) | Nov 2021, stale (A25) | 2.6 KB, plus a duplicate d3-hierarchy v1 (A25) | Layout only | Rejected |
 | Cytoscape.js | 3.34.3 | MIT (A26) | 2026-09-07 | about 137 KB (A27) | Canvas; unified touch and pinch zoom (A28) | Rejected |
 | Sigma.js + graphology | 4.0.0 + 0.26.0 | MIT (A29, A32) | 2026-10-08; graphology core Jan 2025 | about 97 + 13 KB (A30) | Multi-touch; WebGL2-only (A31) | Rejected |
@@ -229,7 +231,7 @@ This section records only io's answer to sheet item Q9. io's approval of this AD
 | Sheet default, quoted exactly | "yes: family cards for phones, then lifelines, faces and a desktop poster, then a map of moves; era names only in wording you approve." |
 | What a whole-sheet "defaults ok" records here | That sheet default, as io's answer to Q9 (Q2-13 and Q2-14), with the reply's date. It records nothing else. It does not approve this ADR's layouts, budgets, viz.md amendments or re-cut (section 8). |
 | io's verbatim answer and date | **Pending.** Pasted here verbatim, with its date, when io replies on the sheet. |
-| Fallback if io rejects | The viz.md 4.3 hourglass (2 generations up, 2 down) with the focus navigator, on d3-hierarchy 3.1.2 tree halves. This ADR is then revised before its approval handoff (section 8). The re-cut in section 9 keeps the same split by concern. |
+| Fallback if io rejects | The viz.md 4.3 hourglass (2 generations up, 2 down) with the focus navigator, on d3-hierarchy 3.1.2 tree halves. This ADR is then revised before its approval handoff (section 8). The re-cut in section 9 keeps the same split by concern. Amended 2026-11-05 (P2-R117): io did not reject Q9, and the hourglass is built anyway for the person page, beside the cards ([addendum](viz-hourglass-addendum.md)). |
 
 **Chapter copy (VIZ-D12, Q2-14).** The sheet's wording names only era names. BRD2's Q2-14 row asks the same question for the v3 Journeys chapter copy, with the same default: decades only, and era bands or chapter titles only from an io-approved copy list. This ADR applies that rule to both. The copy lists themselves are approved in `viz-v2-time-eras` and `viz-v3-journeys-chapters` (section 9).
 

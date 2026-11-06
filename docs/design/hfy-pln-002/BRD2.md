@@ -1122,7 +1122,7 @@ Effort weights: medium = 2 working days, high = 3, and an io gate counts at its 
 | `familyViz` | false | `/tree/`, family tab | — | `viz-mvp-flip` (W4) | `navMe` live (or the same release group); graph published |
 | `familyVizTime`, `familyVizKinship`, `familyVizFaces`, `familyVizBigTree` | false | v2 layers: C-lite lifelines, how are we related, faces, the desktop big-tree poster | — | `viz-v2-flips` (W5), one decision per flag | `familyViz`; Q2-14 (era bands); the layout block published (big tree) |
 | `familyVizJourneys` | false | v3 Journeys map | — | `viz-v3-flip` (W6) | `familyViz`; `viz-v3-basemap` (G-map, and the `worker-src` CSP through G-csp); Q2-11 (b); Q2-14 (chapter copy) |
-| `familyVizPersonMini` | false | Mini focus view replaces Graphviz | — | `viz-graphviz-retire-flip` (W6) | `familyViz`; cutover |
+| `familyVizPersonMini` | false | Mini focus view replaces Graphviz (superseded 2026-11-05, P2-R117: the retirement is on hold, see `viz-hourglass-addendum.md`) | — | `viz-graphviz-retire-flip` (W6) | `familyViz`; cutover |
 | `inboxV1` | false | Bell, panel or sheet, `/me/inbox/` | `api-feature-gate` (routes 404 unless on or UAT); `featureOn('inboxV1')` gates persist-first inbox writes and the app badge | `hfy-social-flip-1` (W5) | `privacy-terms-publish` |
 | `commentPhotosV1` | false | Comment photos | `api-feature-gate` (routes 404 unless on or UAT) | `hfy-social-flip-1` | `privacy-guard-existing-paths`, `site-csp-headers`; `moderationV1` in the same deploy or earlier |
 | `contribV1` | false | Contributions, person social row, feed line | `api-feature-gate` (routes 404 unless on or UAT) | `hfy-social-flip-1` | Contribution backfill applied |
