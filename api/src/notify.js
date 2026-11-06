@@ -60,6 +60,8 @@ export const personIdOf = (subject) => {
   const m = /^person:(.+)$/.exec(String(subject ?? ""));
   return m && GID.test(m[1]) ? m[1] : null;
 };
+/** Where a `media:<gramps_id>` thread notification lands (HFY-TSK-387-0I). */
+export const mediaPath = (gid) => `/media/?id=${encodeURIComponent(gid)}`;
 const personPath = (gid) => `/person/?id=${encodeURIComponent(gid)}`;
 const labelOf = (x) => (typeof x?.label === "string" && x.label ? x.label : undefined);
 
@@ -174,7 +176,7 @@ export function createNotifier(deps) {
      */
     onComment: guarded("comment notification", async (c, { parent } = {}, { postAuthorId, earlierCommenters = [], visibleTo } = {}) => {
       const onProposal = c.threadId.startsWith("proposal:");
-      const navigate = onProposal ? proposalPath(c.threadId.slice(9)) : c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : `/person/?id=${c.threadId.slice(7)}`;
+      const navigate = onProposal ? proposalPath(c.threadId.slice(9)) : c.threadId.startsWith("post:") ? `/posts/?id=${c.threadId.slice(5)}` : c.threadId.startsWith("media:") ? mediaPath(c.threadId.slice(6)) : `/person/?id=${c.threadId.slice(7)}`;
       const base = { navigate, actorLabel: c.author.label };
       const grouped = { ...base, group: `thread:${c.threadId}` }; // comment types coalesce per thread
       const allowed = onProposal ? (visibleTo instanceof Set ? visibleTo : new Set()) : null;
@@ -183,7 +185,8 @@ export function createNotifier(deps) {
       // reply_to_me: the parent's author plus everyone who commented earlier on the same subject.
       await notify("reply_to_me", take([...(parent ? [parent.author.id] : []), ...earlierCommenters]), grouped);
       await notify("mention", take(mentionsOf(c.body)), base);
-      const owner = c.threadId.startsWith("person:") ? c.threadId.slice(7) : postAuthorId;
+      // A media thread has no owner (D-35): replies and mentions notify, comment_on_my_record does not.
+      const owner = c.threadId.startsWith("person:") ? c.threadId.slice(7) : c.threadId.startsWith("media:") ? undefined : postAuthorId;
       if (owner) await notify("comment_on_my_record", take([owner]), grouped);
     }),
     /**
