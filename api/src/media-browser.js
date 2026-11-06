@@ -257,7 +257,7 @@ const defaultHeads = async (ctx) => (await storeView(ctx)).live()
   .map((h) => ({ class: h.class, handle: h.handle, gramps_id: h.gramps_id, version: h.version, obj: h.obj }));
 
 /** The targets of every open, hidden MOD# item (media:<h>, mediaref:<person>:<media>), from the open queue (GSI1 MODQ#open). */
-async function defaultHidden(ctx) {
+export async function defaultHidden(ctx) {
   const out = new Set();
   let start;
   do {

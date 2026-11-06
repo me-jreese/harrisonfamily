@@ -64,7 +64,7 @@
         "css": "159c53fd"
       },
       "life-dates-queue": {
-        "js": "297d3164",
+        "js": "d26cc7bf",
         "css": "ea3388ce"
       },
       "links-editor": {

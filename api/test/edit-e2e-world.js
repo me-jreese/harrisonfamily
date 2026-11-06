@@ -34,15 +34,15 @@ const quiet = { warn() {}, error() {}, info() {} };
  * The synthetic tree: me (1), a woman (3) who is not yet recorded as anyone's parent, my child (6) in a family F1 of me alone, and a note on my page (N1).
  * With `{ photo: true }` the tree also has one photo (`world.pic`) with the woman tagged in it. `HFY_EDITING` is switched on for the life of the process by `createEditWorld` (call `world.dispose()` to restore it). Use `withEditWorld(fn)` for a try/finally that always disposes.
  */
-export async function createEditWorld({ admins = [ADMIN, ADMIN2], photo = false } = {}) {
+export async function createEditWorld({ admins = [ADMIN, ADMIN2], photo = false, flags = {}, extraDeps = {} } = {}) {
   const before = process.env.HFY_EDITING;
   process.env.HFY_EDITING = "on";
   const hooks = createHookRegistry();
   const inbox = new InMemoryNotificationStore();
   // Two clocks on purpose: the seeding clock below is fixed (stable row order and versions), while step-up (a fresh sign-in) is judged against the real clock, so `authTime` below is real now. They never meet: seeded rows carry no sign-in time.
   const w = makeApi({
-    admins, log: quiet, inbox, flags: { inboxV1: true },
-    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} } },
+    admins, log: quiet, inbox, flags: { inboxV1: true, ...flags },
+    extraDeps: { syncHooks: hooks, idPolicy: { mode: "mint" }, getAdmins: async () => new Set(admins), txnOpts: { sleep: async () => {} }, ...extraDeps },
   });
   registerRecordContributor({ ddb: w.ddb, cmds, table: TABLE, log: quiet }, hooks);
   w.ddb.rows.set("SYNC#HEAD\u0000META", { ...headKey(), seq: 0, seeded: true, writes_enabled: true });
