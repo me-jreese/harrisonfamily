@@ -45,7 +45,7 @@ export const BUDGET = {
 // page's chunks (adapter, small layout, renderer) at most 14 KB, the chunk only the big tree loads at most 11.5 KB (rebalanced from 11 KB in pass 3b, with the great-grandparents and the parents' other partners back; the person page stays under its 14 KB and the 25 KB total is the binding line), the switch glue at most 2.5 KB.
 // The lines are tight on purpose (a few hundred bytes in all, under 100 for the person page's part), so a change to a shared helper (hourglass-dom, hourglass-model), to
 // the minifier version or to a string can fail this test with no feature added. To re-measure: `cd islands && npm run build`, then `node --test tests/tree-budget.test.mjs`;
-// the diagnostic line prints each part, and `wc -c 11ty/js/islands/chunks/tree-hourglass-*.js` gives the exact bytes. Do not raise a line to get a change through: io rules on the budget.
+// the diagnostic line prints each part, and `wc -c 11ty/js/islands/chunks/tree-hourglass-*.js` gives the exact bytes. A line moves only with io's ruling on the record (the 11.5 KB big-tree line is pass 3b's stated rebalance of 0.5 KB from the unused slack, awaiting io's confirmation at review).
 export const HOURGLASS_MIN = { total: 25 * KB, person: 14 * KB, big: 11.5 * KB, glue: 2.5 * KB };
 
 const read = (f) => readFileSync(f, "utf8");

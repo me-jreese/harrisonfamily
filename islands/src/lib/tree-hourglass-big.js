@@ -68,7 +68,7 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
     resetting = true;
     if (n) history.go(-n); else settle();
   };
-  const shown = (t) => { draw(); stage.querySelector("[aria-current]").focus({ preventScroll: true }); say(`now centred on ${first(t)}`); };
+  const shown = (t) => { draw(); stage.querySelector("[aria-current]")?.focus({ preventScroll: true }); say(`now centred on ${first(t)}`); };
   // After "back to" (the start of the stack reached) or a step back or forward: the address says who is in the middle.
   function settle() {
     const q = new URLSearchParams(location.search);
@@ -121,7 +121,7 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
     canvas.style.height = `${L.height}px`;
     canvas.className = `hfy-bt__canvas ${++st.n % 2 ? "fa" : "fb"}`;
     canvas.replaceChildren(h("div", "hfy-bt__lines", { "aria-hidden": true }, L.strips.map(strip), L.rings.map((r) => box(h("i", "hfy-bt__ring"), r.cx - r.size / 2, r.cy - r.size / 2)), h("div", "hfy-bt__labs", null, L.labels.map((l) => box(h("span", "hfy-bt__lab", null, l.text), l.x, l.y)))), ...L.nodes.map((n) => node(n, L.size.av)));
-    if (key) canvas.querySelector(`[data-k="${key}"]`)?.focus({ preventScroll: true });
+    if (key) canvas.querySelector(`[data-k="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
     // toolbar: aria-disabled at the limits, aria-pressed on the two toggles
     const lim = { out: st.lv === 0, in: st.lv === 3, to: atStart() };
     for (const k in lim) BT[k].setAttribute("aria-disabled", String(lim[k]));
@@ -142,8 +142,8 @@ export function mountBig(host, { graph, focus, from, ggp = false, links = {}, no
       h("div", "hfy-bt__acts", null, h("a", "hfy-bt__btn", { href: page(st.f) }, `open ${c.first}'s page`), links.kin && h("a", "hfy-bt__btn is-alt", { href: listHref("cards", st.f, "&kin=1") }, "how are we related?")),
       h("div", "hfy-bt__see", { role: "group", "aria-label": label }, h("span", null, null, label), view("cards", "cards"), links.poster && view("family", wide ? "the whole-family poster" : "poster"), view("outline", "outline"), links.table && view("table", "table")),
       wide && h("p", "hfy-bt__help", null, "tap someone to put them in the middle. the buttons zoom. the back button takes you to who you had before.")].filter(Boolean));
-    if (centre) {
-      const a = canvas.querySelector("[aria-current]").getBoundingClientRect();
+    const a = centre && canvas.querySelector("[aria-current]")?.getBoundingClientRect();
+    if (a) {
       const b = stage.getBoundingClientRect();
       stage.scrollTo({ left: stage.scrollLeft + a.left + a.width / 2 - b.left - b.width / 2, top: stage.scrollTop + a.top + a.height / 2 - b.top - b.height / 2, behavior: seen && !calm.matches ? "smooth" : "auto" });
       seen = true;
