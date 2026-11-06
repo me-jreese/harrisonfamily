@@ -50,6 +50,7 @@ import { TxnCancelled, auditItem, transact } from "./txn.js";
 import { contribOps, mergeOps } from "./contrib.js";
 import { commentGuard, purgeThread } from "./comments.js";
 import { pointer } from "./guard.js";
+import { ATTR_ADDED_BY, ATTR_SOURCE } from "./media-origin.js";
 import { postKeys } from "./keys.js";
 import { checkLocation, headUpload } from "./upload-guard.js";
 import { mintHandle } from "./records/ops.js";
@@ -65,7 +66,7 @@ export const SOURCE_TYPE = "image/jpeg";
 export const MAX_TITLE = 200;
 /** Media.desc is the title; a description is a Media attribute, whose value Gramps caps at 500 characters (design: 1000, narrowed to fit). */
 export const MAX_DESCRIPTION = 500;
-export const SOURCE_ATTRIBUTE = "hfy:source";
+export const SOURCE_ATTRIBUTE = ATTR_SOURCE;
 /** A pending reservation older than this shows "retry" in the UI (social.md section 10). The route itself resumes at any age. */
 export const STALE_PENDING_MS = 15 * 60_000;
 
@@ -126,10 +127,10 @@ const descriptionAttribute = (value) => ({ _class: "Attribute", type: { _class: 
 const emptyDate = () => ({ _class: "Date", calendar: 0, dateval: [0, 0, 0, false], format: null, modifier: 0, newyear: 0, quality: 0, sortval: 0, text: "" });
 
 /** The Media object of a graduation. gramps_id stays empty: applyBatch mints it under the cloud ID policy. */
-export function mediaObject({ handle, desc, description, source, change }) {
+export function mediaObject({ handle, desc, description, source, addedBy, change }) {
   return {
     _class: "Media", handle, gramps_id: "", private: false, path: `${handle}.jpg`, mime: SOURCE_TYPE, desc, checksum: "",
-    attribute_list: [attribute(SOURCE_ATTRIBUTE, source), ...(description ? [descriptionAttribute(description)] : [])],
+    attribute_list: [attribute(SOURCE_ATTRIBUTE, source), ...(addedBy ? [attribute(ATTR_ADDED_BY, addedBy)] : []), ...(description ? [descriptionAttribute(description)] : [])],
     citation_list: [], note_list: [], tag_list: [], date: emptyDate(), change,
   };
 }

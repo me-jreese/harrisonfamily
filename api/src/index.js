@@ -2,6 +2,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, UpdateCommand, QueryCommand, ScanCommand, TransactWriteCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { createMediaIndexReader } from "./media-browser.js";
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoNotificationStore, DynamoSubscriptionStore, DynamoPreferencesStore } from "@io-kit/notify/server";
 import { createUlidFactory } from "@io-kit/feed";
@@ -95,6 +96,15 @@ const personExists = createPersonExists({
 const personFacts = createPersonFacts({
   load: async (grampsId) => {
     const o = await s3.send(new GetObjectCommand({ Bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", Key: PERSON_KEY(grampsId) }));
+    return JSON.parse(await o.Body.transformToString());
+  },
+});
+
+// HFY-TSK-387-0E: the Media Browser's thumbnails and image keys come from the published media index (s3://$MEDIA_BUCKET/media/index.json, read-only, cached 60 s;
+// the same bucket grant as person/*, see docs/reference/api.md). A failed read is a 503 on the media routes.
+const readMediaIndex = createMediaIndexReader({
+  load: async () => {
+    const o = await s3.send(new GetObjectCommand({ Bucket: env.MEDIA_BUCKET ?? "harrisonfamily-frontend", Key: "media/index.json" }));
     return JSON.parse(await o.Body.transformToString());
   },
 });
@@ -228,6 +238,7 @@ export const handler = async (event, context) => {
   if (!inner) {
     const p = await loadPush();
     inner = createHandler({
+    readMediaIndex,
       ddb, cmds, table, authenticate, authenticateSync, authenticateService, memberReader, resolveLabel, ulid,
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),

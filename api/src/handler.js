@@ -2,6 +2,7 @@
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
 import { isMediaPublished } from "./media-visible.js";
+import { createMediaBrowser } from "./media-browser.js";
 import { createCommentSource, purgeThread, refusePendingGraduation, toCommentPrincipal } from "./comments.js";
 import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
@@ -165,11 +166,13 @@ export function createHandler(deps) {
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}),
     });
     const links = createLinks(base);
+    // HFY-TSK-387-0E: the Media Browser reads (GET /api/media, /api/media/:id). Thumbnails come from the published media index (deps.readMediaIndex); absent => 503, never an open list.
+    const media = createMediaBrowser({ ctx: store, actor, content, readIndex: deps.readMediaIndex, publicBase: deps.mediaPublicBase, log });
     const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

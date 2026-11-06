@@ -9,6 +9,8 @@ import { createHookRegistry } from "../src/sync/hooks.js";
 import { headKey } from "../src/sync/store.js";
 import { registerRecordContributor } from "../src/record-contributor.js";
 import { POST_TAG, POST_TAG_HANDLE, createPostGraduation, markerKey, normalizeRect, plan, postGraduateFromEnv, tagsOf, uploadKeyOf } from "../src/post-graduate.js";
+import { ATTR_ADDED_BY, ATTR_SOURCE, SOURCE_UPLOAD, postIdOfSource, postSource } from "../src/media-origin.js";
+import * as browser from "../src/media-browser.js";
 import { APPROVAL_REF_RE, describePlan, parseArgs, planBackfill, run } from "../scripts/post-graduate-backfill.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/post-graduate-backfill.mjs", import.meta.url));
@@ -122,7 +124,7 @@ describe("graduation", () => {
     expect(tags[0]).toMatchObject({ name: POST_TAG, handle: POST_TAG_HANDLE });
     for (const m of media) {
       expect(m.tag_list).toEqual([POST_TAG_HANDLE]);
-      expect(m.attribute_list.some((a) => a.type.string === "hfy:source" && a.value.startsWith(`post-photo:post:${POST_ID}/`))).toBe(true);
+      expect(m.attribute_list.some((a) => a.type.string === "hfy:source" && a.value.startsWith(`post:${POST_ID}/`))).toBe(true);
     }
     expect(media.map((m) => m.desc).sort()).toEqual(["first", "second"]);
     const refs = personObj(AUTHOR).media_list;
@@ -343,5 +345,69 @@ describe("the backfill", () => {
       expect(err?.status).toBe(1);
       expect(err.stderr).toMatch(/approval-ref/);
     }
+  });
+});
+
+describe("origin attributes on the graduated Media (HFY-P4-R26)", () => {
+  const attrsOf = (m, name) => m.attribute_list.filter((a) => a.type.string === name);
+
+  it.each([
+    ["one photo", 1],
+    ["three photos", 3],
+  ])("%s: each Media carries exactly one hfy:source and one hfy:added-by, on the Media and not on the MediaRef", async (_n, count) => {
+    const g = direct();
+    const post = mkPost(await Promise.all(Array.from({ length: count }, () => photo())));
+    const r = await g.graduate(post);
+    expect(r.photos.map((p) => p.state)).toEqual(Array(count).fill("done"));
+    const media = heads("Media").map(obj);
+    expect(media).toHaveLength(count);
+    for (const m of media) {
+      const [src, ...moreSrc] = attrsOf(m, ATTR_SOURCE);
+      const [by, ...moreBy] = attrsOf(m, ATTR_ADDED_BY);
+      expect(moreSrc).toEqual([]);
+      expect(moreBy).toEqual([]);
+      expect(src.value).toBe(postSource(POST_ID, src.value.split("/")[1]));
+      expect(postIdOfSource(src.value)).toBe(POST_ID);
+      expect(by.value).toBe(AUTHOR.gramps_id);
+    }
+    expect(personObj(AUTHOR).media_list.every((x) => x.attribute_list.length === 0)).toBe(true); // D-08
+  });
+
+  it("a republish and a retry after a crash add no second attribute", async () => {
+    const post = mkPost([await photo()]);
+    await direct({ afterPhase: async (n) => { if (n === "apply") throw new Error("crash after apply"); } }).graduate(post);
+    await direct().graduate(post);
+    await direct().graduate(post);
+    const media = heads("Media").map(obj);
+    expect(media).toHaveLength(1);
+    expect(attrsOf(media[0], ATTR_SOURCE)).toHaveLength(1);
+    expect(attrsOf(media[0], ATTR_ADDED_BY)).toHaveLength(1);
+    expect(media[0].attribute_list).toHaveLength(2);
+  });
+
+  it("the source value helpers round-trip, and upload and an import name no post", () => {
+    expect(postSource(POST_ID)).toBe(`post:${POST_ID}`);
+    expect(postIdOfSource(postSource(POST_ID, "U1"))).toBe(POST_ID);
+    for (const v of [SOURCE_UPLOAD, undefined, "", "post:short", `postx:${POST_ID}`]) expect(postIdOfSource(v)).toBeUndefined();
+    expect([browser.ATTR_SOURCE, browser.ATTR_ADDED_BY]).toEqual([ATTR_SOURCE, ATTR_ADDED_BY]); // the reader and the writer share one definition
+  });
+
+  it("end to end: the media browser reads the origin line back from what graduation wrote, and the photo is listed once", async () => {
+    const post = mkPost([await photo()], { created_at: "2026-10-14T00:00:00.000Z" });
+    await direct().graduate(post);
+    const mediaHeads = heads("Media").map(obj).map((o) => ({ class: "Media", handle: o.handle, gramps_id: o.gramps_id, version: 1, obj: o }));
+    const authorObj = { ...personObj(AUTHOR), death_ref_index: 0 }; // not living, so the name shows
+    const all = [
+      ...mediaHeads,
+      { class: "Person", handle: authorObj.handle, gramps_id: authorObj.gramps_id, version: 1, obj: authorObj },
+      ...heads("Tag").map(obj).map((o) => ({ class: "Tag", handle: o.handle, obj: o })),
+    ];
+    const index = new Map(mediaHeads.map((m) => [m.handle, { handle: m.handle, grampsId: m.gramps_id, s3Key: `media/${m.handle}.jpg`, checksum: "a".repeat(64), size: 1, missing: false,
+      thumb: { s320: "t/320.jpg", s800: "t/800.jpg", w: 640, h: 480 } }]));
+    const cat = browser.buildCatalog({ heads: all, index, posts: [post], hidden: new Set(), viewer: { id: AUTHOR.gramps_id }, base: "https://site.test" });
+    const page = browser.pageOf(cat, { section: "all" });
+    expect(page.cards).toHaveLength(1); // the graduated Media, not also the attachment
+    const d = browser.detailOf(cat, mediaHeads[0].gramps_id, {});
+    expect(d).toMatchObject({ origin: "post", originRef: POST_ID, originBy: { displayName: "Alder Testwood" } });
   });
 });

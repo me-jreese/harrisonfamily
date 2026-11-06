@@ -235,6 +235,18 @@ export const ROUTES = defineRoutes([
     summary: "Admins only: the moderation queue, newest first: ?state=open (default) | closed, cursor, limit 1-50 (default 25): {items: [{target, state, hidden, by, at, note?, open, resolved_by?, resolved_at?, author: {id, label}, href}], cursor}; never the private reason (no MCP tool)",
     gate: requireFeature("moderationV1"), handler: async (c) => ok(await c.moderation.list(c.query)),
   },
+  // hfy-media-api (HFY-TSK-387-0E; BRD D-39, section 5.10): the Media Browser reads over the record store, the published media index and the post store. Read-only,
+  // no MCP tool and no policy row. Dark until mediaBrowserV1 is on (or the caller is uat). Shapes: src/media-browser.js.
+  {
+    name: "media.list", method: "GET", path: "/media",
+    summary: "The Media Browser list: ?section=media|posts|all (default media), filter=all|needs_tags|of_me (default all), cursor, limit 1-60 (default 24): {cards: [{mediaId, thumbUrl, width, height, section, tagCount, needsTags, title?, year?, grampsId, addedAt, thumb?}], nextCursor, counts: {media, posts}}; newest first",
+    gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.list(c.query)),
+  },
+  {
+    name: "media.get", method: "GET", path: "/media/:id",
+    summary: "One media item by gramps_id (or pa-<upload id> for a post photo not yet graduated), with ?section and ?filter for previous/next: {card, imageUrl, description?, origin: gramps|upload|post, originRef?, originBy?, tags: [{personId, mediaId, rect, index, state, person: {displayName, living}}], version, commentsSubject, previousId, nextId}; living names are redacted; 404 when not in the person gallery",
+    gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.get(c.params.id, c.query)),
+  },
   {
     name: "posts.list", method: "GET", path: "/posts", summary: "List posts newest first (cursor; filters type, author, subject, visibility)",
     handler: async (c) => {
