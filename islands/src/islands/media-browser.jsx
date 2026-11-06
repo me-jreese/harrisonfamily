@@ -27,6 +27,15 @@ const detailHref = (id, view) => rebase(detailHrefIn(id, view));
 const POST_HREF = (id) => `${POSTS}?id=${encodeURIComponent(id)}`;
 const PERSON_HREF = (id) => `/person/?id=${encodeURIComponent(id)}`;
 const LABELS = { position: (n, total) => (n > 0 && total > 0 ? DEFAULT_LABELS.position(n, total) : "") };
+// HFY-TSK-405 (io, 2026-11-06): the list opens on "media" when the address names no section (the kit's default is post images). Runs once at mount, before the
+// kit page reads the address. Not on the detail page (`id`), and never over a `section` that is there (?section=posts still opens post images).
+function defaultListSection() {
+  if (location.pathname !== BASE) return;
+  const q = new URLSearchParams(location.search);
+  if (q.has("id") || q.has("section")) return;
+  q.set("section", "media");
+  history.replaceState(history.state, "", `${location.pathname}?${q.toString()}${location.hash}`);
+}
 const signIn = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
 
 // The boxes on the photo: the kit overlay (HFY-TSK-388-0G, the D-40 swap). It reads the same tags as the list and never looks at where a tag came from (V-1);
@@ -144,6 +153,7 @@ function MediaBrowser() {
   const source = useMemo(() => createHfyMediaBrowse(), []);
   const [photoTagEdit, setPhotoTagEdit] = useState(false);
   const [mediaComments, setMediaComments] = useState(false);
+  useState(defaultListSection);
   const id = mediaIdFromSearch(location.search);
   useEffect(() => {
     document.querySelectorAll("[data-media-off]").forEach((n) => n.remove());
