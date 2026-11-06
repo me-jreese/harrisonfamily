@@ -45,6 +45,11 @@ const commentPhotos = async (c) => {
   if (!(await c.featureOn("commentPhotosV1"))) throw new HttpError(404, "not_found", "no such route");
 };
 
+/** mediaCommentsV1 (HFY-TSK-389-0A, P4-R32): a thread whose subject starts with media: is dark (404 not_found) until the flag is on, or the caller is uat. Other subjects are untouched. */
+const mediaThread = async (c, subject) => {
+  if (typeof subject === "string" && subject.startsWith("media:") && !(await c.featureOn("mediaCommentsV1"))) throw new HttpError(404, "not_found", "no such thread");
+};
+
 // MCP tools are derived from this registry: a route with an `mcp` member becomes the tool `mcp.tool`, keyed in the policy table by the route name.
 // `args` maps the tool arguments onto the same {params, query, body} the HTTP handler receives, so the tool runs the route's own handler (and Q-4,
 // validation, audit and notifications). Tool names use underscores only (MCP-C11) and equal the parity caps action name (L-01).
@@ -196,12 +201,14 @@ export const ROUTES = defineRoutes([
     name: "comments.list", method: "GET", path: "/comments", summary: "List comments on a subject, oldest first by default or order=desc for newest first (cursor, bound to its order), with reactions",
     handler: async (c) => {
       const subject = need(c.query.subject, "subject");
+      await mediaThread(c, subject);
       return ok(await c.comments.list(subject, { cursor: c.query.cursor || undefined, limit: c.query.limit ? Number(c.query.limit) : undefined, ...(c.query.order ? { order: c.query.order } : {}) })); // empty thread => empty list
     },
   },
   {
     name: "comments.create", method: "POST", path: "/comments", summary: "Create a comment or reply (parentId) on a subject; with commentPhotosV1 on, up to 4 attachments from POST /uploads purpose comment (a photo-only comment may have an empty body)",
     handler: async (c) => {
+      await mediaThread(c, c.body.subject);
       if (c.body.attachments !== undefined) await commentPhotos(c);
       return ok(await c.comments.create(need(c.body.subject, "subject"), { body: c.body.body, ...(c.body.parentId ? { parentId: c.body.parentId } : {}), ...(c.body.attachments !== undefined ? { attachments: c.body.attachments } : {}) }), 201);
     },
@@ -209,17 +216,18 @@ export const ROUTES = defineRoutes([
   {
     name: "comments.update", method: "PATCH", path: "/comments/:id", summary: "Edit your own comment (subject in body or query)",
     handler: async (c) => {
+      await mediaThread(c, c.body.subject ?? c.query.subject);
       if (c.body.attachments !== undefined) await commentPhotos(c);
       return ok(await c.comments.edit(need(c.body.subject ?? c.query.subject, "subject"), c.params.id, { body: c.body.body, ...(c.body.attachments !== undefined ? { attachments: c.body.attachments } : {}) })); // photos can be removed, never added
     },
   },
   {
     name: "comments.delete", method: "DELETE", path: "/comments/:id", summary: "Delete your own comment; admins any (?subject=, optional ?reason=)",
-    handler: async (c) => { await c.comments.delete(need(c.query.subject, "subject"), c.params.id, c.query.reason ? { reason: c.query.reason } : {}); return ok(undefined, 204); },
+    handler: async (c) => { await mediaThread(c, c.query.subject); await c.comments.delete(need(c.query.subject, "subject"), c.params.id, c.query.reason ? { reason: c.query.reason } : {}); return ok(undefined, 204); },
   },
   {
     name: "comments.react", method: "POST", path: "/comments/:id/react", summary: "Set or toggle your single emoji reaction on a comment",
-    handler: async (c) => ok(await c.comments.react(need(c.body.subject ?? c.query.subject, "subject"), `comment:${c.params.id}`, c.body.emoji)),
+    handler: async (c) => { await mediaThread(c, c.body.subject ?? c.query.subject); return ok(await c.comments.react(need(c.body.subject ?? c.query.subject, "subject"), `comment:${c.params.id}`, c.body.emoji)); },
   },
   // hfy-graduate-api (R-02; social.md section 10): an admin adds a comment photo to a person's gallery. Dark until graduateV1 is on (or the caller is uat).
   // No MCP tool and no policy row. The reserve, copy, apply and finalize phases run under the key graduate:<comment>:<attachment> (src/graduate.js).
