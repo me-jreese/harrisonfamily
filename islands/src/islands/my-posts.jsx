@@ -93,14 +93,24 @@ function decorate(root, photos) {
   });
 }
 
+// contribV1 (HFY-TSK-188, social.md section 8): every signed-in viewer sees the published posts about this person, 5 to a page and capped, with
+// "show older stories"; the composer stays the owner's. Off, only the owner sees this section, as before. The flags are read first so the first
+// page is asked for with its final size.
+const STORIES_PAGE = 5;
 export function MyPosts({ id }) {
+  const flags = useFlags();
+  if (flags === undefined) return null;
+  return <MyPostsSection id={id} stories={flags.contribV1 === true} />;
+}
+
+function MyPostsSection({ id, stories }) {
   const [me, setMe] = useState(undefined);
   // commentPhotosV1 (HFY-TSK-187, BRD2 9.3): with it on, a post photo is re-encoded in the browser like a comment photo (upright JPEG, no EXIF or
   // GPS, long edge at most 2560 px) and the picker drops image/heic so iOS hands over a JPEG. Off: the photo goes up as it was picked.
   const flags = useFlags();
   const normalizePhotos = flags?.commentPhotosV1 === true;
   const [ping, setPing] = usePing();
-  const posts = usePosts({ subject: id });
+  const posts = usePosts({ subject: id }, stories ? { limit: STORIES_PAGE } : undefined);
   const composer = useRef(null);
   const shareHandled = useRef(false);
   // Uploaded photo urls, in the kit's attachment order (index i = the i-th .iok-content-attachment row).
@@ -140,8 +150,17 @@ export function MyPosts({ id }) {
     window.addEventListener("hashchange", go);
     return () => window.removeEventListener("hashchange", go);
   }, [me, id]);
-  if (me !== id) return null;
+  const owner = me === id;
+  if (!owner && !(stories && typeof me === "string")) return null; // flag off: the owner only; contribV1 on: every signed-in viewer
   const pickPhoto = () => composer.current?.querySelector('input[type="file"]')?.click();
+  // Not the owner (contribV1 on): the stories list alone, no composer and no empty state.
+  if (!owner) {
+    return (
+      <section className="hfy-posts hfy-posts__stories" aria-label="stories from the family" data-hfy-my-posts>
+        <PostList posts={posts} capped showEmpty={false} />
+      </section>
+    );
+  }
   return (
     <section className="hfy-posts hfy-posts__mine" id="share" aria-labelledby="hfy-my-posts-h" data-hfy-my-posts>
       <h2 className="hfy-h" id="hfy-my-posts-h">share something</h2>
@@ -186,7 +205,7 @@ export function MyPosts({ id }) {
         </button>
         <Ping text={ping} />
       </div>
-      <PostList posts={posts} emptyAction={<button type="button" className="hfy-btn hfy-btn--primary" onClick={pickPhoto}>add a photo</button>} />
+      <PostList posts={posts} capped={stories} emptyAction={<button type="button" className="hfy-btn hfy-btn--primary" onClick={pickPhoto}>add a photo</button>} />
     </section>
   );
 }

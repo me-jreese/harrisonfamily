@@ -1,0 +1,17 @@
+/* The person page's social row (HFY-TSK-188, social.md section 8), contribV1 on: #hfy-person-social holds comments and contributions.
+   Below 64rem (bp.wide) they stack, each full width; from 64rem they are two equal columns with their tops aligned. The kit SplitPage
+   switches at 960 px, which is not a DS breakpoint, so this is a plain grid. All values are token expressions. */
+.hfy-social {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--io-space-7);
+  align-items: start;
+}
+@media (min-width: 64rem) {
+  .hfy-social { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.hfy-social > section { min-inline-size: 0; }
+/* Each column fills its half: the thread's 68ch reading width is for the single-column page. */
+.hfy-social .hfy-comments { max-inline-size: none; margin-block-start: 0; }
+.hfy-social__col > .hfy-h { margin-block-start: 0; }
+.hfy-social__empty { margin: 0; color: var(--io-color-semantic-text-dim); }

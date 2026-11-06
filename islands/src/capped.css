@@ -1,0 +1,24 @@
+/* CappedSection (HFY-TSK-188, social.md section 8): a list body that is cut at a height cap so the page stays short and light, with a
+   "show older ..." button under it. The cap is a token expression: 7 x --io-space-9 (448 px) below 43rem, 9 x (576 px) from there up.
+   lib/capped.jsx sets the same expression inline once the cap has been raised. Items below the cap are inert and aria-hidden. */
+.hfy-capped__clip {
+  max-height: calc(var(--io-space-9) * 7);
+  overflow: hidden;
+}
+@media (min-width: 43rem) {
+  .hfy-capped__clip { max-height: calc(var(--io-space-9) * 9); }
+}
+/* While the list overflows, its last stretch fades out (an alpha mask, so the colour is irrelevant). */
+.hfy-capped__clip[data-clipped] {
+  -webkit-mask-image: linear-gradient(to bottom, var(--io-color-semantic-text) calc(100% - var(--io-space-7)), transparent);
+  mask-image: linear-gradient(to bottom, var(--io-color-semantic-text) calc(100% - var(--io-space-7)), transparent);
+}
+.hfy-capped__bar { margin-block-start: var(--io-space-3); }
+/* Below 43rem the older button is full width; every size keeps the 44 px target. */
+.hfy-capped__more { inline-size: 100%; min-block-size: var(--io-control-tap-min); }
+/* While a page loads the button is aria-disabled, not disabled, so keyboard focus stays on it. */
+.hfy-capped__more[aria-disabled="true"] { opacity: 0.5; cursor: progress; }
+@media (min-width: 43rem) {
+  .hfy-capped__more { inline-size: auto; }
+}
+.hfy-capped__clip > :focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: calc(var(--io-space-1) * -1); }

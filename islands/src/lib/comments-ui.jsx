@@ -15,6 +15,8 @@ import { useFlags } from "./use-flags.js";
 import { uploadPhoto } from "./upload.js";
 import { PHOTO_ACCEPT, PhotoDecodeError } from "./photo.js";
 import { FEATURES, MAX_PHOTOS, PHOTO_LABELS, commentPhotoAlt, photoUploadMessage } from "./comment-photos.js";
+import { CappedSection } from "./capped.jsx";
+import { commentFromHash } from "./capped-model.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable. Every comment author's name
 // links to their page too (Thread authorHref, HFY-TSK-323, ruling P2-R46); both come from lib/person-name.jsx.
@@ -35,7 +37,9 @@ export const LABELS = {
   moderate: "moderate",
   moderateDelete: "delete as moderator",
   reason: "reason",
-  loadMore: "show older comments",
+  // Oldest-first paging (contribV1 off) loads the NEXT comments, which are newer, so "older" would be untrue (BRD2 section 8). The newest-first
+  // social column has its own "show older comments" button (SOCIAL_MORE), drawn by CappedSection.
+  loadMore: "show more comments",
   empty: "no comments yet.",
   loading: "loading comments",
   dontNotify: "don't notify anyone",
@@ -159,7 +163,40 @@ export const COMMENT_GUARD = {
   },
 };
 
-export function Comments({ subject }) {
+/** The newest-first column's pager (contribV1, BRD2 section 8): the first page and what each "show older comments" adds. */
+export const SOCIAL_MORE = "show older comments";
+export const SOCIAL_PAGE = 8;
+// Anchors load at most this many extra pages looking for `#comment-<ulid>` (BRD2 section 8).
+const ANCHOR_PAGES = 5;
+export const ANCHOR_MISSED = "couldn't find that comment. it may have been deleted.";
+
+/** Kit `renderMore` target: renders nothing and reports the pager state upward, so the host's CappedSection button drives paging. */
+function MoreBridge({ state, report, loadRef }) {
+  useEffect(() => {
+    loadRef.current = state.loadMore;
+    report((p) => (p.known && p.hasMore === state.hasMore && p.loading === state.loading ? p : { hasMore: state.hasMore, loading: state.loading, known: true }));
+  });
+  return null;
+}
+
+/** Gives every comment its `comment-<ulid>` id, so an `#comment-<ulid>` link (inbox, contributions) has something to point at. */
+function watchCommentIds(root) {
+  if (!root || typeof MutationObserver === "undefined") return () => {};
+  const apply = () => root.querySelectorAll("article[data-comment-id]").forEach((a) => {
+    const id = `comment-${a.getAttribute("data-comment-id")}`;
+    if (a.id !== id) a.id = id;
+  });
+  apply();
+  const mo = new MutationObserver(apply);
+  mo.observe(root, { subtree: true, childList: true });
+  return () => mo.disconnect();
+}
+
+/**
+ * `social` is the contribV1 column inside #hfy-person-social: newest first (order=desc), the composer on top, the list capped with
+ * "show older comments", and `#comment-<ulid>` scrolled to and highlighted (loading up to 5 more pages to find it). Off, the thread is as it was.
+ */
+export function Comments({ subject, social = false }) {
   const [session, setSession] = useState(undefined);
   const [moderator, setModerator] = useState(false);
   const [ping, setPing] = useState("");
@@ -196,12 +233,43 @@ export function Comments({ subject }) {
       throw new Error(photoUploadMessage(e));
     }
   }, []);
+  // The social column's paging and anchor: the kit pager state comes up through MoreBridge; the hash names the comment to find.
+  // `known` is false until the kit pager has reported once, so a thread that has not loaded yet is never read as "no more pages".
+  const [pager, setPager] = useState({ hasMore: false, loading: false, known: false });
+  const loadRef = useRef(null);
+  const renderMore = useCallback((state) => <MoreBridge state={state} report={setPager} loadRef={loadRef} />, []);
+  const [anchor, setAnchor] = useState(() => (social ? commentFromHash(location.hash) : null));
+  const pages = useRef(0);
+  const [missed, setMissed] = useState(false); // the anchor's comment is not in what could be loaded
+  useEffect(() => {
+    if (!social) return undefined;
+    const on = () => { pages.current = 0; setMissed(false); setAnchor(commentFromHash(location.hash)); };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, [social]);
+  useEffect(() => (social ? watchCommentIds(root.current) : undefined), [social]);
+  const anchorSelector = anchor ? `[data-comment-id="${anchor}"]` : null;
+  const signedIn = Boolean(sid);
+  useEffect(() => {
+    if (!social || !anchorSelector || !signedIn || !root.current) return;
+    if (root.current.querySelector(anchorSelector)) { setMissed(false); return; } // CappedSection raises the cap and calls onReveal
+    if (!pager.known || pager.loading) return;
+    if (pager.hasMore && pages.current < ANCHOR_PAGES) { pages.current += 1; loadRef.current?.(); } else setMissed(true); // no more pages, or the 5 extra were spent
+  }, [social, anchorSelector, signedIn, pager]);
+  const onReveal = useCallback((el) => {
+    root.current?.querySelectorAll("[data-hfy-target]").forEach((n) => n.removeAttribute("data-hfy-target"));
+    el.setAttribute("data-hfy-target", "");
+    el.tabIndex = -1;
+    el.scrollIntoView({ block: "center" });
+    el.focus({ preventScroll: true });
+  }, []);
   const photoProps = photosOn ? { onUpload, accept: PHOTO_ACCEPT, maxAttachments: MAX_PHOTOS } : {};
   const viewer = sid ? { id: sid, label: session.label, ...(moderator ? { roles: ["admin"] } : {}) } : null;
   const returnTo = encodeURIComponent(location.pathname + location.search);
   return (
-    <section className="hfy-comments" aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
+    <section className={social ? "hfy-comments hfy-social__col" : "hfy-comments"} {...(social ? { id: "hfy-person-comments" } : {})} aria-labelledby={`hfy-comments-h-${subject}`} data-hfy-comments ref={root}>
       <h2 className="hfy-h" id={`hfy-comments-h-${subject}`}>comments</h2>
+      {social && missed && <p className="hfy-ping" role="status" data-hfy-anchor-missed>{ANCHOR_MISSED}</p>}
       {(session === undefined || (viewer && flags === undefined)) && <div className="hfy-comments__skeleton" role="status" aria-busy="true" aria-label="loading comments"><span className="hfy-skeleton" /><span className="hfy-skeleton" /><span className="hfy-skeleton" /></div>}
       {session !== undefined && !viewer && (
         <div className="hfy-comments__signin" data-hfy-signin>
@@ -211,7 +279,13 @@ export function Comments({ subject }) {
       )}
       {viewer && flags !== undefined && (
         <>
-          <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...photoProps} />
+          {social ? (
+            <CappedSection label={SOCIAL_MORE} clipSelector=".io-comments-list" hasMore={pager.hasMore} loading={pager.loading} onMore={() => loadRef.current?.()} revealSelector={anchorSelector} onReveal={onReveal}>
+              <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} order="desc" composerPosition="top" pageSize={SOCIAL_PAGE} renderMore={renderMore} {...photoProps} />
+            </CappedSection>
+          ) : (
+            <Thread threadId={subject} source={source} viewer={viewer} linkify={linkify} authorHref={authorHref} adminIds={[]} composerRows={1} placeholder={PLACEHOLDER} formatTime={formatTime} labels={LABELS} features={FEATURES} renderAttachment={renderPhoto} {...photoProps} />
+          )}
           <p className="hfy-ping" role="status" aria-live="polite">{ping}</p>
         </>
       )}

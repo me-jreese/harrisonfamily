@@ -18,3 +18,9 @@ export function mountAt(place, node, id) {
   createRoot(host).render(node);
   return host;
 }
+
+/** Render `node` into an element that already exists (a host the page owns, such as #hfy-person-social). Returns the element. */
+export function mountInto(host, node) {
+  createRoot(host).render(node);
+  return host;
+}
