@@ -260,7 +260,7 @@ Republishing from the legacy ETL is a last resort, for the case where the store 
    scripts/moderation/reapply-moderation-hides.sh --table <app-table> --site-bucket <site-bucket> --region us-west-2 --verify
    ```
 
-   A hidden MediaRef lives inside a page file, so the script exits `3` and says so when one is open: only the renderer rewrites a page. The first live pass after the rollback ([Then live](#then-live)) applies the overlay to every key, so do not announce the site until that pass has finished and the report shows no failed write.
+   The script follows every page of the queue. It exits `3`, with a warning, whenever any hidden item is open, not only a MediaRef: a hidden note's text is embedded in `person/<id>.json`, a hidden Media is named in the person, event and family files, `media/index.json` and `person/search-index.json`, and a MediaRef lives in the page, so only the renderer rewrites those. It does not delete the binary `media/<handle>.<ext>` either. `--verify` exits `1` while a named file is still served and `3` once only the page files remain. The first live pass after the rollback ([Then live](#then-live)) applies the overlay to every key, so do not announce the site until that pass has finished and the report shows no failed write.
 
 ### Take the write guard off
 

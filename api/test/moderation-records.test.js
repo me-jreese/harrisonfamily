@@ -160,6 +160,24 @@ describe("hiding a note", () => {
     const r = await w.act(ADMIN, { kind: "note", handle: own.handle }, "hide");
     expect([r.status, r.body.error]).toEqual([400, "self_moderation"]);
   });
+
+  it("an admin who is any member holder of a shared note cannot moderate it, not only the first holder", async () => {
+    const w = await world({ members: [OWNER, ADMIN] });
+    const shared = note(51, "Synthetic shared story");
+    await w.apply([create(shared), create(person(98 + 100, { note_list: [shared.handle] })), create(person(99, { note_list: [shared.handle] }))]);
+    // Persons 198 (gramps_id I0198, not a member) and 99 (the admin) both hold it; a first-holder-only check would let the admin through
+    const r = await w.act(ADMIN, { kind: "note", handle: shared.handle }, "hide");
+    expect([r.status, r.body.error]).toEqual([400, "self_moderation"]);
+    expect(w.rows("MOD#")).toHaveLength(0);
+  });
+
+  it("io moderating a page with no member owner sends no notice to the acting io", async () => {
+    const w = await world({ owners: [ADMIN] });
+    const r = await w.act(ADMIN, { kind: "note", handle: w.n3.handle }, "hide");
+    expect(r.status).toBe(200);
+    expect((await w.inbox.list(ADMIN)).items).toEqual([]);
+    expect(w.logs()).toHaveLength(1);
+  });
 });
 
 describe("hiding a media reference and a media", () => {

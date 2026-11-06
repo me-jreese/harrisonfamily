@@ -356,16 +356,18 @@ export function createModeration({
     const members = listMembers ? await listMembers().catch(() => new Set()) : new Set();
     let gid;
     let owner;
+    const memberHolders = [];
     for (const handle of handles) {
       const head = await getRecord(store, "Person", handle);
       const id = typeof head?.obj?.gramps_id === "string" ? head.obj.gramps_id : undefined;
       if (!id) continue;
       gid ??= id;
+      if (members.has(id)) memberHolders.push(id);
       if (owner === undefined && members.has(id)) owner = id;
     }
-    if (owner !== undefined) return { id: owner, member: true, gid };
+    if (owner !== undefined) return { id: owner, member: true, gid, memberHolders };
     const owners = getOwners ? await getOwners().catch(() => []) : [];
-    return { id: owners[0], member: false, gid };
+    return { id: owners[0], member: false, gid, memberHolders };
   }
 
   /** POST /api/moderation for a note, mediaref or media: the MOD# item, its audit entry and a marker op in one applyBatch transaction. */
@@ -375,7 +377,7 @@ export function createModeration({
     if (version !== undefined && version !== String(head.version)) throw new HttpError(409, "conflict", "that record changed since you looked");
     const holderHandles = await holders(target);
     const who = await recipientOf(holderHandles);
-    if (who.member && who.id === actor.id) throw new HttpError(400, "self_moderation", "you can't moderate your own item. edit it or ask for it to be removed instead.");
+    if (who.memberHolders.includes(actor.id)) throw new HttpError(400, "self_moderation", "you can't moderate your own item. edit it or ask for it to be removed instead.");
     if (note !== undefined) guard?.("moderation", "moderate", [[pointer("note"), note]]); // R-18: 422 contact_info, nothing stored
     const at = iso();
     const by = { id: actor.id, label: actor.label };
@@ -402,19 +404,19 @@ export function createModeration({
     const entry = auditEntry("moderate", key, actor.id, before, state, at, reason);
     const extra = { ...mod, puts: [...mod.puts, { item: auditItem(entry, uid(), table) }] };
     try {
-      await apply(store, { principal: actor.id, origin: "moderation", idempotencyKey: `moderation:${uid()}`, ops: [{ op_id: "1", op: "marker", reason: "moderation", ref }], extra });
+      await apply(store, { principal: actor.id, origin: "moderation", idempotencyKey: `moderation:${key}:${action}:${prior?.version ?? 0}`, ops: [{ op_id: "1", op: "marker", reason: "moderation", ref }], extra });
     } catch (e) {
       if (e instanceof TxnCancelled && e.busy) throw new HttpError(503, "busy", "busy, try again");
       if (e instanceof TxnCancelled && e.conditionFailed) throw new HttpError(409, "conflict", "that item was moderated by someone else just now. look again.");
       throw e;
     }
-    if (who.id !== undefined) {
+    if (who.id !== undefined && who.id !== actor.id) { // never a notice to the acting admin (io on a page nobody else owns)
       await afterCommit("moderation notification", () =>
         notifier.onModeration({
           kind: NOTICE_KIND[action], ...(note !== undefined ? { note } : {}), item: target.kind === "note" ? "story" : "photo", target: key,
           authorId: who.id, by: { id: actor.id, label: actor.label }, navigate: who.gid ? `/person/?id=${encodeURIComponent(who.gid)}#${target.kind === "note" ? "stories" : "photos"}` : "/",
         }));
-    } else log.warn?.("moderation: no recipient for a record item (no member owner, no gramps-owner)");
+    } else if (who.id === undefined) log.warn?.("moderation: no recipient for a record item (no member owner, no gramps-owner)");
     return { status: 200, body: { target, moderation: state, item: { class: ref.class, handle: ref.handle, version: head.version } } };
   }
 

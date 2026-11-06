@@ -13,7 +13,7 @@
 #   --dry-run          prints the targets and the keys it would delete; changes nothing (the default when no mode is given)
 #   --confirm-reapply  deletes the keys: io's go-ahead for this run is on record (AGENTS.md: real runs of a delete need it)
 #   --verify           head-object on each key: exit 0 when every one is gone, 1 when any is still served
-# Never prints a note's text or any value of an item: handles and counts only. Exit 2 is a usage error, 1 a failed check, 3 a MediaRef-only hide remains.
+# Never prints a note's text or any value of an item: handles and counts only. Exit 2 is a usage error, 1 a failed check, 3 hidden items remain in page files (any hidden item: the next live render pass is the real fix).
 set -euo pipefail
 
 TABLE="" BUCKET="" REGION="${AWS_REGION:-us-west-2}" MODE="dry-run"
@@ -32,8 +32,20 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$TABLE" ] && [ -n "$BUCKET" ] || { echo "--table and --site-bucket are required" >&2; usage; }
 
-items=$(aws dynamodb query --region "$REGION" --table-name "$TABLE" --index-name GSI1 \
-  --key-condition-expression 'GSI1PK = :pk' --expression-attribute-values '{":pk":{"S":"MODQ#open"}}' --output json)
+items='{"Items":[]}'
+start=""
+while :; do # GSI1 pages: follow LastEvaluatedKey until it is gone
+  if [ -n "$start" ]; then
+    page=$(aws dynamodb query --region "$REGION" --table-name "$TABLE" --index-name GSI1 \
+      --key-condition-expression 'GSI1PK = :pk' --expression-attribute-values '{":pk":{"S":"MODQ#open"}}' --exclusive-start-key "$start" --output json)
+  else
+    page=$(aws dynamodb query --region "$REGION" --table-name "$TABLE" --index-name GSI1 \
+      --key-condition-expression 'GSI1PK = :pk' --expression-attribute-values '{":pk":{"S":"MODQ#open"}}' --output json)
+  fi
+  items=$(jq -n --argjson a "$items" --argjson b "$page" '{Items: ($a.Items + ($b.Items // []))}')
+  start=$(printf '%s' "$page" | jq -c '.LastEvaluatedKey // empty')
+  [ -n "$start" ] || break
+done
 # PK of every item that still hides (hidden true, open not false) and names a record target.
 targets=$(printf '%s' "$items" | jq -r '.Items[]
   | select((.hidden.BOOL // false) == true and ((.open // {}) | if has("BOOL") then .BOOL else true end) != false)
@@ -62,10 +74,13 @@ case "$MODE" in
       if aws s3api head-object --region "$REGION" --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then echo "STILL SERVED: $key"; bad=1; fi
     done <<< "$keys"
     [ "$bad" = 0 ] || exit 1
-    echo "every hidden note and media file is gone"
+    echo "every named note and media file is gone (page files still need the renderer pass)"
     ;;
 esac
-if [ "$refs" -gt 0 ]; then
-  echo "$refs hidden MediaRef(s) live inside page files: only the renderer's next live pass removes them (docs/reference/sync-render.md, Moderation overlay)" >&2
+# Every hidden item keeps text or names in page files until the renderer's next live pass: a note's text is embedded in person/<id>.json, a media is named in
+# person, event and family files, media/index.json and person/search-index.json, and a MediaRef lives in the page. Deleting the single files above is only a
+# partial reduction, so the script never reports a clean exit while any hidden item exists. The binary media/<handle>.<ext> is not deleted by this script either.
+if [ "$refs" -gt 0 ] || [ "$nkeys" -gt 0 ]; then
+  echo "WARNING: hidden notes and media ($nkeys file(s)) and MediaRef(s) ($refs) still appear in page files (person, event, family, media/index.json, person/search-index.json); only the renderer's next live pass removes them (docs/reference/sync-render.md, Moderation overlay)" >&2
   exit 3
 fi
