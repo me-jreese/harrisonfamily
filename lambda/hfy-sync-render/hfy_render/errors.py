@@ -27,6 +27,7 @@ RULE_STATE_CONFLICT = "state.conflict"
 RULE_SNAPSHOT_GAP = "view.log_gap"
 RULE_BAD_MODE = "config.bad_mode"
 RULE_PROTECTED_KEY = "key.protected"
+RULE_OVERLAY = "overlay.unreadable"
 
 _SAFE = re.compile(r"[^A-Za-z0-9_.:-]")
 

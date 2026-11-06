@@ -30,6 +30,15 @@ const mayView = (mod, viewer, target) =>
   viewer?.admin === true || (typeof viewer?.id === "string" && mod.author_id === viewer.id) || viewer?.ownTargets?.has(target) === true;
 const hiddenFor = (mods, target, viewer) => { const m = mods.get(target); return m !== undefined && !mayView(m, viewer, target); };
 
+/**
+ * The hidden items of `obj` that `viewer` still sees (an admin, the owner): the "hidden" badge of GET /api/records (D2-19). Targets of `mods` that are
+ * in `wanted` (collectModTargets of the object, plus the record's own note: or media: target) and that this viewer may view.
+ */
+export function hiddenBadges(wanted, viewer, mods) {
+  if (!(mods instanceof Map) || mods.size === 0) return [];
+  return [...new Set(wanted)].filter((t) => mods.has(t) && !hiddenFor(mods, t, viewer)).sort();
+}
+
 /** True when the record itself (a Note or Media) is hidden from `viewer`: the route answers 404. */
 export function recordHidden(cls, handle, viewer, mods) {
   if (cls === "Note") return hiddenFor(mods, `note:${handle}`, viewer);

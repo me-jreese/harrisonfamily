@@ -400,7 +400,7 @@ Written by `hfy-api`:
 | Inbox item, its unread copy, the unread counter and the coalescing pointer | `INBOX#<principal>` | `N#<ulid>`, `U#<ulid>`, `COUNT`, `G#<group>` | - | none while unread; 90 days after read | `@io-kit/notify` `DynamoNotificationStore` |
 | Contribution event, one per credited contribution | `CONTRIB#<principal>` | `E#<ulid>` | `CONTRIBS` / `<ulid>` | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
 | Self-edit daily marker (at most one self-edit credit per record per UTC day) | `CONTRIB#<principal>` | `CAP#self_edit#<subject>#<YYYY-MM-DD>` | - | 2 days after the write | [`api/src/contrib.js`](../../api/src/contrib.js) |
-| Moderation record, one per moderated target (post, comment or photo; record kinds follow with `hfy-moderation-record-targets`) | `MOD#<kind>:<id>` | `META` | `MODQ#open` or `MODQ#closed` / `<at>#<kind>:<id>` | - | [`api/src/moderation.js`](../../api/src/moderation.js) |
+| Moderation record, one per moderated target (post, comment, photo, or a record note, MediaRef or Media behind `moderationRecordsV1`) | `MOD#<kind>:<id>` | `META` | `MODQ#open` or `MODQ#closed` / `<at>#<kind>:<id>` | - | [`api/src/moderation.js`](../../api/src/moderation.js) |
 | Site counters | `CSTAT#site` | `TOTAL`; `D#<YYYY-MM-DD>`; `M#<YYYY-MM>`; `LINE` (the feed-line cache, written by [`contrib-read.js`](../../api/src/contrib-read.js)) | - | `D#` rows 800 days after their day; `LINE` 2 hours | [`api/src/contrib.js`](../../api/src/contrib.js) |
 | Person counters | `CSTAT#person:<principal>` | `TOTAL`; `M#<YYYY-MM>` | - | - | [`api/src/contrib.js`](../../api/src/contrib.js) |
 

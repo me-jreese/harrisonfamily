@@ -35,19 +35,21 @@ def _clients():
 
 
 def build_engine(context=None, environ=None):
-    from hfy_render import aws, engine
+    from hfy_render import aws, engine, overlay
 
     env = os.environ if environ is None else environ
     mode = env.get("RENDER_MODE", "off")
     clients = _clients()
     sync_bucket = env["SYNC_BUCKET"]
+    table = aws.DynamoTable(clients["ddb"], env["TABLE_NAME"])
     deps = engine.Deps(
-        table=aws.DynamoTable(clients["ddb"], env["TABLE_NAME"]),
+        table=table,
         sync_root=aws.S3Bucket(clients["s3"], sync_bucket),
         live_bucket=aws.S3Bucket(clients["s3"], env["SITE_BUCKET"]),
         shadow_bucket=aws.S3Bucket(clients["s3"], sync_bucket, "render-shadow/"),
         metrics=aws.CloudWatchMetrics(clients["cw"], env.get("METRICS_NAMESPACE", "HFY/SyncRender"), log),
         mode=mode,
+        overlay=overlay.ModOverlay(table),  # HFY-TSK-216: a hidden note, MediaRef or Media is left out of every rendered key
         graph_trigger=(aws.LambdaInvoker(clients["lam"], env["GRAPH_RENDER_FUNCTION"]) if mode == "live" and env.get("GRAPH_RENDER_FUNCTION") else None),
         remaining_ms=(context.get_remaining_time_in_millis if context is not None and hasattr(context, "get_remaining_time_in_millis") else (lambda: 10 ** 9)),
     )

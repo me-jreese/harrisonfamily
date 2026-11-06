@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0c2012ba",
+        "js": "7100b704",
         "css": "4cd750ae"
       },
       "family": {
@@ -68,8 +68,8 @@
         "css": "c3d2737a"
       },
       "my-posts": {
-        "js": "0fb311a9",
-        "css": "acb4acbc"
+        "js": "dad46e84",
+        "css": "3d97e51e"
       },
       "notifications": {
         "js": "339b0773",
@@ -80,8 +80,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "b862304f",
-        "css": "a3ad2b3b"
+        "js": "7c447efb",
+        "css": "e955e9a8"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -96,12 +96,16 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "68f2a67f",
-        "css": "ca219197"
+        "js": "f4e4649a",
+        "css": "dfc6ddf3"
+      },
+      "record-moderation": {
+        "js": "f5516465",
+        "css": "5b548e69"
       },
       "review": {
-        "js": "ff51d145",
-        "css": "d3f4cc44"
+        "js": "a18fc4aa",
+        "css": "d9db1c3c"
       },
       "search": {
         "js": "99872d4f",
@@ -116,8 +120,8 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "32c2905b",
-        "css": "3610897c"
+        "js": "a2309433",
+        "css": "c249f04c"
       },
       "tree": {
         "js": "24de6c27",
@@ -989,6 +993,14 @@
     } else if (/^\/edit\/family\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("family", { onError() { /* the page keeps its "not available yet" note */ } });
     }
+  });
+
+  // HFY-TSK-216: moderationV1 and moderationRecordsV1 together mount the record moderation controls on the person page (island record-moderation): a
+  // "moderate story" control under each story and a "moderate photo" control in the lightbox, for an admin only (the island checks /api/me; the server
+  // re-checks every call). It listens to the person page's two events, so person-page.js is not touched. With either flag off nothing is requested.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true || flags.moderationRecordsV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("record-moderation", { onError() { /* the page stands without the moderation controls */ } });
   });
 
   // HFY-TSK-142: chatV1 loads the chat island (the roster panel and the docked chats, the chat entry in the bar's chat slot, and on /chat/ the

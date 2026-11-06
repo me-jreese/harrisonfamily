@@ -115,6 +115,8 @@ class FakeTable:
         self.commits = 0
         self.state_writes = []
         self.reads_log_calls = 0
+        self.stale_mod_index = False
+        self.fail_mod_read = False
 
     # -- reads -----------------------------------------------------------------------------------------------------------
     def get(self, pk, sk, consistent=True):
@@ -138,6 +140,17 @@ class FakeTable:
     def query_aliases(self, cls):
         for (pk, sk), item in sorted(self.items.items()):
             if pk.startswith(f"IDALIAS#{cls}#") and sk == "META":
+                yield copy.deepcopy(item)
+
+    def query_open_mods(self):
+        """GSI1 MODQ#open. ``stale_mod_index`` models an index that has not caught up (it lists nothing); ``fail_mod_read`` a failed read."""
+
+        if self.fail_mod_read:
+            raise OSError("injected MOD# read failure with a planted MARKER-7Q value")
+        if self.stale_mod_index:
+            return
+        for (pk, sk), item in sorted(self.items.items()):
+            if pk.startswith("MOD#") and sk == "META" and item.get("GSI1PK") == "MODQ#open":
                 yield copy.deepcopy(item)
 
     def read_state(self):
@@ -228,14 +241,24 @@ class FakeStore:
             existing["reason"] = reason
         return seq
 
-    def marker(self, origin="desktop"):
+    def marker(self, origin="desktop", ref=None):
         seq = self._next()
         when = self._at(None)
         self.table.items[("SYNC#LOG", seq_key(seq))] = {
             "PK": "SYNC#LOG", "SK": seq_key(seq), "entity": "change", "seq": seq, "op": "marker", "obj_json": None,
-            "principal": "p-owner", "origin": origin, "at": when,
+            "principal": "p-owner", "origin": origin, "at": when, **({"marker": {"ref": ref}} if ref else {}),
         }
         return seq
+
+    def moderate(self, target, ref, hidden=True, state="hidden", author_id="p-owner"):
+        """What POST /api/moderation writes for a record target: the MOD# item (open and hidden, or closed) and a moderation marker naming ``ref`` ({class, handle})."""
+
+        item = {
+            "PK": f"MOD#{target}", "SK": "META", "entity": "mod", "state": state, "hidden": hidden, "open": hidden, "author_id": author_id,
+            "GSI1PK": "MODQ#open" if hidden else "MODQ#closed", "GSI1SK": f"{iso(self.at)}#{target}", "version": 1,
+        }
+        self.table.items[(item["PK"], "META")] = item
+        return self.marker(origin="moderation", ref=ref)
 
     def open_session(self, session_id, opened_at, state="open"):
         self.table.items[(f"SYNC#SESSION#{session_id}", "META")] = {

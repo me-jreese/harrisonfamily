@@ -75,6 +75,8 @@ class StoreView:
     #: Objects whose newest log entry does not hash to its own ``hash`` (catalog S15). Such an entry is skipped: the object stays as the
     #: entry before it left it (or absent), the pass goes on, and the engine alarms. A later good entry for the object clears it.
     corrupt: Dict[Key, int] = field(default_factory=dict)
+    #: The objects that moderation markers of the range name (``marker.ref``, origin moderation): the overlay reads their MOD# items consistently.
+    moderation_refs: List[Key] = field(default_factory=list)
 
     def fold(self, item: Dict[str, Any]) -> None:
         """Folds one SYNC#LOG item. Entries must arrive in ascending seq order."""
@@ -85,6 +87,10 @@ class StoreView:
         if seq > self.seq:
             self.seq = seq
             self.last_at = item.get("at") or self.last_at
+        if op == "marker" and in_range and item.get("origin") == "moderation":
+            ref = (item.get("marker") or {}).get("ref") if isinstance(item.get("marker"), dict) else None
+            if isinstance(ref, dict) and isinstance(ref.get("class"), str) and isinstance(ref.get("handle"), str):
+                self.moderation_refs.append((ref["class"], ref["handle"]))
         if op not in HEAD_OPS:
             return
         cls, handle = item.get("class"), item.get("handle")

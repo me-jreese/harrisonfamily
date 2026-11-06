@@ -61,9 +61,10 @@ export function useModerator() {
 /**
  * The "moderate" button and its menu or bottom Sheet. `onAct(input)` sends the action (`{action, note?, hide?}`) and resolves when the server
  * accepted it; a rejection is shown in the panel with its DS line and the panel stays open. `photo` offers hide or unhide for one photo only
- * (a note is for a whole post or comment). `moderation` is the item's open moderation, which decides the rows.
+ * (a note is for a whole post or comment). `moderation` is the item's open moderation, which decides the rows. `rows` replaces the rows
+ * (record targets, lib/record-moderation.js: a row is `{id, label, input}` or `{id, label, form}`; the island reads any extra field of `input`).
  */
-export function ModerateControl({ photo = false, moderation, onAct, name }) {
+export function ModerateControl({ photo = false, moderation, onAct, name, rows: rowsProp }) {
   const sheet = useMedia(SHEET_QUERY);
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -76,7 +77,7 @@ export function ModerateControl({ photo = false, moderation, onAct, name }) {
   const root = useRef(null);
   const trigger = useRef(null);
   const panel = useRef(null);
-  const rows = menuItems({ photo, moderation });
+  const rows = rowsProp ?? menuItems({ photo, moderation });
 
   const close = useCallback((refocus = true) => {
     setOpen(false);
