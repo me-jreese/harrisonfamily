@@ -3,7 +3,7 @@
 // section and filter live in the address), with `?id=<gramps_id>` the kit's MediaDetail. Both read through the browse adapter (lib/hfy-media-browse.js).
 // The detail slots: renderTagList is the accessible list of the tagged people (a living person is redacted by the server and not linked), renderEditor hosts
 // the SHIPPED tag editor (lib/media-tag-editor-host.jsx, flag photoTagEdit; D-40) and renderComments is an empty host for the comment thread
-// (`[data-slot="media-comments"]`, subject media:<gramps_id>), which task 389-0A fills with @io-kit/comments. The page needs a signed-in member
+// (`[data-slot="media-comments"]`, subject media:<gramps_id>), which MediaCommentsHost (lib/media-comments-host.jsx, flag mediaCommentsV1, HFY-TSK-389-0A) fills with the kit comments thread. The page needs a signed-in member
 // (the routes are member-only); a visitor gets a sign-in line. /all-media/ is not in the main menu (D-31): the shell keeps "posts" as the current item.
 import "@io-kit/media/tokens.css";
 import "@io-kit/media/browser.css";
@@ -14,6 +14,7 @@ import { createHfyMediaBrowse } from "../lib/hfy-media-browse.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
 import { MediaTagEditorHost } from "../lib/media-tag-editor-host.jsx";
+import { MediaCommentsHost } from "../lib/media-comments-host.jsx";
 
 const POSTS = "/posts/";
 // P4-R33: the page lives at /all-media/ because /media/ is a private data prefix (HFYAppendIndex and the data gate). The kit builds its page links on a
@@ -65,10 +66,11 @@ function MediaBrowser() {
   const session = useEdgeSession();
   const source = useMemo(() => createHfyMediaBrowse(), []);
   const [photoTagEdit, setPhotoTagEdit] = useState(false);
+  const [mediaComments, setMediaComments] = useState(false);
   const id = mediaIdFromSearch(location.search);
   useEffect(() => {
     document.querySelectorAll("[data-media-off]").forEach((n) => n.remove());
-    window.HFYFeatureFlags?.resolveFlags?.().then((f) => setPhotoTagEdit(f && f.photoTagEdit === true), () => {});
+    window.HFYFeatureFlags?.resolveFlags?.().then((f) => { setPhotoTagEdit(f && f.photoTagEdit === true); setMediaComments(f && f.mediaCommentsV1 === true); }, () => {});
   }, []);
   if (session === undefined) return <p className="hfy-mb-note" role="status" data-media-wait>{DEFAULT_LABELS.looking}</p>;
   if (!memberSub(session)) return <p className="hfy-mb-note" data-media-signin><a href={signIn()}>sign in</a> to see the family photos.</p>;
@@ -81,7 +83,7 @@ function MediaBrowser() {
             renderOverlaySwitch={() => null}
             renderTagList={(p) => <TagList detail={p.detail} />}
             renderEditor={(p) => <MediaTagEditorHost detail={p.detail} reload={p.reload} enabled={photoTagEdit} />}
-            renderComments={(p) => <div data-slot="media-comments" data-subject={p.subject} />}
+            renderComments={(p) => <MediaCommentsHost subject={p.subject} enabled={mediaComments} />}
           />
         )}
       </DetailHost>
