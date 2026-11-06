@@ -439,7 +439,7 @@ It renders as `p.hfy-contrib-line` in text.dim at 16 px. Signed out, nothing ren
 | Name | Method and path | 200 | Notes |
 | --- | --- | --- | --- |
 | `contributions.list` | `GET /contributions?author=<gramps_id>&cursor=&limit=` (limit 1–50, default 10) | `{items:[{id, kind, at, weight, photos, ref, subject?, href, hidden?}], cursor}` | Query `CONTRIB#<author>` with `begins_with E#`, descending. See the visibility rules below. |
-| `contributions.stats` | `GET /contributions/stats?author=<gramps_id>` | `{author, member, total, by_kind:{post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}` | Values clamped at 0. An unknown author returns zeros, not 404. `member` is a boolean: the record is linked to a signed-up identity (the gramps_ids behind the sign-in lists). The person-page chip shows exactly when it is true (D2-17, IF-16). It never says which account, name or email. |
+| `contributions.stats` | `GET /contributions/stats?author=<gramps_id>` | `{author, member, total, by_kind:{post, comment, photo, self_edit, proposal_accepted, tag, photo_to_record}, first_at?}` | Values clamped at 0. An unknown author returns zeros, not 404. `member` is a boolean: the record is linked to a signed-up identity (the gramps_ids behind the sign-in lists, admins included, or an active `ALLOW#` grant, or any credited contribution, since an author is always a member). The person-page chip shows exactly when it is true (D2-17, IF-16). It never says which account, name or email. |
 | `contributions.site` | `GET /contributions/stats` | `{total, line:{x,y,unit,window_days,text}\|null, computed_at}` | Uses and refreshes the LINE cache. |
 
 **Visibility in `contributions.list`:**

@@ -96,6 +96,7 @@ test("the chip: shown exactly when member is true ('0 contributions' included), 
   assert.equal(chipFor({ author: "I9002", total: 9, member: false }), null);
   assert.equal(chipFor({ author: "I9002", total: 3 }), null, "no member field: not shown, no heuristic");
   assert.equal(chipFor(null), null);
+  assert.equal(chipFor({ author: "I9002", total: 3, member: "true" }), null, "a non-boolean member is not shown");
   assert.equal(chipFor({ total: "many", member: true }), null);
   assert.equal(totalOf({ total: 7.9 }), 7);
   assert.equal(totalOf({ total: -2 }), 0);

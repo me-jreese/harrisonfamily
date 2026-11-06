@@ -8,6 +8,7 @@
 // pickLine() is the pure window rule behind the feed line ("12 contributions in the past 3 days"). An event copies no body text, so a list
 // row leaks ids, a kind and counts at most; what the viewer may see of it still follows the thing it is about (a post, a proposal thread).
 import { canView } from "@io-kit/content";
+import { listAllowBySub } from "./allowlist-store.js";
 import { HttpError } from "./http.js";
 import { eventKeys, personKeys, siteKeys } from "./contrib.js";
 
@@ -304,7 +305,8 @@ export function createContribReader({ ddb, cmds, table, actor, now = () => Date.
     /**
      * contributions.stats: a member's counters, clamped at 0. An unknown author reads as zeros. `member` is whether the record is linked to
      * a signed-up identity (the gramps_ids behind the sign-in lists), so the person page can hide its chip on a record that is not a member
-     * (D2-17, IF-16). It is a boolean only: never which account, name or email. An unreadable or unwired list reads as false (fail closed).
+     * (D2-17, IF-16). It is a boolean only: never which account, name or email. It is true for a gramps_id on the member or admin list, for an author with
+     * credited contributions, or with an active ALLOW# grant; an unreadable source reads as false for that source (fail closed).
      */
     async stats(authorId) {
       const author = parseAuthor(authorId);
@@ -314,10 +316,19 @@ export function createContribReader({ ddb, cmds, table, actor, now = () => Date.
       }
       const r = await ddb.send(new cmds.GetCommand({ TableName: table, Key: personKeys(author, "TOTAL") }));
       const row = r.Item ?? {};
+      const total = num(row.n);
+      // The lists are io's S3 files only. A credited author is a signed-up member by construction, and a sign-in that exists only as an active
+      // ALLOW# item (an access-request approval) is on neither list, so both also read as a member. An ALLOW# read that fails reads as false.
+      if (!member && total > 0) member = true;
+      if (!member) {
+        try {
+          member = (await listAllowBySub(ddb, cmds, table, author)).some((it) => it.state === "active" && it.sub === author);
+        } catch (e) { log.error?.("contribution allow lookup failed (member false)", { name: e?.name }); }
+      }
       return {
         author,
         member,
-        total: num(row.n),
+        total,
         by_kind: Object.fromEntries(STAT_KINDS.map((k) => [k, num(row[`n_${k}`])])),
         ...(typeof row.first_at === "string" ? { first_at: row.first_at } : {}),
       };
