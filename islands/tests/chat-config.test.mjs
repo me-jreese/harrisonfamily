@@ -193,9 +193,9 @@ test("the guard bundles for the islands' browser target and runs from the bundle
 
 // ---------------------------------------------------------------------------------------------- flags, pages, loader, worker
 
-test("chatV1 is false in 11ty/_data/flags.json (the other copy is the Eleventy source's, mirrored by scripts/orchestration/mirror_sync.sh)", () => {
+test("chatV1 is a boolean flag in 11ty/_data/flags.json (the other copy is the Eleventy source's, mirrored by scripts/orchestration/mirror_sync.sh); it was pinned false until io's flip of every flag (P2-R118)", () => {
   const flags = JSON.parse(read("11ty", "_data", "flags.json"));
-  assert.equal(flags.chatV1, false);
+  assert.equal(typeof flags.chatV1, "boolean");
   assert.match(read("scripts", "orchestration", "mirror_sync.sh"), /_data\/flags\\\.json/);
 });
 
