@@ -39,7 +39,7 @@ test("errors: 404 NOT_FOUND, 401 and 403 FORBIDDEN, 500 and a network failure RE
 
 const api = (over = {}) => ({
   card: card("M1"), imageUrl: "/media/M1.jpg", description: "At the lake.", origin: "post", originRef: "POST1", originBy: { displayName: "Ruth Example" },
-  tags: [{ personId: "I1", mediaId: "M1", rect: [10, 10, 40, 50], index: 0, state: "applied", person: { displayName: "Ada Example", living: false } }, { personId: "I2", mediaId: "M1", rect: null, index: 1, state: "applied", person: { displayName: "a living family member", living: true } }],
+  tags: [{ personId: "I1", mediaId: "M1", rect: [10, 10, 40, 50], index: 0, state: "applied", person: { displayName: "Ada Example" } }, { personId: "I2", mediaId: "M1", rect: null, index: 1, state: "applied", person: { displayName: "Bo Example" } }],
   version: "v1", commentsSubject: "media:M1", handle: "hM1", previousId: "M0", nextId: "M2", position: 2, total: 9, ...over,
 });
 
@@ -52,7 +52,8 @@ test("getMedia asks with the section and filter of the context and maps previous
   assert.equal(d.origin, "post");
   assert.equal(d.handle, "hM1");
   assert.equal(d.commentsSubject, "media:M1");
-  assert.equal(d.tags[1].person.living, true);
+  assert.equal(d.tags[1].person.displayName, "Bo Example");
+  assert.equal("living" in d.tags[1].person, false);
   assert.equal(d.tags[1].rect, null);
   assert.equal(d.version, "v1");
 });

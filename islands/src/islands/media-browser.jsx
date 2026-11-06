@@ -1,7 +1,7 @@
 // The All media page and the media detail page (HFY-TSK-388-0B, flag mediaBrowserV1; BRD HFY-PLN-004 D-31 to D-34, D-37, D-39, D-40; boards B2 and B3). One
 // island on the static /all-media/ page: with no `id` in the address it renders the kit's MediaBrowserPage (sections, filter chips, grid, cursor pagination; the
 // section and filter live in the address), with `?id=<gramps_id>` the kit's MediaDetail. Both read through the browse adapter (lib/hfy-media-browse.js).
-// The detail slots: renderTagList is the accessible list of the tagged people (a living person is redacted by the server and not linked), renderEditor hosts
+// The detail slots: renderTagList is the accessible list of the tagged people (every tagged person, living or deceased, is named and linked, P4-R37), renderEditor hosts
 // the kit tag editor (lib/media-tag-editor-host.jsx, flag photoTagEdit; D-40, swapped in HFY-TSK-388-0G), renderOverlay the kit overlay and renderComments is an empty host for the comment thread
 // (`[data-slot="media-comments"]`, subject media:<gramps_id>), which MediaCommentsHost (lib/media-comments-host.jsx, flag mediaCommentsV1, HFY-TSK-389-0A) fills with the kit comments thread. The page needs a signed-in member
 // (the routes are member-only); a visitor gets a sign-in line. /all-media/ is not in the main menu (D-31): the shell keeps "posts" as the current item.
@@ -31,7 +31,7 @@ const signIn = () => `/auth/login?returnTo=${encodeURIComponent(`${location.path
 // The boxes on the photo: the kit overlay (HFY-TSK-388-0G, the D-40 swap). It reads the same tags as the list and never looks at where a tag came from (V-1);
 // a proposal is dashed with "pending review". The list below stays the main accessible form.
 function KitOverlay({ detail }) {
-  const name = (id) => detail.tags.find((t) => t.personId === id)?.person.displayName ?? "living family member";
+  const name = (id) => detail.tags.find((t) => t.personId === id)?.person.displayName ?? "family member";
   return <TagOverlay tags={detail.tags} names={name} aspect={(detail.card.width || 4) / (detail.card.height || 3)} />;
 }
 
@@ -44,7 +44,7 @@ function TagList({ detail }) {
         <ul className="hfy-mb-people__list">
           {tags.map((t) => (
             <li key={`${t.personId}:${t.index}`} className="hfy-mb-people__item" data-pending={t.state === "pending-proposal" ? "" : undefined}>
-              {t.person.living ? <span className="hfy-mb-people__name">{t.person.displayName}</span> : <a className="hfy-mb-people__name" href={PERSON_HREF(t.personId)}>{t.person.displayName}</a>}
+              <a className="hfy-mb-people__name" href={PERSON_HREF(t.personId)}>{t.person.displayName}</a>
               {t.state === "pending-proposal" && <span className="hfy-mb-people__pending"> · pending review</span>}
             </li>
           ))}

@@ -1,7 +1,7 @@
-// HFY-TSK-388-0G (plan HFY-PLN-004, pass 1): the tag ports of the HFY MediaSource (BRD 5.1/5.2; D-04, D-05, D-06, D-09, D-13, P4-R2 Q1, P4-R18, P4-R24/25).
+// HFY-TSK-388-0G (plan HFY-PLN-004, pass 1): the tag ports of the HFY MediaSource (BRD 5.1/5.2; D-04, D-05, D-06, D-09, D-13, P4-R24/25, P4-R37).
 //
 // READS. getTags/readTags use GET /api/media/:id, the same reply the Media Browser detail uses (api/src/media-browser.js): tags {personId, mediaId, rect, index,
-//   state, person: {displayName, living}} and `version`. The server already redacts a living person (displayName "a living family member", P4-R18), applies the
+//   state, person: {displayName}} and `version`. The server names every tagged person, living or deceased (P4-R37), applies the
 //   person-gallery visibility rules (D-37) and reads rects Gramps-exact. The shipped editor reads the person-gallery JSON baked into the page instead; that JSON has
 //   no `index` or `version`, which the kit's addressing (D-04) needs, so the Media Browser reply is the source here.
 // WRITES. putTags translates every kit op into the shipped editor's EditOps (hfy-tag-wire.js) against the tagged person's edit bundle
@@ -14,13 +14,12 @@
 // CONSENT. HFY policy is permissive (D-13): everyone visible is taggable, hideAll is a no-op, the re-add lock is audit-only. selfUntag removes the member's own MediaRef
 //   through the normal remove path with a note, builds the kit's audit record (reversible, carries the server's inverse), sets the (person, media) lock and keeps both
 //   in the tag store; undoSelfUntag puts it back.
-// PICKER. resolvePeople lists deceased people and the viewer ("you") only (P4-R2 Q1), with the small photo URL when the family index has one.
+// PICKER. resolvePeople lists every member the family index lists, living or deceased (P4-R37), the viewer ("you") first, with the small photo URL when the index has one.
 import { MediaError } from "@io-kit/media";
 import { checkReAdd, lockKey, selfUntag as kitSelfUntag } from "@io-kit/media/consent";
 import { authorRect, changesBody, idempotencyKey, normalizeRect, planTagOp } from "./hfy-tag-wire.js";
 import { createTagStore } from "./tag-store.js";
 
-export const LIVING_NAME = "a living family member";
 export const SELF_UNTAG_NOTE = "Removed from this photo by the tagged person.";
 
 const enc = encodeURIComponent;
@@ -40,7 +39,7 @@ export const corpusPeople = {
   async byId(id) {
     const { personNames } = await import("./people-corpus.js");
     const name = (await personNames()).get(id);
-    return name ? { id, title: name, photo: "", living: true } : null;
+    return name ? { id, title: name, photo: "" } : null;
   },
 };
 
@@ -69,13 +68,12 @@ export function createTagPorts({ request, viewer, store = createTagStore(), peop
     return handles.get(mediaId);
   }
 
-  /** The tags of one media with the names to show for them and the version to write against. Living people are already redacted by the server; redacted again here. */
+  /** The tags of one media with the names to show for them and the version to write against. Every tagged person is named by the server (P4-R37). */
   async function readTags(mediaId) {
     const d = await readDetail(mediaId);
     const names = {};
     const tags = (Array.isArray(d && d.tags) ? d.tags : []).map((t) => {
-      const living = Boolean(t.person && t.person.living);
-      if (!names[t.personId]) names[t.personId] = { displayName: living ? LIVING_NAME : (t.person && t.person.displayName) || t.personId, living };
+      if (!names[t.personId]) names[t.personId] = { displayName: (t.person && t.person.displayName) || t.personId };
       return { personId: t.personId, mediaId, rect: safeRect(t.rect), index: t.index, state: t.state === "pending-proposal" ? "pending-proposal" : "applied" };
     });
     return { tags, names, version: d && d.version };
@@ -131,17 +129,17 @@ export function createTagPorts({ request, viewer, store = createTagStore(), peop
     return wrap(() => request("POST", "/changes", { target: receipt.target, base_versions: receipt.undo.base_versions, ops: receipt.undo.ops }, { "Idempotency-Key": idempotencyKey(["undo", receipt.target, receipt.undo.base_versions, receipt.undo.ops]) }));
   }
 
+  /** Every member the family index lists (private people are not in it), no filter on living status; the viewer ("you") comes first, whether or not the search found them. */
   async function resolvePeople(q, opts = {}) {
     const limit = opts.limit ?? 10;
     const actor = await viewer();
     const needle = String(q || "").trim().toLowerCase();
     const rows = await people.search(String(q || ""), limit * 3);
     const out = [];
-    for (const r of rows || []) {
-      if (r.living && r.id !== actor) continue; // a living person is never offered, only "you"
-      out.push({ personId: r.id, displayName: r.title, ...(r.photo ? { thumbUrl: r.photo } : {}) });
-    }
-    if (actor && !out.some((p) => p.personId === actor)) {
+    for (const r of rows || []) out.push({ personId: r.id, displayName: r.title, ...(r.photo ? { thumbUrl: r.photo } : {}) });
+    const at = actor ? out.findIndex((p) => p.personId === actor) : -1;
+    if (at > 0) out.unshift(...out.splice(at, 1));
+    else if (actor && at < 0) {
       const me = await people.byId(actor);
       if (me && (needle === "" || String(me.title).toLowerCase().includes(needle))) out.unshift({ personId: actor, displayName: me.title, ...(me.photo ? { thumbUrl: me.photo } : {}) });
     }

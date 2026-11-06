@@ -8,7 +8,7 @@ import { attach } from "./edit-e2e-bridge.mjs";
 
 export { createEditWorld } from "./edit-e2e-bridge.mjs";
 const LEGACY = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", import.meta.url), "utf8"));
-export const PAGE = { id: "I0003", url: "/person/?id=I0003" }; // the woman whose page shows the photo
+export const PAGE = { id: "I0003", url: "/person/?id=I0003" }; // the person whose page shows the photo
 const SIZE = [800, 600];
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SIZE[0]}" height="${SIZE[1]}"><rect width="${SIZE[0]}" height="${SIZE[1]}" fill="gray"/></svg>`;
 const PEOPLE = [{ grampsId: "I0001", displayName: "Alder Testwood" }, { grampsId: "I0003", displayName: "Hazel Birchwell" }, { grampsId: "I0006", displayName: "Briar Testwood" }];
@@ -36,7 +36,7 @@ export function mediaDetailOf(world) {
   for (const p of [world.me, world.mother, world.kid]) {
     const stored = world.stored("Person", p.handle);
     versions.push(`${stored.gramps_id}:${world.version("Person", p.handle)}`);
-    (stored.media_list || []).forEach((m, index) => { if (m.ref === world.pic.handle) tags.push({ personId: stored.gramps_id, mediaId: world.pic.gramps_id, rect: m.rect, index, state: "applied", person: { displayName: nameOf(stored.gramps_id), living: false } }); });
+    (stored.media_list || []).forEach((m, index) => { if (m.ref === world.pic.handle) tags.push({ personId: stored.gramps_id, mediaId: world.pic.gramps_id, rect: m.rect, index, state: "applied", person: { displayName: nameOf(stored.gramps_id) } }); });
   }
   return { card: { mediaId: world.pic.gramps_id, thumbUrl: `/media/${world.pic.handle}.jpg`, width: SIZE[0], height: SIZE[1], section: "media", tagCount: tags.length, needsTags: false, title: "A synthetic photo" }, imageUrl: `/media/${world.pic.handle}.jpg`, origin: "gramps", tags, version: versions.join("|"), handle: world.pic.handle };
 }
@@ -46,7 +46,7 @@ export async function member(browser, world, id, viewport = { width: 375, height
   const ctx = await browser.newContext({ viewport });
   const page = await ctx.newPage();
   const log = await attach(page, world, { id, label: nameOf(id) }, { flags: FLAGS });
-  await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: PEOPLE.map((p) => ({ ...p, living: false })) } }));
+  await page.route("**/person/index.json", (r) => r.fulfill({ json: { people: PEOPLE.map((p) => ({ ...p, isLiving: p.grampsId === "I0006" })) } }));
   await page.route("**/person/search-index.json", (r) => r.fulfill({ json: { documents: PEOPLE.map((p) => ({ grampsId: p.grampsId, searchText: p.displayName.toLowerCase() })) } }));
   await page.route(/\/api\/media\/[^/?]+(\?.*)?$/, (r) => r.fulfill({ json: mediaDetailOf(world) }));
   await page.route(/\/api\/edit\/Media\/[^/?]+$/, (r) => r.fulfill({ json: { key: `Media:${world.pic.handle}`, version: 1, obj: { _class: "Media", handle: world.pic.handle, gramps_id: world.pic.gramps_id } } }));

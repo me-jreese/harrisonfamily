@@ -53,6 +53,14 @@ for (const surface of ["person", "media"]) {
         await expect(editorOf(page).locator('[data-box][data-pending]')).toHaveCount(1);
       });
 
+      test("the picker offers every member, a living one too (P4-R37)", async ({ page }) => {
+        await openEditor(page, surface);
+        await tap(page, 75, 75);
+        const sheet = page.getByRole("dialog", { name: "who is this?" });
+        await sheet.getByRole("combobox").fill("wren");
+        await expect(sheet.getByRole("option", { name: new RegExp(NAMES.I9004) })).toBeVisible();
+      });
+
       test("an own tag: select, nudge twice, the move is one tag.rect op that saves now", async ({ page }) => {
         const state = await openEditor(page, surface);
         const ed = editorOf(page);
@@ -102,8 +110,7 @@ for (const surface of ["person", "media"]) {
         await pickPerson(page, "sam", NAMES.I9002);
         const prompt = page.getByRole("alertdialog");
         await expect(prompt).toContainText("already tagged here");
-        await expect(prompt).toContainText("move her box here instead?");
-        await expect(prompt.getByRole("button", { name: "move her box here" })).toBeVisible();
+        await expect(prompt.getByRole("button", { name: /^move .* here$/ })).toBeVisible();
         await expect(prompt.getByRole("button", { name: "add a second box" })).toBeVisible();
         await prompt.getByRole("button", { name: "cancel" }).click();
         expect(state.calls).toEqual([]);
