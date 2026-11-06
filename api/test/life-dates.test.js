@@ -2,6 +2,7 @@
 // synthetic ids, names and handles only.
 import { describe, expect, it } from "vitest";
 import { cmds, TABLE } from "./world.js";
+import { ulidFloor, LIFE_DATES_RATE_LIMIT, PROPOSAL_RATE_LIMIT, rateLimitFor, proposalBucketOf } from "../src/records/proposals.js";
 import { ADMIN, ME, OTHER, h, withEditWorld } from "./edit-e2e-world.js";
 import { applyBatch } from "../src/sync/apply.js";
 import { SOURCE_TITLE, classifyDate, yearDate } from "../src/records/life-dates.js";
@@ -430,6 +431,38 @@ describe("GET /api/life-dates: the coarse classes", () => {
       const before = w.ddb.all().length;
       await read(w, ME, 69);
       expect(w.ddb.all().length).toBe(before);
+    });
+  });
+});
+
+// ---- P4-R28: the life_dates proposal bucket (HFY-TSK-388-0E) -----------------------------------------------------------------------
+describe("P4-R28: life_dates proposals have their own rate bucket", () => {
+  const fill = (w, who, count, type, tag) => {
+    const nowMs = Date.now();
+    for (let i = 0; i < count; i += 1) {
+      const id = `${ulidFloor(nowMs - 3_600_000).slice(0, 10)}${tag}${String(i).padStart(15, "0")}`;
+      w.ddb.rows.set(`PROP#${id}\u0000IDX#BY`, { PK: `PROP#${id}`, SK: "IDX#BY", GSI1PK: `PROPBY#${who}`, GSI1SK: id, proposal: type ? { intent: { type } } : {} });
+    }
+  };
+  it("the limits and the bucket of an intent", () => {
+    expect([PROPOSAL_RATE_LIMIT, LIFE_DATES_RATE_LIMIT]).toEqual([50, 300]);
+    expect([proposalBucketOf({ type: "life_dates" }), proposalBucketOf({ type: "relationship" }), proposalBucketOf(undefined)]).toEqual(["life_dates", "general", "general"]);
+    expect([rateLimitFor("life_dates"), rateLimitFor("general")]).toEqual([300, 50]);
+  });
+  it.each([
+    ["the 51st life_dates suggestion is accepted after 50 ordinary ones", 50, undefined, 201],
+    ["60 ordinary suggestions do not touch the life_dates bucket", 60, undefined, 201],
+    ["the 51st life_dates suggestion is accepted after 50 life_dates ones", 50, "life_dates", 201],
+    ["the 300th life_dates suggestion is accepted", 299, "life_dates", 201],
+    ["the 301st life_dates suggestion is refused", 300, "life_dates", 429],
+  ])("%s", async (_name, count, type, status) => {
+    await withEditWorld(async (w) => {
+      await seed(w, [person(60)]);
+      fill(w, ME, count, type, "A");
+      fill(w, OTHER, 300, "life_dates", "B"); // another member's rows never count for this one
+      const r = await suggest(w, ME, 60, { birth: { year: 1850 } });
+      expect(r.status).toBe(status);
+      if (status === 429) expect(r.body.error).toBe("rate_limited");
     });
   });
 });
