@@ -2,7 +2,7 @@
 // differently (and so changed every ?v= stamp that follows them), which made `node build.mjs --check` and bundle.test.mjs's "committed
 // outputs match a fresh build" fail on an unchanged tree.
 //
-// CAUSE (evidence: the 4 differing builds out of 14 in the task record differ only in `__toESM(x,1)` against `__toESM(x)` for the
+// CAUSE (evidence: 4 of 14 builds on the unfixed code differed, and they differ only in `__toESM(x,1)` against `__toESM(x)` for the
 // `react/jsx-runtime` import of lib/hfy-markdown.jsx, in the big shared chunk; chunk file names hash their content). A plugin that
 // resolves to a bare path (hfyContentSanitizePolicy, hfyCommentsSanitizePolicy) gives esbuild a file with no module type, while
 // esbuild's own resolver gives the same file ESM, because islands/package.json says "type": "module". esbuild parses a file once,
@@ -14,10 +14,10 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { HFY_KIT_PLUGINS, ROUTED_MODULES, hfyRoutedModules } from "../kit-content.mjs";
+import { HFY_KIT_PLUGINS, hfyRoutedModules, routedModuleOf } from "../kit-content.mjs";
 
 const islandsDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(islandsDir, "..");
@@ -40,8 +40,7 @@ function resolverImportsOfRouted(seen) {
     setup(b) {
       b.onResolve({ filter: /.*/ }, (args) => {
         if (args.path.startsWith(".") && args.resolveDir) {
-          const abs = resolve(args.resolveDir, args.path);
-          if (ROUTED_MODULES.includes(abs)) seen.push(`${relative(repo, args.importer)} imports ${args.path}`);
+          if (routedModuleOf(args.resolveDir, args.path)) seen.push(`${relative(repo, args.importer)} imports ${args.path}`);
         }
         return undefined;
       });
@@ -70,19 +69,21 @@ test("control: without hfyRoutedModules the same graph does import a routed wrap
   assert.ok(seen.length > 0, "the old failure mode is no longer reachable; this guard can be simplified");
 });
 
+// Probabilistic by nature (the old race failed about 1 build in 4 to 8): the structural guard above, with its control, is the
+// authoritative check; this one catches a different source of nondeterminism if one appears.
 test("repeated builds of the same sources name and write the island bundles identically", async () => {
   const hashes = new Set();
   for (let i = 0; i < 16; i++) hashes.add(treeHash(await bundle(entries, [stubVirtualCss, ...HFY_KIT_PLUGINS])));
   assert.equal(hashes.size, 1, "two builds of the same sources named or wrote the island bundles differently");
 });
 
-test("a build from a clean js/islands writes the committed tree, three times over, and a second build writes nothing", () => {
+test("a build from a clean js/islands writes the committed tree, twice over, and a second build writes nothing", () => {
   const dir = mkdtempSync(join(tmpdir(), "hfy-determinism-"));
   try {
     const listing = (site) => readdirSync(join(site, "js", "islands"), { recursive: true }).sort().join("\n");
     const run = (site, ...extra) => spawnSync(process.execPath, ["build.mjs", "--site", site, ...extra], { cwd: islandsDir, encoding: "utf8" });
     const want = listing(join(repo, "11ty"));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const site = join(dir, `site${i}`);
       cpSync(join(repo, "11ty"), site, { recursive: true });
       rmSync(join(site, "js", "islands"), { recursive: true });

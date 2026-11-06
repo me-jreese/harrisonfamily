@@ -65,12 +65,18 @@ export const hfyCommentsSanitizePolicy = {
 // (relative or not) to the same bare path, so each such file has one module type, whatever the schedule. The guard is
 // tests/build-determinism.test.mjs, which fails when any import of a routed file still reaches esbuild's own resolver.
 export const ROUTED_MODULES = [HFY_MARKDOWN, HFY_COMMENTS_MARKDOWN];
+/** The routed module that a relative import resolves to, with or without its `.jsx` extension; undefined for any other file. */
+export function routedModuleOf(resolveDir, path) {
+  const abs = resolve(resolveDir, path);
+  return ROUTED_MODULES.find((m) => m === abs || m === `${abs}.jsx`);
+}
 export const hfyRoutedModules = {
   name: "hfy-routed-modules",
   setup(b) {
-    b.onResolve({ filter: /^\.\.?\/.*hfy-(comments-)?markdown\.jsx$/ }, (args) => {
-      const abs = resolve(args.resolveDir || dirname(args.importer), args.path);
-      return ROUTED_MODULES.includes(abs) ? { path: abs } : undefined;
+    // Every relative import: ROUTED_MODULES alone decides, so a file added to it needs no change here.
+    b.onResolve({ filter: /^\.\.?\// }, (args) => {
+      const routed = routedModuleOf(args.resolveDir || dirname(args.importer), args.path);
+      return routed ? { path: routed } : undefined;
     });
   }
 };
