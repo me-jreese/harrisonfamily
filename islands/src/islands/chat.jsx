@@ -172,6 +172,53 @@ function Page({ narrow, popout }) {
   );
 }
 
+const OPEN_CLASS = "hfy-chat-open";
+const RESERVE_VAR = "--io-hfy-chat-reserve";
+
+/**
+ * HFY-ISS-026 (HFY-TSK-385): the roster panel starts collapsed (a small launcher). While it is open on a wide screen it must not cover
+ * the page: the island measures the panel and hands the shell's scroller that width as a left reserve (html.hfy-chat-open, chat.css), so
+ * the page content sits beside the panel. Escape closes the open panel (and returns focus to its title bar), unless the key belongs to
+ * something else (an open chat, a menu, a dialog, the search box). Draws nothing.
+ */
+function PanelGuard() {
+  const { panelOpen, setPanelOpen } = useChat();
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!panelOpen) return undefined;
+    const panel = document.querySelector(".io-chat-panel");
+    const measure = () => {
+      if (!panel) return;
+      const r = panel.getBoundingClientRect();
+      root.style.setProperty(RESERVE_VAR, `${Math.ceil(r.right)}px`);
+    };
+    measure();
+    root.classList.add(OPEN_CLASS);
+    const ro = typeof ResizeObserver === "function" && panel ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(panel);
+    window.addEventListener("resize", measure);
+    const onKey = (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const t = e.target;
+      if (t && t.closest && t.closest(".io-chat-mole, .io-chat-menu, [role=dialog], dialog")) return;
+      // In the roster's search box the kit's own Escape clears the query, then leaves the box; the next Escape closes the panel.
+      if (t && t.matches && t.matches("input, textarea")) return;
+      setPanelOpen(false);
+      const btn = document.querySelector(".io-chat-panel .io-chat-bar-title");
+      if (btn) btn.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", measure);
+      if (ro) ro.disconnect();
+      root.classList.remove(OPEN_CLASS);
+      root.style.removeProperty(RESERVE_VAR);
+    };
+  }, [panelOpen, setPanelOpen]);
+  return null;
+}
+
 function Chrome({ slot, person, pageHost, popout }) {
   const narrow = !useQuery(PHONE_UP);
   const notice = useNotice();
@@ -185,6 +232,7 @@ function Chrome({ slot, person, pageHost, popout }) {
       <Entry slot={slot} narrow={narrow} />
       <ProfilePresence person={person} />
       {dock && !onPage && <RosterPanel />}
+      {dock && !onPage && <PanelGuard />}
       {dock && <MoleDock reservePanel={!onPage} />}
       {onPage && createPortal(<Page narrow={narrow} popout={popout} />, pageHost)}
     </>

@@ -98,7 +98,7 @@ test("the panel starts open from 64rem, collapsed between 43rem and 64rem, and n
   const wide = shellOptionsFor({ narrow: false, medium: false, navigate() {} });
   const medium = shellOptionsFor({ narrow: false, medium: true, navigate() {} });
   const phone = shellOptionsFor({ narrow: true, medium: true, navigate() {} });
-  assert.equal(wide.defaultPanelOpen, true);
+  assert.equal(wide.defaultPanelOpen, false);
   assert.equal(medium.defaultPanelOpen, false);
   assert.equal(phone.defaultPanelOpen, false);
   assert.equal(wide.dock, true);
