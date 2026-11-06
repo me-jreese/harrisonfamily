@@ -25,7 +25,7 @@ from .aws import HEAD_PK, seq_key
 from .keys import DATA_PREFIXES, is_owned_key
 from .privacy import PrivacyChecker
 from .view import CLASSES, StoreView, closure_from, people_of, reverse_refs, sha256_hex
-from hfygramps.render import site
+from hfygramps.render import site, thumbs as thumbs_mod
 
 MODES = ("off", "shadow", "live")
 SESSION_QUIET_SECONDS = 600
@@ -188,11 +188,16 @@ class Engine:
         if seq <= 0:
             return {"status": "skipped", "reason": "empty_store", "mode": mode, "seq": 0}
 
+        # HFY-TSK-393: hfy-graph-render derives the thumbnails and records them in a sidecar; a changed sidecar re-renders the media files.
+        # An unreadable sidecar fails the pass (the schedule retries) rather than rendering every entry without its thumb.
+        thumbs_raw = d.live_bucket.get(thumbs_mod.SIDECAR_KEY)
+        thumbs_digest = sha256_hex(thumbs_raw) if thumbs_raw else ""
+
         stored_mode = state.get("mode")
         first_pass = stored_mode != mode  # includes "no state yet": a new mode renders from nothing and trusts no cursor
         cursor = None if state.get("rendered_seq") is None else int(state["rendered_seq"])
         prev_seq = 0 if first_pass or cursor is None else cursor
-        due = first_pass or seq > prev_seq or req.operator
+        due = first_pass or seq > prev_seq or req.operator or (state.get("thumbs_digest") or "") != thumbs_digest
         reconcile_due = req.reconcile or (
             req.source == "schedule"
             and (parse_time(state.get("last_reconcile_at")) is None
@@ -216,7 +221,7 @@ class Engine:
                 self._trigger_graph(seq)
             return {"status": "reconciled", "mode": mode, "seq": seq, **counts}
 
-        result = self._render_and_apply(req, state, view, seq, prev_seq, first_pass, cursor, now)
+        result = self._render_and_apply(req, state, view, seq, prev_seq, first_pass, cursor, now, thumbs_raw, thumbs_digest)
         if reconcile_due and result.get("status") == "rendered":
             counts = self._reconcile(view, now)
             result.update(counts)
@@ -298,7 +303,7 @@ class Engine:
     # ----------------------------------------------------------------------------------------------------- render + apply
     def _render_and_apply(
         self, req: Request, state: Dict[str, Any], view: StoreView, seq: int, prev_seq: int, first_pass: bool,
-        cursor: Optional[int], now: datetime,
+        cursor: Optional[int], now: datetime, thumbs_raw: Optional[bytes] = None, thumbs_digest: str = "",
     ) -> Dict[str, Any]:
         d = self.d
         mode = d.mode
@@ -309,7 +314,8 @@ class Engine:
             object_list, exempt = d.overlay.apply(object_list, list(view.moderation_refs))
             exempt_keys = set(exempt or ())
         media_files = self._media_files({(o["_class"], o["handle"]): o for o in object_list if o.get("_class") == "Media"})
-        rendered = site.render(object_list, media_files=media_files, generated_at=view.last_at or site.DEFAULT_GENERATED_AT, text_gate=d.text_gate)
+        rendered = site.render(object_list, media_files=media_files, generated_at=view.last_at or site.DEFAULT_GENERATED_AT, text_gate=d.text_gate,
+                                thumbs=thumbs_mod.parse_sidecar(thumbs_raw))
 
         # The privacy re-check: a failing file is not written and not deleted (the site keeps the last good copy).
         blocked: Dict[str, List[str]] = {}
@@ -440,6 +446,10 @@ class Engine:
             "last_pass": counts, "blocked_files": len(blocked), "foreign_keys": len(plan.foreign),
         }
         remove = ["refused_deletes", "mode_attempted", "first_live_attempt"]
+        if thumbs_digest:
+            fields["thumbs_digest"] = thumbs_digest
+        else:
+            remove.append("thumbs_digest")
         if blocked:
             first_rule = sorted({r for rs in blocked.values() for r in rs})[0]
             fields["last_error"] = f"RenderPrivacyBlock:{first_rule}"

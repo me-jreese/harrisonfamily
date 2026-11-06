@@ -4,7 +4,8 @@
 # BEFORE the live render, under io's G-cutover approval, never by CI and never by a workflow.
 #
 #   HfyDataWriteGuardRecords    Deny s3:PutObject, s3:DeleteObject, s3:DeleteObjectVersion on person/*.json, family/*, event/*,
-#                               note/*, place/* and media/*.json, for every principal except the renderers and break-glass.
+#                               note/*, place/*, media/*.json and media/thumb/* (the derived thumbnails and their sidecar, HFY-TSK-393),
+#                               for every principal except the renderers and break-glass.
 #   HfyDataWriteGuardMediaDelete  Deny s3:DeleteObject, s3:DeleteObjectVersion on media/* (binaries included), same exceptions
 #                               plus hfy-api: the exception covers media binaries only (Put is not denied there, and hfy-api
 #                               deletes the staging copy after a graduation). hfy-api is NOT an exception to the *.json statement.
@@ -79,7 +80,7 @@ jq -n --arg b "$BUCKET" --arg r "$(role_pair "$RENDER_ROLE")" --arg g "$(role_pa
   --arg s1 "$SID_RECORDS" --arg s2 "$SID_MEDIA" '
   def res($p): "arn:aws:s3:::\($b)/\($p)";
   [ { Sid: $s1, Effect: "Deny", Principal: "*", Action: ["s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion"],
-      Resource: (["person/*.json", "family/*", "event/*", "note/*", "place/*", "media/*.json"] | map(res(.))),
+      Resource: (["person/*.json", "family/*", "event/*", "note/*", "place/*", "media/*.json", "media/thumb/*"] | map(res(.))),
       Condition: { ArnNotLike: { "aws:PrincipalArn": ([$r, $g, $k] | map(split("\n")) | add) } } },
     { Sid: $s2, Effect: "Deny", Principal: "*", Action: ["s3:DeleteObject", "s3:DeleteObjectVersion"],
       Resource: [res("media/*")],
@@ -125,11 +126,13 @@ if [ "$SIM" = 1 ]; then
     probe allowed "$RENDER" s3:DeleteObject media/x.json
     probe allowed "$GRAPH" s3:PutObject person/graph.json
     probe allowed "$GRAPH" s3:PutObject media/faces/x.webp
+    probe allowed "$GRAPH" s3:PutObject media/thumb/x-00000000-320.jpg
     probe allowed "$BG" s3:DeleteObject family/x.json
     probe explicitDeny "$STRANGER" s3:PutObject person/x.json
     probe explicitDeny "$STRANGER" s3:DeleteObject person/x.json
     probe explicitDeny "$STRANGER" s3:PutObject family/x.json
     probe explicitDeny "$STRANGER" s3:PutObject media/x.json
+    probe explicitDeny "$STRANGER" s3:PutObject media/thumb/x-00000000-320.jpg
     probe explicitDeny "$STRANGER" s3:DeleteObject media/x.jpg
     probe allowed "$STRANGER" s3:PutObject media/x.jpg
     probe allowed "$DEPLOY" s3:PutObject person/index.html

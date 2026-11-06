@@ -1,6 +1,7 @@
 // Lambda Function URL (payload v2) handler. All logic is injected through `deps` so tests run offline.
 import { createNotifyHandler } from "@io-kit/notify/server";
 import { createContentSource } from "./content.js";
+import { isMediaPublished } from "./media-visible.js";
 import { createCommentSource, purgeThread, refusePendingGraduation, toCommentPrincipal } from "./comments.js";
 import { createNotifier, queryFollowers, scanSubscribedPrincipals, TEMPLATE_REGISTRY } from "./notify.js";
 import { BASE_PATH, ROUTES, matchRoute } from "./routes.js";
@@ -106,6 +107,7 @@ export function createHandler(deps) {
       getPost: (id) => content.get(id),
       // A proposal:<ulid> thread: dark with HFY_EDITING, and visible only inside the proposal's visibility set (the proposer, admins, owners of the targeted pages).
       proposalVisible: async (id) => editingOn() && (await visibleProposal(store, actor, id)) !== null,
+      mediaVisible: (grampsId) => isMediaPublished({ ddb, cmds, table }, grampsId), // a media:<id> thread is as visible as its Media in the person gallery (HFY-TSK-387-0I)
       isWithdrawn: (grampsId) => isPersonWithdrawn({ ddb, cmds, table }, grampsId), // a withdrawn person's thread is 404 to all but an admin (HFY-TSK-178)
       // Without push or an inbox store there is nobody to notify: skip the post read and the commenters Query entirely.
       onCreated: (c, { parent }) => notifyActive && afterCommit("comment notification", async () => {

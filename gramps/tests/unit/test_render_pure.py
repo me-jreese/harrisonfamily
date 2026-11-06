@@ -75,7 +75,7 @@ class NoOutsideAccess(unittest.TestCase):
 
     def test_the_package_imports_nothing_that_can_reach_the_outside(self):
         allowed_roots = {"__future__", "collections", "copy", "dataclasses", "html", "json", "pathlib", "re", "typing", "urllib"}
-        local = {"labels", "note_tags", "places", "policy", "search_index", "site", "store", "text_scan", "transform"}
+        local = {"labels", "note_tags", "places", "policy", "search_index", "site", "store", "text_scan", "thumbs", "transform"}
         seen = set()
         for path in sorted(PACKAGE.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

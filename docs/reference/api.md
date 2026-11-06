@@ -308,11 +308,15 @@ A subject names a comment thread ([`comments.js`](../../api/src/comments.js), `S
 | --- | --- | --- |
 | `person:<gramps-id>` | `person:` followed by 1 to 64 characters from `A-Z a-z 0-9 _ . -` | A person record in the family tree |
 | `post:<ulid>` | `post:` followed by a 26-character Crockford base32 ULID | A post |
+| `proposal:<ulid>` | `proposal:` followed by a 26-character Crockford base32 ULID | A suggestion (visible only inside its visibility set) |
+| `media:<gramps-id>` | `media:` followed by 1 to 64 characters from `A-Z a-z 0-9 _ . -` | A photo or other Media object of the family tree (HFY-TSK-387-0I, BRD D-35) |
 
 - There is no list of threads. A well-formed subject with no comments lists as an empty thread (`200`), and the first comment starts it. The API does not check that a `person:` id exists in the tree.
 - Only create may name a new thread. On create, a malformed subject is `422 validation` with `details.field` set to `threadId`. On list, edit, delete and react, a malformed subject is `404 not_found`, and so is a comment id that does not exist in that thread.
 - A missing subject is `400 validation` ("subject is required") on every comment route.
 - A `post:<ulid>` thread is exactly as visible as its post (HFY-R58). List, create, edit and react return `404 not_found` when the post does not exist or the caller cannot see it, for example a draft or withdrawn post of another member. Delete is the exception: an author or admin can always remove a comment, even under a withdrawn post. A `person:<gramps-id>` thread of a withdrawn person (`GID#Person#<id>` retired with reason `withdrawn`) is `404 not_found` on list, create, edit and react for everyone except an admin, who keeps reading and moderating it (HFY-TSK-178, BRD2 PS-06). A person who was never withdrawn, or whose id the store never held, is not hidden. A failed lookup is an error, never an open thread.
+
+- A `media:<gramps-id>` thread is exactly as visible as its Media, and the person gallery's rules decide that (D-37): the Media must exist, be public, and be listed by a non-private MediaRef of a non-private person ([`media-visible.js`](../../api/src/media-visible.js)). List, create, edit and react return `404 not_found` for private, withdrawn or missing media, for admins too; a failed store read is an error, and with no lookup configured every media thread is `404`. Delete stays open to an author or admin. Media comments live in the app table only and are never written to Gramps Notes (D-36). Comment photos, moderation (`MOD#` overlay) and notification preferences behave as for person and post comments. A notification links to `/media/?id=<gramps-id>`; a media thread has no owner, so `comment_on_my_record` is not sent, while `reply_to_me` and `mention` are. Media is not a follow subject: [record follows](#record-follows) stay person-only. The route and its UI are dark behind the UI task's `mediaCommentsV1` flag, not an API gate.
 
 A post's comment thread is always `post:<post id>`. The post's own `subject` field is a separate value, described under [Posts](#posts).
 
