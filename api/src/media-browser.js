@@ -23,6 +23,7 @@ import { HttpError, logSafeError } from "./http.js";
 import { isMediaPublished } from "./media-visible.js";
 import { MODQ_OPEN, postAttachmentId } from "./moderation.js";
 import { storeView } from "./records/index.js";
+import { ATTR_ADDED_BY, ATTR_SOURCE, postIdOfSource } from "./media-origin.js";
 
 export const LIVING_NAME = "a living family member";
 export const SECTIONS = Object.freeze(["media", "posts", "all"]);
@@ -31,11 +32,8 @@ export const DEFAULT_LIMIT = 24;
 export const MAX_LIMIT = 60;
 export const TAG_POST = "hfy-post";
 export const TAG_UPLOAD = "hfy-web-upload";
-/** Gramps Attributes the browser reads for the origin line: `hfy:source` = `post:<ulid>[/...]` (post graduation), `hfy:added-by` = the uploader's gramps_id. */
-export const ATTR_SOURCE = "hfy:source";
-export const ATTR_ADDED_BY = "hfy:added-by";
+export { ATTR_ADDED_BY, ATTR_SOURCE };
 const POST_PAGE_CAP = 200;
-const POST_ID_RE = /^post:([0-9A-Z]{26})(?:[/:]|$)/;
 const ATTACHMENT_PREFIX = "pa-";
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -128,7 +126,7 @@ export function buildCatalog({ heads, index, posts, hidden, viewer, base }) {
       ...(t ? { thumb: { s320: url(base, t.s320), s800: url(base, t.s800), w: t.w, h: t.h } } : {}),
     };
     items.push({ id: gid, at, kind: "media", card, media: m, tags, origin, image: url(base, entry.s3Key), description: describe(m.obj),
-      postId: POST_ID_RE.exec(String(attr(m.obj, ATTR_SOURCE) ?? ""))?.[1], addedBy: attr(m.obj, ATTR_ADDED_BY) });
+      postId: postIdOfSource(attr(m.obj, ATTR_SOURCE)), addedBy: attr(m.obj, ATTR_ADDED_BY) });
   }
 
   // Post attachments that have not graduated (D-34, pre-backfill): not taggable, so never in needs_tags or of_me.

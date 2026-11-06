@@ -260,12 +260,17 @@ export const ROUTES = defineRoutes([
     handler: async (c) => {
       const post = await c.content.createDraft({ type: c.body.type, visibility: c.body.visibility, subject: c.body.subject, title: c.body.title, body: c.body.body, attachments: c.body.attachments });
       if (post.visibility === "published") await c.afterPublished(post); // never fails the committed write
+      if (post.visibility === "published") await c.graduatePostPhotos(post); // HFY_POST_GRADUATE, off by default; never fails the committed write
       return ok(post, 201);
     },
   },
   {
     name: "posts.update", method: "PATCH", path: "/posts/:id", summary: "Edit your own post",
-    handler: async (c) => ok(await c.content.update(c.params.id, { title: c.body.title, subject: c.body.subject, body: c.body.body, attachments: c.body.attachments })),
+    handler: async (c) => {
+      const post = await c.content.update(c.params.id, { title: c.body.title, subject: c.body.subject, body: c.body.body, attachments: c.body.attachments });
+      if (post.visibility === "published" && c.body.attachments !== undefined) await c.graduatePostPhotos(post); // photos added to a published post
+      return ok(post);
+    },
   },
   {
     name: "posts.visibility", method: "POST", path: "/posts/:id/visibility", summary: "Publish, withdraw or return a post to draft",
@@ -273,6 +278,7 @@ export const ROUTES = defineRoutes([
       const before = await c.content.get(c.params.id);
       const after = await c.content.setVisibility(c.params.id, c.body.visibility);
       if (before.visibility !== "published" && after.visibility === "published") await c.afterPublished(after);
+      if (after.visibility === "published") await c.graduatePostPhotos(after); // each photo once: the marker makes a republish a no-op
       return ok(after);
     },
   },
