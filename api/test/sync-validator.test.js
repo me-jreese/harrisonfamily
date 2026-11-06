@@ -157,11 +157,16 @@ describe("schema and MediaRef.rect", () => {
     expect(written(w)).toBeGreaterThan(0);
   });
 
+  it("rect: a box with one zero-extent axis and reversed corners are kept as stored (P4-R16)", async () => {
+    const w = world();
+    const m = [media(1), media(2), media(3), media(4)];
+    await w.apply([...m.map((x) => create(x)), create(person(1, { media_list: [mref(1, [50, 0, 50, 60]), mref(2, [60, 0, 10, 60]), mref(3, [0, 60, 10, 10]), mref(4, [0, 30, 60, 30])] }))]);
+    expect(written(w)).toBeGreaterThan(0);
+  });
+
   const bad = [
     ["the full frame [0,0,100,100] (it is sent as null)", [0, 0, 100, 100], "media.rect.full_frame"],
-    ["x1 not below x2", [50, 0, 50, 60], "media.rect.degenerate_or_float"],
-    ["unordered corners", [60, 0, 10, 60], "media.rect.degenerate_or_float"],
-    ["y1 not below y2", [0, 60, 10, 10], "media.rect.degenerate_or_float"],
+    ["a point (no region, it is sent as null)", [50, 50, 50, 50], "media.rect.full_frame"],
     ["a value above 100", [0, 0, 101, 50], "media.rect.degenerate_or_float"],
     ["a negative value", [-1, 0, 50, 50], "media.rect.degenerate_or_float"],
     ["three numbers", [0, 0, 50], "media.rect.degenerate_or_float"],

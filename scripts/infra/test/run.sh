@@ -665,7 +665,7 @@ if command -v zip >/dev/null && command -v python3 >/dev/null; then
   eq "RenderCodeKey is lambda/hfy-sync-render-<first 12 hex of the zip SHA-256>.zip" "$RKEY1" "lambda/hfy-sync-render-${RHEX:0:12}.zip"
   eq "dist/hfy-sync-render.params holds the same key" "$(cat "$RPKG/dist/hfy-sync-render.params")" "RenderCodeKey=$RKEY1"
   RLIST=$(python3 -c 'import sys,zipfile; print("\n".join(i.filename for i in zipfile.ZipFile(sys.argv[1]).infolist()))' "$RPKG/dist/hfy-sync-render.zip")
-  for f in handler.py hfy_render/engine.py hfy_render/privacy.py hfy_render/aws.py hfygramps/__init__.py hfygramps/scanner.py hfygramps/render/site.py hfygramps/render/transform.py; do
+  for f in handler.py hfy_render/engine.py hfy_render/privacy.py hfy_render/aws.py hfygramps/__init__.py hfygramps/scanner.py hfygramps/rect.py hfygramps/render/site.py hfygramps/render/transform.py; do
     contains "the zip holds $f" "$RLIST" "$f"
   done
   for f in hfygramps/merge.py hfygramps/projection.py hfygramps/canonical.py hfygramps/addon hfygramps/schema_check.py tests __pycache__ .pyc .list .files; do

@@ -82,8 +82,10 @@ export function schemaViolations(object, schema = loadSchema()) {
 }
 
 /**
- * MediaRef.rect violations of one object (sync design 9): `rect` is null or [x1, y1, x2, y2] integers with 0 <= x1 < x2 <= 100 and
- * 0 <= y1 < y2 <= 100, and [0, 0, 100, 100] is sent as null (Gramps' own normalisation). A fraction is refused; the float-to-integer
+ * MediaRef.rect violations of one object (sync design 9): `rect` is null or [x1, y1, x2, y2] integers from 0 to 100, read Gramps-exact
+ * (ruling P4-R16: a box with one zero-extent axis and reversed corners are kept as stored), and the full frame [0, 0, 100, 100] and a point
+ * (x1 == x2 and y1 == y2) are sent as null (Gramps' own normalisation; both are `media.rect.full_frame`). The authoring guard (zero-area,
+ * inverted, under 2x2) belongs to the web editor and the tagging API, not here. A fraction is refused; the float-to-integer
  * rounding of a web tagger is the tagging domain's job before it calls applyBatch(). Every MediaRef of the object is checked (the
  * media_list of a Person, Family, Event, Place, Source or Citation).
  */
@@ -92,7 +94,7 @@ export function rectViolations(object, policy) {
   const out = [];
   for (const ptr of matchPointers(object, "/**/media_list/*/rect")) {
     const problem = rectProblem(pointerGet(object, ptr), policy);
-    if (problem) out.push({ rule: `media.rect.${problem}`, handle, pointer: ptr });
+    if (problem) out.push({ rule: `media.rect.${problem === "no_region" ? "full_frame" : problem}`, handle, pointer: ptr });
   }
   return out;
 }

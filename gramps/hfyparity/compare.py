@@ -456,6 +456,8 @@ def explain(ctx: _Context, key: str, doc_a: Any, doc_b: Any, path: tuple, a: Any
         if path and path[-1] in ("urls", "citations") and _subsequence(b, a):
             return "text-gate-withheld"
     leaf = path[-1] if path else None
+    if leaf in ("rect", "region") and b is None and isinstance(a, list) and len(a) == 4 and (a == [0, 0, 100, 100] or (a[0] == a[2] and a[1] == a[3])):
+        return "no-region-rect"
     if key.startswith("person/") and path and path[0] == "familyTreeMedia":
         return "tree-svg-frozen"
     if leaf in ("latitude", "longitude") and _coordinate_rounded(policy, a, b):

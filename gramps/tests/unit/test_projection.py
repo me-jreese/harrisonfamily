@@ -914,13 +914,22 @@ class CoordinatesAndRects(unittest.TestCase):
 
     def test_degenerate_and_fractional_rects_are_held_and_lift_restores_the_local_value(self):
         base_rect = [10, 10, 50, 60]
-        for bad in ([12.5, 10, 50, 60], [60, 10, 50, 70], [10, 70, 50, 60], [10, 10, 101, 60], [1, 2, 3], [True, 0, 5, 5]):
+        for bad in ([12.5, 10, 50, 60], [-1, 10, 50, 60], [10, 10, 101, 60], [1, 2, 3], [True, 0, 5, 5]):
             with self.subTest(bad):
                 self.assertEqual(P.project_rect(bad, base_rect), (base_rect, True))
                 self.assertEqual(P.project_rect(bad, None), (None, True))
                 self.assertEqual(P.lift_rect(base_rect, bad, base_rect), bad, "unchanged on the website: the local value comes back")
                 self.assertEqual(P.lift_rect([1, 1, 9, 9], bad, base_rect), [1, 1, 9, 9])
                 self.assertEqual(P.lift_rect(None, bad, None), bad)
+
+    def test_a_point_is_null_in_p_and_lift_restores_it_while_a_line_and_reversed_corners_go_as_stored(self):
+        """P4-R16 (HFY-TSK-401): the full frame and a point are no region; a one-axis-zero box and reversed corners are not held."""
+        base_rect = [10, 10, 50, 60]
+        self.assertEqual(P.project_rect([40, 40, 40, 40], base_rect), (None, False))
+        self.assertEqual(P.lift_rect(None, [40, 40, 40, 40], base_rect), [40, 40, 40, 40])
+        for kept in ([10, 10, 10, 50], [10, 30, 60, 30], [60, 10, 50, 70], [10, 70, 50, 60]):
+            self.assertEqual(P.project_rect(kept, base_rect), (kept, False))
+            self.assertEqual(P.lift_rect(kept, kept, base_rect), kept)
 
     def test_media_refs_on_every_class_are_normalised_and_held_with_a_reason(self):
         photo = MED("m1")
@@ -934,7 +943,7 @@ class CoordinatesAndRects(unittest.TestCase):
         self.assertEqual(res.projected["pl1"]["media_list"][0]["rect"], None)
         reasons = {(h["handle"], h["pointer"]): h["rule"] for h in res.holds}
         self.assertEqual(reasons, {("p1", "/media_list/1/rect"): "media.rect.degenerate_or_float", ("pl1", "/media_list/0/rect"): "media.rect.degenerate_or_float"})
-        self.assertIn("degenerate", P.hold_reason("media.rect.degenerate_or_float"))
+        self.assertIn("malformed", P.hold_reason("media.rect.degenerate_or_float"))
 
     def test_a_held_rect_follows_its_reference_when_the_list_is_reordered(self):
         a, b = MED("m1"), MED("m2")

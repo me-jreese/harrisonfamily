@@ -136,7 +136,9 @@ describe("shared/redaction-rules.mjs against the golden vectors", () => {
     expect(rectProblem([0, 0, 100, 100.0], policy)).toBe("full_frame");
     expect(rectProblem(null, policy)).toBeNull();
     expect(rectProblem([10, 10, 50, 60], policy)).toBeNull();
-    for (const bad of [[12.5, 10, 50, 60], [60, 10, 50, 70], [10, 10, 101, 60], [10, 10, 50], "x"]) expect(rectProblem(bad, policy)).toBe("degenerate_or_float");
+    expect(rectProblem([5, 5, 5, 5], policy)).toBe("no_region");
+    for (const kept of [[60, 10, 50, 70], [10, 70, 50, 60], [5, 5, 5, 9], [5, 5, 9, 5]]) expect(rectProblem(kept, policy)).toBeNull();
+    for (const bad of [[12.5, 10, 50, 60], [10, 10, 101, 60], [-1, 0, 5, 5], [10, 10, 50], "x"]) expect(rectProblem(bad, policy)).toBe("degenerate_or_float");
   });
 
   it("computes day numbers like Gramps and rounds like the vectors", () => {

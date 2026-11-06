@@ -24,6 +24,8 @@ import json
 import os
 import re
 
+from .rect import is_point
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 POLICY_PATH = os.path.join(_HERE, "..", "redaction", "redaction-v1.json")
 
@@ -347,16 +349,20 @@ def attribute_rule(attr, policy=None):
 
 
 def rect_problem(rect, policy=None):
-    """None for a usable rectangle; "full_frame" for [0,0,100,100]; "degenerate_or_float" for a rectangle to hold."""
+    """None for a usable rectangle; "full_frame" for [0,0,100,100] and "no_region" for a point (x1 == x2 and y1 == y2), both of which the
+    cloud holds as null; "degenerate_or_float" for a rectangle to hold. Gramps-exact (HFY-R P4-R16): a box with one zero-extent axis and
+    reversed corners are usable as stored; only a fraction, a value outside 0..100 and a wrong shape are held."""
     pol = (policy or load_policy())["media"]
     if rect is None:
         return None
     lo, hi = pol["rectRange"]
     if (not isinstance(rect, list) or len(rect) != 4 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in rect)
             or any(isinstance(v, float) and not v.is_integer() for v in rect)  # a fractional value: the XML exporter floors them
-            or any(v < lo or v > hi for v in rect) or rect[0] >= rect[2] or rect[1] >= rect[3]):
+            or any(v < lo or v > hi for v in rect)):
         return "degenerate_or_float"
-    return "full_frame" if rect == pol["fullFrameRect"] else None
+    if rect == pol["fullFrameRect"]:
+        return "full_frame"
+    return "no_region" if is_point(rect) else None
 
 
 # --------------------------------------------------------------------------------------------------------------------
