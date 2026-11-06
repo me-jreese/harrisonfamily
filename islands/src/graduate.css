@@ -1,0 +1,64 @@
+/* "add to a family page" on a comment photo (HFY-TSK-215, R-02; social.md section 10; flag graduateV1), imported by lib/graduate-ui.jsx.
+   Tokens only (theme-lint). An inline form under the photo, not a modal. Under 688 px (43rem, as moderation.css) it stacks: 16 px inputs,
+   full-width 44 px buttons, and the person picker's results as a list under the input. */
+.hfy-photo-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--io-content-space-1) var(--io-content-space-2); min-inline-size: 0; }
+.hfy-grad { display: grid; gap: var(--io-content-space-2); min-inline-size: 0; max-inline-size: 100%; }
+.hfy-grad[data-open] { flex: 1 1 100%; }
+.hfy-grad__trigger { padding-inline: var(--io-content-space-2); }
+.hfy-comments .hfy-grad__trigger { border-color: transparent; background: transparent; color: var(--io-content-link); }
+.hfy-comments .hfy-grad__trigger:hover { color: var(--io-content-link-hover); }
+
+.hfy-grad__form { display: grid; gap: var(--io-content-space-3); min-inline-size: 0; padding: var(--io-content-space-3); border: 1px solid var(--io-content-border); border-radius: var(--io-content-radius-md); background: var(--io-content-surface-sunken); }
+.hfy-grad__field { display: grid; gap: var(--io-content-space-1); min-inline-size: 0; }
+.hfy-grad__field > label { color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); font-weight: var(--io-typography-weight-semibold); }
+.hfy-grad__input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: var(--io-content-tap-min);
+  margin: 0;
+  padding: 0 var(--io-content-space-3);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface);
+  color: var(--io-content-text);
+  font-family: var(--io-content-font-ui);
+  font-size: var(--io-control-input-min-font);
+  line-height: var(--io-content-line-height);
+}
+.hfy-grad__input[aria-invalid="true"] { border-color: var(--io-content-danger); }
+.hfy-grad__input:focus-visible { outline: var(--io-content-focus-ring) solid var(--io-content-focus); outline-offset: var(--io-content-focus-offset); }
+.hfy-grad__hint { margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
+.hfy-grad__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-block-size: calc(5 * var(--io-content-tap-min));
+  overflow: auto;
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-md);
+  background: var(--io-content-surface-raised);
+}
+.hfy-grad__list[hidden] { display: none; }
+.hfy-grad__option { display: flex; align-items: center; min-block-size: var(--io-content-tap-min); padding: 0 var(--io-content-space-3); overflow-wrap: anywhere; cursor: pointer; }
+.hfy-grad__option[aria-selected="true"] { background: var(--io-content-surface-sunken); outline: var(--io-content-focus-ring) solid var(--io-content-focus); outline-offset: calc(-1 * var(--io-content-focus-ring)); }
+.hfy-grad__error { margin: 0; padding: var(--io-content-space-2) var(--io-content-space-3); border-inline-start: var(--io-content-focus-ring) solid var(--io-content-danger); color: var(--io-content-danger); font-size: var(--io-content-font-size-sm); overflow-wrap: anywhere; }
+.hfy-grad__status { margin: 0; color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
+.hfy-grad__actions { display: flex; flex-wrap: wrap; gap: var(--io-content-space-2) var(--io-content-space-3); }
+.hfy-grad__actions .hfy-btn { min-block-size: var(--io-content-tap-min); }
+@media (max-width: 42.99rem) {
+  .hfy-grad__actions { flex-direction: column; }
+  .hfy-grad__actions .hfy-btn { inline-size: 100%; }
+}
+
+/* the badge once it is on a page */
+.hfy-grad__done { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-content-space-1) var(--io-content-space-3); margin: 0; min-inline-size: 0; }
+.hfy-grad__badge {
+  padding: 0 var(--io-content-space-2);
+  border: 1px solid var(--io-content-border-strong);
+  border-radius: var(--io-content-radius-pill);
+  color: var(--io-content-link);
+  font-size: var(--io-content-font-size-sm);
+  overflow-wrap: anywhere;
+}
+.hfy-grad__soon { color: var(--io-content-text-dim); font-size: var(--io-content-font-size-sm); }
