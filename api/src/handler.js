@@ -171,7 +171,7 @@ export function createHandler(deps) {
       store, featureOn, guard, listMembers: deps.listMembers, getOwners: deps.getOwners, now, uid, log,
       ...(deps.applyBatch ? { apply: deps.applyBatch } : {}),
     });
-    const links = createLinks(base);
+    const links = createLinks({ ...base, store, readIndex: deps.readMediaIndex, publicBase: deps.mediaPublicBase, log });
     // HFY-TSK-387-0E: the Media Browser reads (GET /api/media, /api/media/:id). Thumbnails come from the published media index (deps.readMediaIndex); absent => 503, never an open list.
     const media = createMediaBrowser({ ctx: store, actor, content, readIndex: deps.readMediaIndex, publicBase: deps.mediaPublicBase, log });
     const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });

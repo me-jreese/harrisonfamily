@@ -2,7 +2,7 @@
 // Run: node --test tests/life-dates-queue.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { COPY, addPending, addedText, alreadySent, ask, candidatesFrom, cardBody, checkCard, cutoffYear, eligible, knownLine, progressText, readPending, sentText } from "../src/lib/life-dates-queue-model.js";
+import { COPY, STATS_WINDOW, addPending, createTimingRecorder, debugOn, medianSeconds, addedText, alreadySent, ask, candidatesFrom, cardBody, checkCard, cutoffYear, eligible, knownLine, progressText, readPending, sentText } from "../src/lib/life-dates-queue-model.js";
 
 const NOW = new Date(2026, 5, 1);
 const P = (grampsId, displayName, lifespanSummary, extra = {}) => ({ grampsId, displayName, lifespanSummary, ...extra });
@@ -81,4 +81,48 @@ test("pending marks only what was saved; nothing else writes", () => {
   assert.equal(alreadySent(storage, row), true);
   assert.equal(alreadySent(storage, { id: "I1", kind: "birth" }), false);
   assert.doesNotThrow(() => addPending({ getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } }, "I2", { birth: {} }));
+});
+
+// HFY-TSK-400 (O-9): per-card timing, in memory only.
+test("medianSeconds: odd, even, empty, unsorted, and junk ignored", () => {
+  assert.equal(medianSeconds([]), null);
+  assert.equal(medianSeconds(undefined), null);
+  assert.equal(medianSeconds([4]), 4);
+  assert.equal(medianSeconds([9, 1, 5]), 5);
+  assert.equal(medianSeconds([1, 2, 3, 10]), 2.5);
+  assert.equal(medianSeconds([3, NaN, "x", -1, Infinity, 7, null]), 5);
+  assert.equal(medianSeconds(["a", NaN]), null);
+});
+
+test("debugOn: only ?hfy_debug=1", () => {
+  assert.equal(debugOn("?hfy_debug=1"), true);
+  assert.equal(debugOn("?a=b&hfy_debug=1"), true);
+  for (const s of ["", "?hfy_debug=0", "?hfy_debug=true", "?hfy_debug", "?x=1", undefined, null]) assert.equal(debugOn(s), false, String(s));
+});
+
+test("recorder: start to stop in seconds, a stop with no card open is null, stats round to a tenth", () => {
+  let t = 1000;
+  const r = createTimingRecorder({ now: () => t });
+  assert.equal(r.stop(), null);
+  assert.deepEqual(r.stats(), { cards: 0, medianSeconds: null });
+  r.start(); t += 4200;
+  assert.equal(r.stop(), 4.2);
+  assert.equal(r.stop(), null, "one stop per card");
+  r.start(); t += 8000;
+  r.stop();
+  assert.deepEqual(r.stats(), { cards: 2, medianSeconds: 6.1 });
+  r.start(); t += 1000; r.start(); t += 2000; // a card re-shown restarts the timer
+  assert.equal(r.stop(), 2);
+});
+
+test("recorder keeps the last 50 durations only", () => {
+  assert.equal(STATS_WINDOW, 50);
+  let t = 0;
+  const r = createTimingRecorder({ now: () => t });
+  for (let i = 1; i <= 60; i += 1) { r.start(); t += i * 1000; r.stop(); }
+  const kept = r.durations();
+  assert.equal(kept.length, 50);
+  assert.equal(kept[0], 11);
+  assert.equal(kept[49], 60);
+  assert.deepEqual(r.stats(), { cards: 50, medianSeconds: 35.5 });
 });

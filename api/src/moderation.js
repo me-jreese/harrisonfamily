@@ -46,7 +46,8 @@ export const MAX_LIMIT = 50;
 
 const ULID = "[0-9A-HJKMNP-TV-Z]{26}";
 const ULID_RE = new RegExp(`^${ULID}$`);
-const THREAD_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26})$/;
+// HFY-TSK-400: media:<gramps_id> is a comment thread too (HFY-TSK-387-0I); without it a media comment could never be moderated (a 400 on the target).
+const THREAD_RE = /^(person:[A-Za-z0-9_.-]{1,64}|post:[0-9A-HJKMNP-TV-Z]{26}|proposal:[0-9A-HJKMNP-TV-Z]{26}|media:[A-Za-z0-9_.-]{1,64})$/;
 const ATT_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const HANDLE_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** The flag that opens the record targets (review DL-17): they wait for the cutover and hfy-social-flip-2. */
@@ -132,7 +133,7 @@ export function parseTarget(raw, { records = false } = {}) {
     return v;
   };
   const thread = (v, field) => {
-    if (typeof v !== "string" || !THREAD_RE.test(v)) throw bad(field, `${field} must be person:<gramps_id>, post:<ulid> or proposal:<ulid>`);
+    if (typeof v !== "string" || !THREAD_RE.test(v)) throw bad(field, `${field} must be person:<gramps_id>, post:<ulid>, proposal:<ulid> or media:<gramps_id>`);
     return v;
   };
   if (kind === "post") return { kind, id: id(raw.id, "target.id") };

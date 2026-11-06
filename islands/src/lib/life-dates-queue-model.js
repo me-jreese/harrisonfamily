@@ -104,3 +104,45 @@ export function addPending(storage, id, saved) {
   try { storage.setItem(pendingKey(id), JSON.stringify({ ...readPending(storage, id), ...saved })); } catch { /* the queue still moves on */ }
 }
 export const alreadySent = (storage, row) => Boolean(readPending(storage, row.id)[askKey(row)]);
+
+// ---- queue timing (HFY-TSK-400, objective O-9) --------------------------------------------------------------------------------------------------------
+// How long a member spends on a card, shown until saved or skipped. In memory only: the last STATS_WINDOW durations (seconds), no person, no id, no storage and
+// no network. Members never see it. The only read is the debug hook: window.__hfyQueueStats?.() returns {cards, medianSeconds}, installed only when the page URL
+// has ?hfy_debug=1 (see debugOn). Documented in docs/reference/front-end.md.
+export const STATS_WINDOW = 50;
+
+/** The median of a list of durations in seconds (the mean of the middle two for an even count); null when there is none. Ignores anything that is not a finite number >= 0. */
+export function medianSeconds(durations) {
+  const xs = (Array.isArray(durations) ? durations : []).filter((n) => typeof n === "number" && Number.isFinite(n) && n >= 0).sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const mid = xs.length >> 1;
+  return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+}
+
+/** Is the debug hook on for this page? `search` is location.search; only ?hfy_debug=1 turns it on. */
+export const debugOn = (search) => { try { return new URLSearchParams(String(search || "")).get("hfy_debug") === "1"; } catch { return false; } };
+
+/**
+ * Per-card timer. `start()` when a card is shown, `stop()` when it is saved or skipped (returns the seconds, or null when no card was open). `now` is a clock in
+ * milliseconds (injectable for tests). Keeps the last `limit` durations; `stats()` is {cards, medianSeconds} over them (medianSeconds to one decimal, null with none).
+ */
+export function createTimingRecorder({ now = () => (typeof performance !== "undefined" ? performance.now() : Date.now()), limit = STATS_WINDOW } = {}) {
+  let shownAt = null;
+  const durations = [];
+  return {
+    start() { shownAt = now(); },
+    stop() {
+      if (shownAt === null) return null;
+      const seconds = Math.max(0, (now() - shownAt) / 1000);
+      shownAt = null;
+      durations.push(seconds);
+      while (durations.length > limit) durations.shift();
+      return seconds;
+    },
+    durations: () => durations.slice(),
+    stats() {
+      const m = medianSeconds(durations);
+      return { cards: durations.length, medianSeconds: m === null ? null : Math.round(m * 10) / 10 };
+    }
+  };
+}
