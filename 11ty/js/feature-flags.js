@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "0c2012ba",
+        "js": "7100b704",
         "css": "4cd750ae"
       },
       "family": {
@@ -44,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "ec2c7845",
+        "js": "8edb72d4",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "745a03e7",
+        "js": "7576ef58",
         "css": "38a33f05"
       },
       "join": {
@@ -63,8 +63,12 @@
         "js": "dba45074",
         "css": "a475a3dd"
       },
+      "moderation-queue": {
+        "js": "794c62cf",
+        "css": "c3d2737a"
+      },
       "my-posts": {
-        "js": "86e01c4d",
+        "js": "dad46e84",
         "css": "3d97e51e"
       },
       "notifications": {
@@ -76,7 +80,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "85de8bb0",
+        "js": "7c447efb",
         "css": "e955e9a8"
       },
       "person-links": {
@@ -92,15 +96,15 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "fb560314",
+        "js": "f4e4649a",
         "css": "dfc6ddf3"
       },
       "record-moderation": {
-        "js": "865cbf9f",
+        "js": "f5516465",
         "css": "5b548e69"
       },
       "review": {
-        "js": "73e16fab",
+        "js": "a18fc4aa",
         "css": "d9db1c3c"
       },
       "search": {
@@ -108,7 +112,7 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "f185da8e",
+        "js": "23424cab",
         "css": "be4f0b90"
       },
       "shell": {
@@ -116,7 +120,7 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "8cd5f926",
+        "js": "a2309433",
         "css": "c249f04c"
       },
       "tree": {
@@ -957,6 +961,15 @@
     if (flags.accessRequests !== true) return;
     if (/^\/me\/requests\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("access-requests", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-192: the moderation-queue island fills the static /me/moderation/ page (the admins' queue of hidden and asked-about items). With moderationV1 off the
+  // bundle is not requested and the page keeps its "not available yet" line (HFY-R8); the island asks /api/me itself and shows a non-admin one line.
+  resolveFlags().then((flags) => {
+    if (flags.moderationV1 !== true) return;
+    if (/^\/me\/moderation\/?(index\.html)?$/.test(window.location.pathname)) {
+      loadIsland("moderation-queue", { onError() { /* the page keeps its "not available yet" note */ } });
     }
   });
 

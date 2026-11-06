@@ -1,0 +1,35 @@
+/* /me/moderation/: the moderation queue island (moderation-queue.jsx; HFY-TSK-192). Aliases only: --io-color-semantic-*, --io-space-*, --io-control-*,
+   --io-radius-* and --io-typography-* (theme-lint no-literal-token-values). One column at every width; controls are --io-control-tap-min. */
+.hfy-modq__wrap, .hfy-modq {
+  box-sizing: border-box; min-width: 0; color: var(--io-color-semantic-text); font-family: var(--io-typography-font-ui);
+  font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-normal);
+}
+.hfy-modq { display: grid; gap: var(--io-space-3); }
+.hfy-modq__skeleton { min-height: calc(3 * var(--io-control-h-lg)); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-sunken); }
+.hfy-modq__msg, .hfy-modq__status { margin: 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-modq__status:empty { display: none; }
+.hfy-modq__problem { margin: 0; padding: var(--io-space-2) var(--io-space-3); border-left: var(--io-control-focus-ring) solid var(--io-color-semantic-danger); overflow-wrap: anywhere; }
+.hfy-modq__gate { display: grid; gap: var(--io-space-3); justify-items: start; }
+.hfy-modq__gate p { margin: 0; }
+.hfy-modq__tabs { display: flex; flex-wrap: wrap; gap: var(--io-space-1) var(--io-space-3); border-bottom: 1px solid var(--io-color-semantic-border); }
+.hfy-modq a.hfy-modq__tab {
+  display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); padding: 0 var(--io-space-2);
+  color: var(--io-color-semantic-text-dim); font-weight: var(--io-typography-weight-semibold); text-decoration: none; border-bottom: var(--io-control-focus-ring) solid transparent;
+}
+.hfy-modq a.hfy-modq__tab[aria-current="page"] { color: var(--io-color-semantic-text); border-bottom-color: var(--io-color-semantic-accent); }
+.hfy-modq a:focus-visible, .hfy-modq button:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+.hfy-modq__items { margin: 0 0 var(--io-space-3); padding: 0; list-style: none; display: grid; gap: var(--io-space-2); }
+.hfy-modq__item { display: grid; gap: var(--io-space-2); min-width: 0; padding: var(--io-space-3); border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); }
+.hfy-modq__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-1) var(--io-space-3); min-width: 0; }
+.hfy-modq__kind { font-weight: var(--io-typography-weight-semibold); }
+.hfy-modq__author { flex: 1 1 calc(3 * var(--io-space-9)); min-width: 0; overflow-wrap: anywhere; }
+.hfy-modq__when, .hfy-modq__by { color: var(--io-color-semantic-text-dim); }
+.hfy-modq__state { padding: var(--io-space-1) var(--io-space-2); border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); font-weight: var(--io-typography-weight-semibold); }
+.hfy-modq__note, .hfy-modq__by { margin: 0; overflow-wrap: anywhere; }
+.hfy-modq__actions { display: flex; flex-wrap: wrap; gap: var(--io-space-2) var(--io-space-3); }
+.hfy-modq a.hfy-modq__btn, .hfy-modq button.hfy-modq__btn, a.hfy-modq__btn {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: transparent; color: var(--io-color-semantic-text);
+  font: inherit; font-weight: var(--io-typography-weight-semibold); text-decoration: none; cursor: pointer;
+}
+.hfy-modq button.hfy-modq__btn:disabled { border-color: var(--io-color-semantic-border); background: var(--io-color-semantic-surface-sunken); color: var(--io-color-semantic-text-dim); cursor: default; }

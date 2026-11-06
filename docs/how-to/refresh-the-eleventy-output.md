@@ -71,7 +71,7 @@ The islands build rewrites eighteen of the mirrored files whenever a file they r
 
 - `js/feature-flags.js` and `sw.js`, through their `hfy-asset-versions` blocks;
 - `manifest.webmanifest`, through its colours;
-- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `me/review/index.html`, `me/requests/index.html`, `admin/sync/index.html`, `tree/index.html`, `edit/index.html`, `edit/family/index.html`, `join/index.html` and `chat/index.html`, through their head blocks and `?v=` versions.
+- `offline.html`, `family-login/index.html`, `posts/index.html`, `me/index.html`, `me/notifications/index.html`, `me/links/index.html`, `me/inbox/index.html`, `me/review/index.html`, `me/requests/index.html`, `me/moderation/index.html`, `admin/sync/index.html`, `tree/index.html`, `edit/index.html`, `edit/family/index.html`, `join/index.html` and `chat/index.html`, through their head blocks and `?v=` versions.
 
 For these, `missing or different` usually means only that a build has changed them since the last copy. Copy them again with mirror steps 1 and 2.
 
@@ -95,6 +95,7 @@ For these, `missing or different` usually means only that a build has changed th
 | `11ty/me/inbox/index.html` | `public/me/inbox/index.html` | The notification inbox page (`inboxV1`, HFY-TSK-185). Standalone, like the notifications page. |
 | `11ty/me/review/index.html` | `public/me/review/index.html` | The suggestions page (`proposalReview`, `recordEdit` and `adminDelete`, HFY-TSK-259 and HFY-TSK-295). Standalone, like the notifications page. `me/` is already in the refresh's rsync excludes, so the refresh never deletes it. |
 | `11ty/me/requests/index.html` | `public/me/requests/index.html` | The family requests page (`accessRequests`, HFY-TSK-264): the admins' queue of requests to join. Standalone, like the notifications page. `me/` is already in the refresh's rsync excludes (HFY-R46), so the refresh never deletes it. |
+| `11ty/me/moderation/index.html` | `public/me/moderation/index.html` | The moderation queue page (`moderationV1`, HFY-TSK-192): the admins' queue of hidden and asked-about items. Standalone, like the family requests page. `me/` is already in the refresh's rsync excludes (HFY-R46), so the refresh never deletes it. |
 | `11ty/admin/sync/index.html` | `public/admin/sync/index.html` | The admin sync status page (`syncStatusV1`, HFY-TSK-279): the status and conflict decisions for `hfy-admin` and `gramps-owner`. Standalone, like the requests page. `admin/` is a new top-level directory, so the refresh's rsync excludes it (`--exclude 'admin/'`, HFY-R46) and never deletes it. |
 | `11ty/tree/index.html` | `public/tree/index.html` | The family tree page (`familyViz`, HFY-TSK-201). Standalone, like the notifications page. |
 | `11ty/edit/index.html` | `public/edit/index.html` | The record editor page (`recordEdit`, HFY-TSK-212). Standalone, like the notifications page. |
