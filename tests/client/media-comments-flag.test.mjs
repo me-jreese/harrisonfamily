@@ -1,4 +1,4 @@
-// HFY-TSK-389-0A: mediaCommentsV1 ships false, is not implied by another flag, and gates only the comments slot of the media detail (the island reads it itself).
+// HFY-TSK-389-0A: mediaCommentsV1 shipped false (flipped true by HFY-TSK-396, G-prod P4-R6, io 2026-11-06), is not implied by another flag, and gates only the comments slot of the media detail (the island reads it itself).
 // Run: node --test tests/client/*.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -6,10 +6,10 @@ import { readFileSync } from "node:fs";
 
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
 
-test("flags.json defines mediaCommentsV1 as false, and mediaBrowserV1 and authV2 are untouched", () => {
+test("flags.json has mediaCommentsV1 and mediaBrowserV1 true after the HFY-TSK-396 flip, and authV2 untouched", () => {
   const flags = JSON.parse(read("11ty/_data/flags.json"));
-  assert.equal(flags.mediaCommentsV1, false);
-  assert.equal(flags.mediaBrowserV1, false);
+  assert.equal(flags.mediaCommentsV1, true);
+  assert.equal(flags.mediaBrowserV1, true);
   assert.equal(flags.authV2, true);
 });
 
