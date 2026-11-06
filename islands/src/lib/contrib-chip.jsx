@@ -2,7 +2,7 @@
 // [data-slot="contributions"] host in the heading chip slot (person-page-mount-points) and links to the contributions column
 // (#hfy-person-contributions). The hero and its slots are rebuilt by every render, so it fills the host again on every
 // hfy:person-rendered, and once at start in case the host is already there. The count is contributions.stats, shared with the column header.
-// "0 contributions" shows on member pages; the chip is hidden only on records that are not members (lib/contrib-model.js chipFor). No
+// The chip shows exactly when contributions.stats says member is true ("0 contributions" included) (lib/contrib-model.js chipFor). No
 // answer (signed out, the route dark, offline) draws nothing.
 import "../contrib.css";
 import { useEffect, useState } from "react";
@@ -20,7 +20,7 @@ export function ContribChip({ personId, person }) {
     readStats(personId).then((s) => { if (live) setStats(s); }, () => { if (live) setStats(null); });
     return () => { live = false; };
   }, [personId]);
-  const chip = chipFor(stats, person);
+  const chip = chipFor(stats);
   if (!chip) return null;
   // A hash jump alone leaves focus where it was: put it on the column's heading, so the next Tab starts inside the column.
   const onClick = () => {

@@ -158,7 +158,7 @@ export function createHandler(deps) {
     const links = createLinks(base);
     const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
-    const contrib = createContribReader({ ddb, cmds, table, actor, now, log });
+    const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
     return { chat, store, isOwner, content, comments, moderation, graduation, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
