@@ -68,7 +68,7 @@
         "css": "c3d2737a"
       },
       "my-posts": {
-        "js": "dad46e84",
+        "js": "add93f63",
         "css": "3d97e51e"
       },
       "notifications": {
@@ -80,7 +80,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "ceefb74d",
+        "js": "e9b0db6f",
         "css": "bd2a5788"
       },
       "person-links": {
@@ -96,15 +96,15 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "3f4eed78",
+        "js": "ef1d518d",
         "css": "105346a6"
       },
       "record-moderation": {
-        "js": "f5516465",
+        "js": "8cab6d0e",
         "css": "5b548e69"
       },
       "review": {
-        "js": "9e917821",
+        "js": "8be01fa3",
         "css": "bf26d487"
       },
       "search": {
@@ -120,11 +120,11 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "a2309433",
+        "js": "c7d5a977",
         "css": "c249f04c"
       },
       "tree": {
-        "js": "b3460f78",
+        "js": "3a6979f8",
         "css": "894963fd"
       }
     },
