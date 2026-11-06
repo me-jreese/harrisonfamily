@@ -57,11 +57,10 @@ baseline:
     T-12: {status: pass, why: "structural: no origin input on the render, rules, projection or redaction path; the tag DTO carries one constant source", checks: "source scan; a behavioural twin needs the hfy-web-upload Tag (D-34), not shipped"}
     P-1:  {status: skip, why: "not applicable: portraitV1 is not shipped (no portrait operation in api/src or islands/src)"}
     V-1:
-      status: fail
-      why: "the overlay branches on tag.source: different words for site and gramps, and a just-added tag is marked site client-side; the render DTO itself is origin-blind"
-      failing: [overlay-ignores-origin]
+      status: pass
+      why: "the overlay shows one line for every tag and no longer branches on tag.source (HFY-TSK-388-0G pass 2: photo-tags.js SOURCE_LINE is one string, applyToTags adds no source); the render DTO was already origin-blind"
+      passing: [overlay-ignores-origin]
       skipped: ["Gramps Individual Complete and Narrated Web report diff; section membership (needs D-34 Tags, not shipped)"]
-      cause: ["islands/src/lib/photo-tags.js:146,167", "islands/src/lib/photo-tag-edit.js:226-232"]
     T-15: {status: skip, why: "kit-only: consent module K-1"}
     T-16: {status: skip, why: "kit-only: selfUntag K-2"}
     T-17: {status: skip, why: "kit-only: reAddLock K-3"}
@@ -75,7 +74,7 @@ baseline:
 
 ## Adapter status (HFY-TSK-388-0G, pass 1)
 
-The new HFY tag adapter ([Tag ports of the media adapter](front-end.md#tag-ports-of-the-media-adapter)) is the writer pass 2 puts behind the editor. The shipped editor and its read helpers are unchanged, so the rows above still fail for them: their entries, and the Python rows, stay known-fails here. This section records what the adapter does on the same fixtures. It is a dated record, not a live status: run `node --test tests/tagging/wire-conformance.test.mjs` and, in `islands/`, `node --test tests/hfy-tag-ports.test.mjs tests/hfy-tag-parity.test.mjs`.
+The new HFY tag adapter ([Tag ports of the media adapter](front-end.md#tag-ports-of-the-media-adapter)) is the writer pass 2 puts behind the editor. The shipped editor's helper module (`photo-tag-edit.js`) is unchanged and its rows above still fail for it; pass 2 (HFY-TSK-388-0G) swapped the editor UI for the kit's, so no UI uses it any more, and the overlay no longer branches on the origin (V-1 passes): their entries, and the Python rows, stay known-fails here. This section records what the adapter does on the same fixtures. It is a dated record, not a live status: run `node --test tests/tagging/wire-conformance.test.mjs` and, in `islands/`, `node --test tests/hfy-tag-ports.test.mjs tests/hfy-tag-parity.test.mjs`.
 
 ```yaml
 adapter:
@@ -101,9 +100,9 @@ adapter:
     T-16: {adapter: pass, why: "selfUntag removes the member's own MediaRef through the normal path, with a note, and keeps a reversible audit record"}
     T-17: {adapter: "HFY policy", why: "the re-add lock is audit-only: a re-add by another member is allowed (as a proposal) and recorded"}
     T-18: {adapter: "HFY policy", why: "hideAll is a no-op"}
-    V-1: {editor: fail, adapter: pass, why: "the adapter's tag carries no source; the overlay is the editor's and changes in pass 2"}
+    V-1: {editor: pass, adapter: pass, why: "the adapter's tag carries no source, and since pass 2 neither the overlay nor the lightbox view layer branches on one"}
   still_known_fail_outside_the_adapter:
-    - {where: "islands/src/lib/photo-tag-edit.js, photo-tags.js", rows: [T-2, T-3, T-4, T-5, T-9, V-1], retired_by: "the editor swap (pass 2)"}
+    - {where: "islands/src/lib/photo-tag-edit.js, photo-tags.js", rows: [T-2, T-3, T-4, T-5, T-9], note: "since the editor swap (pass 2, HFY-TSK-388-0G) no UI uses this helper module; the kit editor over the adapter passes T-2 to T-5, and T-9 stays the documented limitation (ruling P4-R34)"}
     - {where: "gramps/hfygramps/rules.py:349-359", what: "rect_problem holds degenerate rects"}
     - {where: "gramps/hfygramps/projection.py:755-763", what: "restores the base rect for those held rects"}
     - {where: "gramps/hfygramps/render/transform.py:431-445", what: "mediaref_rect nulls [0,0,0,0] only", note: "the Python renderer fixes are parked until their deploy has io's go-ahead"}

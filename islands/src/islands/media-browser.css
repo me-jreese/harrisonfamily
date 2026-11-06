@@ -1,0 +1,12 @@
+/* The All media and media detail pages (media-browser.jsx, HFY-TSK-388-0B, boards B2 and B3). The look of the grid, chips, stage and navigation is the kit's
+   browser.css; this file only places the page's own pieces. Aliases only (--io-*): 44 px targets, wraps at 375, no sideways scroll. */
+.hfy-mb-note { margin: var(--io-space-4) 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-mb-note a { display: inline-flex; align-items: center; min-height: var(--io-control-tap-min); }
+.hfy-mb-people { margin: var(--io-space-4) 0; min-width: 0; }
+.hfy-mb-people__h { margin: 0 0 var(--io-space-2); font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); }
+.hfy-mb-people__none { margin: 0; color: var(--io-color-semantic-text-dim); }
+.hfy-mb-people__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--io-space-1); }
+.hfy-mb-people__item { display: flex; flex-wrap: wrap; align-items: center; min-height: var(--io-control-tap-min); overflow-wrap: anywhere; }
+.hfy-mb-people__item[data-pending] { border-left: var(--io-space-1) dashed var(--io-color-semantic-border-strong); padding-left: var(--io-space-2); }
+.hfy-mb-people__name { color: var(--io-color-semantic-text); }
+.hfy-mb-people__pending { color: var(--io-color-semantic-text-dim); }

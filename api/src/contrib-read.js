@@ -180,7 +180,7 @@ export function hrefOf(e, proposals = new Map()) {
       const t = threadOf(e);
       const anchor = `#comment-${e.ref.id}`;
       if (t?.startsWith("post:")) return `/posts/?id=${enc(t.slice(5))}${anchor}`;
-      if (t?.startsWith("media:")) return `/media/?id=${enc(t.slice(6))}${anchor}`;
+      if (t?.startsWith("media:")) return `/all-media/?id=${enc(t.slice(6))}${anchor}`;
       if (t?.startsWith("proposal:")) return person(proposals.get(t.slice(9))?.subject?.gramps_id, anchor);
       return person(personOf(t?.startsWith("person:") ? t : e.subject), anchor);
     }

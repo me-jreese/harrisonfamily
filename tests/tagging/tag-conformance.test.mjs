@@ -68,8 +68,7 @@ const KNOWN = {
   "T-4/author/over-100": NO_GUARD,
   "T-4/author/validateNewRect-exported": { why: "the authoring guard validateNewRect does not exist in the editor module", at: `${PE}` },
   "T-5/ui/resize-floor-is-2-units": { why: "MIN_SIDE is 1, so an edge or corner can be resized to a 1-unit side (D-07 wants 2)", at: `${PE}:50,95-103` },
-  "T-9/add-identical-appends": { why: "buildTagOps refuses an identical tag with reason \"exists\"; D-04 says add always appends and rect equality never identifies a MediaRef", at: `${PE}:191-199` },
-  "V-1/overlay-ignores-origin": { why: "the overlay branches on tag.source (site vs gramps): different words, and applyToTags marks a fresh tag \"site\"", at: `${PT}:146,167; ${PE}:226-232` }
+  "T-9/add-identical-appends": { why: "buildTagOps refuses an identical tag with reason \"exists\"; D-04 says add always appends and rect equality never identifies a MediaRef", at: `${PE}:191-199` }
 };
 
 function check(key, fn) {
@@ -238,7 +237,12 @@ test("T-11/proposal-ops-are-the-direct-ops", () => {
 test("P-1/portrait-index-0-prior-at-1-full-frame-crop-null", { skip: "not applicable: portraitV1 is not shipped (no portrait operation in api/src or islands/src; only CSS hits)" }, () => {});
 
 // ---- V-1 (BRD T-14): web upload, post graduation and desk import look alike --------------------------------------------------------------
-check("V-1/overlay-ignores-origin", () => assert.equal(tags.SOURCE_LINE.site, tags.SOURCE_LINE.gramps));
+check("V-1/overlay-ignores-origin", () => {
+  const t = { grampsId: "I9001", name: "Pat Example", rect: [10, 10, 40, 40] };
+  assert.deepEqual(tags.tagView({ ...t, source: "site" }, null), tags.tagView({ ...t, source: "gramps" }, null));
+  assert.equal(tags.SOURCE_LINE, "tagged in the family tree");
+  assert.equal(editor.applyToTags([], { kind: "add", grampsId: "I9001", name: "Pat Example" }, [10, 10, 40, 40])[0].source, undefined);
+});
 test("V-1/gramps-reports-identical-and-section-membership", { skip: "needs the Gramps Individual Complete and Narrated Web reports and the hfy-web-upload / hfy-post Tags (D-34), which are not shipped" }, () => {});
 
 // ---- T-15 .. T-19: kit-only or audit-only ----------------------------------------------------------------------------------------------

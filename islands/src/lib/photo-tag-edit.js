@@ -227,7 +227,7 @@ export function applyToTags(tags, change, rect) {
   const list = Array.isArray(tags) ? tags.slice() : [];
   const same = (t) => isObj(t) && t.grampsId === change.grampsId && sameRect(normalizeRect(t.rect), normalizeRect(change.from));
   if (change.kind === "add") {
-    list.push({ grampsId: change.grampsId, name: change.name, rect, isPrimary: false, attributes: [], notes: [], citations: [], source: "site" });
+    list.push({ grampsId: change.grampsId, name: change.name, rect, isPrimary: false, attributes: [], notes: [], citations: [] });
     return list;
   }
   let seen = 0;

@@ -238,6 +238,8 @@ export function detailOf(cat, id, query) {
     card: item.card, imageUrl: item.image, ...(item.description ? { description: item.description } : {}), origin: item.origin,
     ...(originRef ? { originRef } : {}), tags, version,
     ...(originBy ? { originBy } : {}),
+    ...(item.media ? { handle: item.media.handle } : {}),
+    ...(at >= 0 ? { position: at + 1, total: list.length } : {}),
     commentsSubject: item.kind === "media" ? `media:${id}` : item.postId ? `post:${item.postId}` : undefined,
     previousId: at > 0 ? list[at - 1].id : null, nextId: at >= 0 && at + 1 < list.length ? list[at + 1].id : null,
   };

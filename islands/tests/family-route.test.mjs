@@ -129,7 +129,7 @@ for (const familyViz of [false, true]) {
 
 test("onSettings: the gear is current on /me/ and its sub-paths only", () => {
   for (const p of ["/me", "/me/", "/me/index.html", "/me/notifications/", "/me/links/"]) assert.equal(onSettings(p), true, p);
-  for (const p of ["/", "/media/", "/meetings/", "/person/", "/posts/", "/search/me/"]) assert.equal(onSettings(p), false, p);
+  for (const p of ["/", "/all-media/", "/meetings/", "/person/", "/posts/", "/search/me/"]) assert.equal(onSettings(p), false, p);
 });
 
 // ------------------------------------------------------------------------------------------------- the scaffold is gone

@@ -200,7 +200,7 @@ describe("finding the tag a page shows", () => {
     assert.equal(nthOf(tags, 2), 1);
   });
   it("nthOf counts a Gramps-sourced and a site-sourced tag together: both are MediaRefs of the person, so both sit in the list findTagElement walks", () => {
-    const tags = [{ grampsId: "I9002", rect: [10, 10, 30, 30], source: "gramps" }, { grampsId: "I9002", rect: [10, 10, 30, 30], source: "site" }];
+    const tags = [{ grampsId: "I9002", rect: [10, 10, 30, 30] }, { grampsId: "I9002", rect: [10, 10, 30, 30] }];
     assert.equal(nthOf(tags, 1), 1);
     const p = person(2, [mref([10, 10, 30, 30]), mref([10, 10, 30, 30])]);
     assert.equal(findTagElement(p, MEDIA, [10, 10, 30, 30], nthOf(tags, 1)).index, 1);
@@ -316,14 +316,14 @@ describe("buildTagOps against the ops engine", () => {
 
 describe("applyToTags", () => {
   const tags = [
-    { grampsId: "I9002", name: "Spouse Example", rect: [10, 20, 30, 50], isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" },
-    { grampsId: "I9002", name: "Spouse Example", rect: [50, 20, 30, 50], isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" },
-    { grampsId: "I9003", name: "Child Example", rect: null, isPrimary: false, attributes: [], notes: [], citations: [], source: "gramps" }
+    { grampsId: "I9002", name: "Spouse Example", rect: [10, 20, 30, 50], isPrimary: false, attributes: [], notes: [], citations: [] },
+    { grampsId: "I9002", name: "Spouse Example", rect: [50, 20, 30, 50], isPrimary: false, attributes: [], notes: [], citations: [] },
+    { grampsId: "I9003", name: "Child Example", rect: null, isPrimary: false, attributes: [], notes: [], citations: [] }
   ];
   it("adds a site tag with the stored rect", () => {
     const out = applyToTags(tags, { kind: "add", grampsId: "I9004", name: "Sibling Example" }, [1, 2, 3, 4]);
     assert.equal(out.length, 4);
-    assert.deepEqual(out[3], { grampsId: "I9004", name: "Sibling Example", rect: [1, 2, 3, 4], isPrimary: false, attributes: [], notes: [], citations: [], source: "site" });
+    assert.deepEqual(out[3], { grampsId: "I9004", name: "Sibling Example", rect: [1, 2, 3, 4], isPrimary: false, attributes: [], notes: [], citations: [] });
     assert.equal(tags.length, 3, "the input is not changed");
   });
   it("moves and removes the tag that matches, even with reversed corners in the data", () => {

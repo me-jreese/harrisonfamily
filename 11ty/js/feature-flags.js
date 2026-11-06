@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "85b38faa",
+        "js": "f64884b0",
         "css": "4cd750ae"
       },
       "family": {
@@ -44,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "8edb72d4",
+        "js": "ec2c7845",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "7576ef58",
+        "js": "745a03e7",
         "css": "38a33f05"
       },
       "join": {
@@ -71,6 +71,10 @@
         "js": "dba45074",
         "css": "a475a3dd"
       },
+      "media-browser": {
+        "js": "3c77146d",
+        "css": "10af69ee"
+      },
       "moderation-queue": {
         "js": "794c62cf",
         "css": "c3d2737a"
@@ -92,7 +96,7 @@
         "css": "bd2a5788"
       },
       "person-add-photo": {
-        "js": "dd39f6b3",
+        "js": "aaccbc05",
         "css": "5ff12110"
       },
       "person-links": {
@@ -100,19 +104,19 @@
         "css": "fcacbc39"
       },
       "person-portrait": {
-        "js": "f5d10268",
+        "js": "94e85f47",
         "css": "af2df384"
       },
       "photo-tag-edit": {
-        "js": "64035558",
-        "css": "7bf60ae7"
+        "js": "ce155f7f",
+        "css": "b9b6eae0"
       },
       "photo-tags": {
-        "js": "2f11c4e8",
+        "js": "5993b868",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "5140636e",
+        "js": "ec5a18f7",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -140,7 +144,7 @@
         "css": "c249f04c"
       },
       "tree": {
-        "js": "958e4efe",
+        "js": "45b8ca74",
         "css": "894963fd"
       }
     },
@@ -969,6 +973,13 @@
   resolveFlags().then((flags) => {
     if (flags.lifeDatesV1 !== true || !/^\/me\/dates\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("life-dates-queue", { onError() { /* the page keeps its "not available yet" note */ } });
+  });
+
+  // HFY-TSK-388-0B: mediaBrowserV1 mounts the All media page and the media detail page on the static /all-media/ page (island media-browser: no id in the address
+  // is the grid, ?id=<gramps_id> is one item). Not in the main menu. With the flag off the bundle is not requested and the page keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.mediaBrowserV1 !== true || !/^\/all-media\/?(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("media-browser", { onError() { /* the page keeps its "not available yet" note */ } });
   });
 
   // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]
