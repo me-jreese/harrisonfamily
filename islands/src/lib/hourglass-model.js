@@ -20,6 +20,9 @@
 //  - Order (G1, G4): partners keep the file order of their unions (the graph has no union year); children and brothers and sisters sort by birth
 //    year, stable, with no year last. Every row is de-duplicated by id. The two ancestor rows are structural: a person who stands under both
 //    sides is drawn under each, and tagged `both`.
+//  - Both sides: grandparents who are brothers or sisters (they share a parent union) give the note and the `both` tags; a grandparent who
+//    stands under both parents is tagged too, with no note (nobody to name). Either way the shared parent union's great-grandparents are
+//    `ggp[].shared`, which is what offers the great-grandparents (`bigLayout().canShowGgp`).
 //  - Years: "1880–1942", "b. 1950", "d. 1942", "" for none, "c. " before a year the graph marks approximate; never a word for a missing year.
 import { faceUrl, initials } from "./navigator-model.js";
 
@@ -198,12 +201,21 @@ function card(idx, id, role, word, extra = {}) {
 
 const ghost = (text) => ({ ghost: true, text, tell: true });
 
+/**
+ * The "both sides" note for the first union of grandparents who are brothers and sisters, naming every one of them ("Ann and Bo were sisters, so
+ * Cy Sample and Di Sample are on both sides of this family"; three or more read "Ann, Bo and Cy were siblings"). Any further shared union is
+ * shown by the tags and the gold lines, not by a second sentence.
+ */
 function sharedText(idx, couple, kids) {
-  const [a, b] = kids.map((k) => idx.people.get(k));
-  const pair = a.sex === b.sex && a.sex !== "u" ? (a.sex === "f" ? "sisters" : "brothers") : a.sex === "f" && b.sex === "m" ? "sister and brother" : a.sex === "m" && b.sex === "f" ? "brother and sister" : "siblings";
+  const ks = kids.map((k) => idx.people.get(k));
+  const sexes = new Set(ks.map((k) => k.sex));
+  const pair = ks.length === 2 && sexes.size === 2 && sexes.has("f") && sexes.has("m") ? (ks[0].sex === "f" ? "sister and brother" : "brother and sister") : sexes.size === 1 && sexes.has("f") ? "sisters" : sexes.size === 1 && sexes.has("m") ? "brothers" : "siblings";
+  const who = ks.map(firstName);
+  const list = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}` : who[0] || "";
   const ps = couple.slots.filter(Boolean).map((x) => idx.people.get(x));
+  if (!ps.length) return `${list} were ${pair}, so their parents are on both sides of this family.`;
   const names = ps.length === 2 && ps[0].surname !== ps[1].surname ? ps.map((p) => `${firstName(p)} ${p.surname || ""}`.trim()).join(" and ") : `${ps.map(firstName).join(" and ")} ${ps[0].surname || ""}`.trim();
-  return `${firstName(a)} and ${firstName(b)} were ${pair}, so ${names} ${ps.length === 2 ? "are" : "is"} on both sides of this family.`;
+  return `${list} were ${pair}, so ${names} ${ps.length === 2 ? "are" : "is"} on both sides of this family.`;
 }
 
 /**

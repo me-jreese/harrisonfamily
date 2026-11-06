@@ -1,11 +1,12 @@
-// HFY-TSK-379 pass 1: the hourglass tree's geometry (lib/hourglass-layout.js) on the invented people of fixtures/tree-graph-hourglass.json.
+// HFY-TSK-379 pass 1: the hourglass tree's geometry (lib/hourglass-layout.js, and lib/hourglass-big.js for the big tree) on the invented people of fixtures/tree-graph-hourglass.json.
 // Plain `node --test`, no browser. The small tree is checked at the content widths of the four viewports the boards use (320 gives 288, 375 gives
 // 343, 768 gives 670, 1280 gives 710), the big tree at its four sizes: no two cards overlap, everything sits inside the width or the canvas,
 // the numbers are the spec's (T-Spec, DIGEST section 2).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { indexGraph, familyModel, COPY } from "../src/lib/hourglass-model.js";
-import { BAND_INSET, FACE, LINE, SIZES, STRIP, bigLayout, comb, defaultLevel, scrollTarget, seeAll, smallLayout } from "../src/lib/hourglass-layout.js";
+import { BAND_INSET, FACE, LINE, STRIP, comb, smallLayout } from "../src/lib/hourglass-layout.js";
+import { SIZES, bigLayout, defaultLevel, scrollTarget, seeAll } from "../src/lib/hourglass-big.js";
 import { CASES, GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const idx = indexGraph(GRAPH);
@@ -501,4 +502,160 @@ test("every viewport of the boards: the default size lays out, scrolls to the pe
 test("the big tree has the model's copy for chips and ghosts, and row labels come from COPY", () => {
   const L = bigLayout(model("pedigree"), 2, { ggp: true });
   assert.deepEqual(L.labels.map((l) => l.text), [COPY.rows[-3], COPY.rows[-2], COPY.rows[-1]]);
+});
+
+// Review fixes (pass 1, round 2): unique connectors, the closed chip's line, offsets that fit the gap, see all and the scroll target, the ggp rule.
+
+/** The people of a person with `n` partners, each with one child: ids p (focus), w0.., k0.. (invented). */
+function crowd(n) {
+  const people = [{ id: "p", sex: "f" }, ...Array.from({ length: n }, (_, i) => [{ id: `w${i}`, sex: "m" }, { id: `k${i}`, sex: "u" }]).flat()];
+  return indexGraph({
+    schemaVersion: 1,
+    people: people.map(({ id, sex }) => ({ id, name: `${id} Sample`, given: id, surname: "Sample", sex })),
+    unions: Array.from({ length: n }, (_, i) => ({ id: `u${i}`, type: "married", partners: ["p", `w${i}`], children: [{ id: `k${i}`, rel: {} }] }))
+  });
+}
+
+/** Every strip lies between two consecutive rows of cards (or a card's own bottom edge and the next row's top), give or take the 2 px line. */
+function assertStripsBetweenRows(L, label) {
+  const tops = new Map();
+  const bottoms = new Map();
+  for (const n of L.nodes) { tops.set(n.g, n.top); bottoms.set(n.g, n.top + n.height); }
+  const gaps = [...bottoms.keys()].filter((g) => tops.has(g + 1)).map((g) => [bottoms.get(g), tops.get(g + 1)]);
+  for (const s of L.strips) {
+    assert.ok(s.w >= 0 && s.h >= 0, `${label}: a strip has a negative size: ${stripKey(s)}`);
+    assert.ok(gaps.some(([a, b]) => s.y >= a - 1 - EPS && s.y + s.h <= b + 1 + EPS), `${label}: a strip leaves the gap between its two rows: ${stripKey(s)}`);
+  }
+  for (const r of L.rings) assert.ok(gaps.some(([a, b]) => r.cy > a && r.cy < b), `${label}: a ring is outside the gaps`);
+}
+
+test("no connector is drawn twice: strips and rings are unique in every case at every size, opened or not", () => {
+  const dup = (list, key) => list.length - new Set(list.map(key)).size;
+  for (const [name, id] of Object.entries(CASES)) {
+    const m = familyModel(idx, id);
+    for (let lv = 0; lv <= 3; lv += 1) for (const sibsOpen of [false, true]) for (const ggp of [false, true]) {
+      const L = bigLayout(m, lv, { sibsOpen, ggp });
+      assert.equal(dup(L.strips, stripKey), 0, `${name} level ${lv} sibs ${sibsOpen} ggp ${ggp}: duplicate strips`);
+      assert.equal(dup(L.rings, (r) => `${r.cx},${r.cy}`), 0, `${name} level ${lv} sibs ${sibsOpen} ggp ${ggp}: duplicate rings`);
+    }
+  }
+});
+
+test("half brothers and sisters of one other union share one bracket and one comb: a second one adds a drop, not a bracket", () => {
+  const withHalves = (n) => {
+    const kids = Array.from({ length: n }, (_, i) => `h${i}`);
+    return familyModel(indexGraph({
+      schemaVersion: 1,
+      people: ["x", "f", "m", "o", ...kids].map((id) => ({ id, name: `${id} Sample`, given: id, surname: "Sample", sex: id === "m" || id === "o" ? "f" : id === "f" ? "m" : "u" })),
+      unions: [
+        { id: "u0", type: "married", partners: ["f", "m"], children: [{ id: "x", rel: {} }] },
+        { id: "u1", type: "married", partners: ["f", "o"], children: kids.map((id) => ({ id, rel: {} })) }
+      ]
+    }), "x");
+  };
+  const one = bigLayout(withHalves(2), 2, { sibsOpen: true });
+  const open = bigLayout(withHalves(3), 2, { sibsOpen: true });
+  assert.equal(open.rings.length, one.rings.length, "the parents' bracket and one for the father's other partner, however many half brothers there are");
+  assert.equal(open.rings.length, 2);
+  assert.equal(open.strips.length - one.strips.length, 1, "each extra half brother adds one drop");
+  assert.equal(new Set(open.strips.map(stripKey)).size, open.strips.length);
+  for (let lv = 0; lv <= 3; lv += 1) assertBigGeometry(bigLayout(withHalves(3), lv, { sibsOpen: true }), `three half brothers at ${lv}`);
+});
+
+test("the closed brothers-and-sisters chip hangs like what it holds: solid with a full brother or sister, dashed when all are half", () => {
+  const drop = (L, chip) => L.strips.filter((s) => s.w === LINE && s.x === chip.cx - 1 && s.y + s.h === chip.top);
+  for (const lv of [0, 1, 2, 3]) {
+    const full = bigLayout(model("full"), lv, {});
+    const fc = full.nodes.find((n) => n.kind === "chip");
+    assert.ok(drop(full, fc).length === 1 && drop(full, fc).every((s) => !s.dashed), `full siblings, level ${lv}: a solid drop`);
+    const mixed = bigLayout(model("siblings"), lv, {});
+    const mc = mixed.nodes.find((n) => n.kind === "chip");
+    assert.ok(drop(mixed, mc).length === 1 && drop(mixed, mc).every((s) => !s.dashed), `full and half, level ${lv}: solid, the chip holds a full one`);
+    const half = model("partners");
+    assert.ok(half.siblings.list.length && half.siblings.list.every((x) => x.half), "the partners case has only half brothers and sisters");
+    const hl = bigLayout(half, lv, {});
+    const hc = hl.nodes.find((n) => n.kind === "chip");
+    assert.ok(drop(hl, hc).length === 1 && drop(hl, hc).every((s) => s.dashed), `half only, level ${lv}: a dashed drop`);
+    assert.equal(hl.strips.filter((s) => !s.dashed && s.x <= hc.cx && s.x + s.w >= hc.cx && s.y + s.h <= hc.top).length, 0, "no solid strip over the chip");
+  }
+});
+
+test("a person with ten partners and ten children blocks: every strip stays between its two rows at every size", () => {
+  for (const n of [4, 8, 10]) {
+    const m = familyModel(crowd(n), "p");
+    assert.equal(m.partners.length, n);
+    assert.equal(m.blocks.filter((b) => b.kids.length).length, n);
+    for (let lv = 0; lv <= 3; lv += 1) {
+      const L = bigLayout(m, lv, {});
+      assertBigGeometry(L, `${n} partners at ${lv}`);
+      assertStripsBetweenRows(L, `${n} partners at level ${lv}`);
+      assert.equal(new Set(L.strips.map(stripKey)).size, L.strips.length, `${n} partners at ${lv}: unique strips`);
+    }
+  }
+  const four = bigLayout(familyModel(crowd(4), "p"), 2, {});
+  const ys = four.rings.map((r) => r.cy).sort((a, b) => a - b);
+  assert.deepEqual(ys.map((y) => y - ys[0]), [0, 7, 14, 21], "a few partners keep the 7 px step");
+});
+
+test("every fixture case, every size: strips stay between their two rows", () => {
+  for (const [name, id] of Object.entries(CASES)) {
+    const m = familyModel(idx, id);
+    for (let lv = 0; lv <= 3; lv += 1) for (const sibsOpen of [false, true]) assertStripsBetweenRows(bigLayout(m, lv, { sibsOpen, ggp: true }), `${name} level ${lv}`);
+  }
+});
+
+test("see all: it fits exactly when neither side is wider than the viewport, and says by how much it does not", () => {
+  const m = model("full");
+  const L = seeAll(m, {}, { width: 9999, height: 9999 }).layout;
+  const w = Math.ceil(L.width);
+  const h = Math.ceil(L.height);
+  assert.deepEqual(seeAll(m, {}, { width: w, height: h }), { level: 0, layout: L, fits: true, overflowX: 0, overflowY: 0 });
+  const narrow = seeAll(m, {}, { width: w - 1, height: h });
+  assert.deepEqual([narrow.fits, narrow.overflowX, narrow.overflowY], [false, 1, 0]);
+  const short = seeAll(m, {}, { width: w, height: h - 5 });
+  assert.deepEqual([short.fits, short.overflowX, short.overflowY], [false, 0, 5]);
+  const opened = seeAll(model("siblings"), { sibsOpen: true }, { width: 9999, height: 9999 }).layout;
+  assert.ok(opened.width > seeAll(model("siblings"), {}, { width: 9999, height: 9999 }).layout.width, "the options pass through: opened brothers and sisters are wider");
+  assert.equal(seeAll(m, {}, { width: 320, height: 568 }).layout.level, 0);
+});
+
+test("scroll target: the person is centred, and the offsets clamp to the canvas at every edge", () => {
+  const canvas = (x, y) => ({ centre: { x, y }, width: 1000, height: 600 });
+  const vp = { width: 200, height: 100 };
+  assert.deepEqual(scrollTarget(canvas(500, 300), vp), { left: 400, top: 250 }, "centred");
+  assert.deepEqual(scrollTarget(canvas(20, 10), vp), { left: 0, top: 0 }, "person near the top left: clamped to 0");
+  assert.deepEqual(scrollTarget(canvas(990, 595), vp), { left: 800, top: 500 }, "person near the bottom right: clamped to canvas minus viewport");
+  assert.deepEqual(scrollTarget(canvas(500, 300), { width: 1000, height: 600 }), { left: 0, top: 0 }, "a canvas exactly the viewport");
+  for (const [name, id] of Object.entries(CASES)) {
+    const L = bigLayout(familyModel(idx, id), 2, {});
+    const t = scrollTarget(L, vp);
+    assert.ok(t.left >= 0 && t.left <= Math.max(0, L.width - vp.width) && t.top >= 0 && t.top <= Math.max(0, L.height - vp.height), `${name}: inside the canvas`);
+    if (t.left > 0 && t.left < L.width - vp.width) assert.ok(Math.abs(t.left + vp.width / 2 - L.centre.x) < EPS, `${name}: centred sideways when it can be`);
+  }
+});
+
+test("canShowGgp: offered when the great-grandparents are shared (brother and sister grandparents, or one grandparent under both parents) and recorded", () => {
+  assert.equal(bigLayout(model("pedigree"), 2, {}).canShowGgp, true);
+  // One grandparent (gx) under both parents, and that grandparent's own parents recorded: the rule is the shared great-grandparents, not both.shared.
+  const g = indexGraph({
+    schemaVersion: 1,
+    people: [["x", "u"], ["f", "m"], ["m", "f"], ["gx", "m"], ["ga", "f"], ["gb", "f"], ["z1", "m"], ["z2", "f"]].map(([id, sex]) => ({ id, name: `${id} Sample`, given: id, surname: "Sample", sex })),
+    unions: [
+      { id: "u0", type: "married", partners: ["f", "m"], children: [{ id: "x", rel: {} }] },
+      { id: "ua", type: "married", partners: ["gx", "ga"], children: [{ id: "f", rel: {} }] },
+      { id: "ub", type: "married", partners: ["gx", "gb"], children: [{ id: "m", rel: {} }] },
+      { id: "uz", type: "married", partners: ["z1", "z2"], children: [{ id: "gx", rel: {} }] }
+    ]
+  });
+  const both = familyModel(g, "x");
+  assert.equal(both.both.shared.length, 0, "no brother and sister pair among the grandparents");
+  assert.equal(both.both.note, null);
+  assert.deepEqual(both.ggp.map((z) => z.shared), [true], "but the grandparent's own parents are on both sides");
+  assert.equal(bigLayout(both, 2, {}).canShowGgp, true);
+  const on = bigLayout(both, 2, { ggp: true });
+  assert.equal(on.nodes.filter((n) => n.g === -3).length, 2);
+  assertBigGeometry(on, "one grandparent under both parents, great-grandparents on");
+  // Under both parents with no recorded parents of their own, there is nothing to offer; so for unshared families.
+  assert.equal(bigLayout(model("bothSides"), 2, {}).canShowGgp, false);
+  for (const c of ["full", "oneParent", "noParents", "large", "alone"]) assert.equal(bigLayout(model(c), 2, {}).canShowGgp, false, c);
 });

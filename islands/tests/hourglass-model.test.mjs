@@ -168,6 +168,24 @@ test("case: the same ancestors on both sides. brother and sister as grandparents
   assert.ok(gps.every((g) => (g.both ? g.up === m.ggp[0].unionId : true)));
 });
 
+test("the both-sides note names every brother and sister among the grandparents, not only the first two", () => {
+  // Three of the four grandparents are children of one couple (invented names): ga, gc and gd. The note lists them as they stand: father's side, then mother's, a man before a woman in a couple.
+  const idx3 = mini(
+    [["x", "u", 2000], ["f", "m", 1970, { given: "Fenn" }], ["m", "f", 1972, { given: "Mara" }], ["ga", "m", 1940, { given: "Ansel" }], ["gb", "f", 1942, { given: "Bryn", surname: "Other" }], ["gc", "f", 1944, { given: "Cora" }], ["gd", "m", 1946, { given: "Dov" }], ["z1", "m", 1910, { given: "Zed" }], ["z2", "f", 1912, { given: "Zia" }]],
+    [["u0", "married", ["f", "m"], ["x"]], ["ua", "married", ["ga", "gb"], ["f"]], ["ub", "married", ["gc", "gd"], ["m"]], ["uz", "married", ["z1", "z2"], ["ga", "gc", "gd"]]]
+  );
+  const m = familyModel(idx3, "x");
+  assert.equal(m.both.shared.length, 1);
+  assert.deepEqual(m.both.shared[0].kids.sort(), ["ga", "gc", "gd"]);
+  assert.equal(m.both.note.text, "Ansel, Dov and Cora were siblings, so Zed and Zia Sample are on both sides of this family.");
+  // The same sex reads brothers or sisters; one shared couple with a missing member says "is".
+  const bros = mini(
+    [["x", "u", 2000], ["f", "m", 1970], ["m", "f", 1972], ["ga", "m", 1940], ["gb", "f", 1942], ["gc", "m", 1944], ["gd", "f", 1946], ["z1", "m", 1910, { given: "Zed" }]],
+    [["u0", "married", ["f", "m"], ["x"]], ["ua", "married", ["ga", "gb"], ["f"]], ["ub", "married", ["gc", "gd"], ["m"]], ["uz", "married", ["z1"], ["ga", "gc"]]]
+  );
+  assert.match(familyModel(bros, "x").both.note.text, /^GA and GC were brothers, so Zed Sample is on both sides of this family\.$/);
+});
+
 test("case: a grandparent who stands under both parents is tagged on both sides, and has no note (no brother or sister to name)", () => {
   const m = model("bothSides");
   const [a, b] = m.sides.map((s) => s.grandparents.find((g) => g.name === "Torin Glenhart"));

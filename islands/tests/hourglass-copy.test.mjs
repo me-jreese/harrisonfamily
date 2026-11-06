@@ -5,7 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { COPY, familyModel, indexGraph } from "../src/lib/hourglass-model.js";
-import { bigLayout, smallLayout } from "../src/lib/hourglass-layout.js";
+import { smallLayout } from "../src/lib/hourglass-layout.js";
+import { bigLayout } from "../src/lib/hourglass-big.js";
 import { GRAPH } from "./fixtures/hourglass-cases.mjs";
 
 const BANNED = /(^|[^a-z])(node|nodes|graph|graphs|chart|charts|pedigree|collapse|collapsed|focus|re-?centre|re-?center|living|deceased|unknown|n\/a)([^a-z]|$)/i;
