@@ -136,7 +136,7 @@
   position: relative; inset: auto; z-index: auto; height: 80vh; min-height: calc(var(--io-space-9) * 8); grid-template-columns: calc(var(--io-space-9) * 5) minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top top" "bar tools" "bar main"; overflow: hidden; border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-lg);
 }
-.hfy-bt__top { grid-area: top; display: flex; align-items: center; gap: var(--io-space-3); padding: var(--io-space-2) var(--io-space-3); border-bottom: 1px solid var(--io-color-semantic-border); background: var(--io-color-semantic-surface-raised); }
+.hfy-bt__top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; gap: var(--io-space-3); padding: var(--io-space-2) var(--io-space-3); border-bottom: 1px solid var(--io-color-semantic-border); background: var(--io-color-semantic-surface-raised); }
 .hfy-bt__top h2 { margin: 0; font-family: var(--io-typography-font-display); font-size: var(--io-typography-size-lg); font-weight: var(--io-typography-weight-bold); line-height: var(--io-typography-leading-snug); }
 .hfy-bt__back, .hfy-bt__tool {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--io-space-2); min-width: var(--io-control-tap-min); min-height: var(--io-control-tap-min); margin: 0; padding: 0 var(--io-space-3);

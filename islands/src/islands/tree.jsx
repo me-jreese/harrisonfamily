@@ -10,13 +10,14 @@
 //   GET /person/graph.json  200 render | 401 (after the refresh retry) sign in, back here | 403/404 "being prepared" | bad body: retry
 import "./tree.css";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
-import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, initialView, treeAsked, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, TREE_COPY, firstNameOf, initialView, treeAsked, treeTabIsNew, treeUrl, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
 import { useMedia } from "../lib/use-media.js";
@@ -32,6 +33,7 @@ export const COPY = {
   bigTreeFailed: "the whole-family view didn't load. the outline below has everything.",
   treeFailed: "the big tree didn't load. the cards below have everyone."
 };
+const OUTLINE_ID = "hfy-tree-outline";
 
 // The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element (the chunk
 // defines it as it evaluates, so the import rejects), the page drops to outline-only mode: TreeApp says so in COPY.chartFailed and keeps the
@@ -106,6 +108,8 @@ const loadHourglass = () => (hourglassImport ||= import("../lib/tree-hourglass-b
 /** The big hourglass tree: the chunk draws into the host; `go` is its way to put a new middle person in the address and the page's state. */
 function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
   const host = useRef(null);
+  // The big tree's top bar, once drawn: the "centred on" chip is this page's, drawn into it (a portal), so the hourglass chunk and its byte budget stay as they were.
+  const [top, setTop] = useState(null);
   // The newest props, read when the chunk mounts: a graph that reloads remounts on whoever is in the middle now, not on the first person.
   const now = useRef(null);
   now.current = { focus, from, notice, links, sync, onFailed };
@@ -117,10 +121,40 @@ function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
       if (!live) return;
       const o = now.current;
       api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: o.sync });
+      setTop(host.current.querySelector(".hfy-bt__top"));
     }).catch(fail);
-    return () => { live = false; api?.destroy(); };
+    return () => { live = false; api?.destroy(); setTop(null); };
   }, [graph]);
-  return <div ref={host} className="hfy-bt-host" data-tree-hourglass />;
+  const name = graph.person(focus)?.name;
+  return (
+    <>
+      <div ref={host} className="hfy-bt-host" data-tree-hourglass />
+      {top && name ? createPortal(<CentredChip name={name} href={`${viewUrl({ pathname: location.pathname, search: `?focus=${focus}`, hash: "" }, "cards")}#${OUTLINE_ID}`} />, top) : null}
+    </>
+  );
+}
+
+/** Put the keyboard on the page's generation outline, which lists everyone and re-centres on a choice: the page's own way to pick another person. */
+function showOutline() {
+  const o = document.getElementById(OUTLINE_ID);
+  if (!o) return false;
+  o.focus();
+  o.scrollIntoView?.({ block: "start" });
+  return true;
+}
+
+/**
+ * "centred on {name}" and "change" (HFY-TSK-379 pass 4, T-Both): the person every view of the page is about. "change" has no board-defined target. The page has
+ * no search of its own; the one place that lists everyone and re-centres on a pick is the generation outline, so "change" goes there: it takes the keyboard to the
+ * outline when the page has one (the family views), and in the big tree, which has none, it is a link to the cards view for the same person that opens on the outline.
+ */
+function CentredChip({ name, href = `#${OUTLINE_ID}`, local = false }) {
+  return (
+    <p className="hfy-ctx" data-tree-ctx>
+      <span>{TREE_COPY.centred} <b>{name}</b></span>
+      <a className="hfy-ctx__change" href={href} aria-label={TREE_COPY.changeAria} data-tree-ctx-change onClick={local ? (e) => { if (showOutline()) e.preventDefault(); } : undefined}>{TREE_COPY.change}</a>
+    </p>
+  );
 }
 
 class ChartBoundary extends Component {
@@ -266,12 +300,16 @@ export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
 }
 
 /** The cards | outline switch: two buttons in a group, the current one pressed. Both are always real buttons, 44 px at every width. */
-export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false }) {
+export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false, treeHref = null }) {
   return (
     <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
       {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW, TABLE_VIEW] : []), ...(facesTab ? [FACES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
         <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v === FAMILY_VIEW ? "whole family" : v}</button>
       ))}
+      {treeHref ? (
+        // familyVizHourglass: the last tab opens the big tree for the person in the middle (a real address, so Back returns here); it is a link, not a pressed button, because it leaves this view.
+        <a className="hfy-tree__view hfy-tree__view--tree" href={treeHref} data-tree-view="tree">{TREE_COPY.tab}{treeTabIsNew() ? <span className="hfy-tree__new">{TREE_COPY.fresh}</span> : null}</a>
+      ) : null}
     </div>
   );
 }
@@ -452,6 +490,13 @@ export function TreeApp() {
     setFocus(id);
     setTimeout(() => document.getElementById("hfy-tree-focus-name")?.focus(), 0);
   }, []);
+  // The big tree's "change" opens the cards view at the generation outline (#hfy-tree-outline): once the page is drawn, with familyVizHourglass on, the keyboard goes there.
+  const hashHandled = useRef(false);
+  useEffect(() => {
+    if (hashHandled.current || flags === undefined || !resolved?.id || shown === "tree" || shown === "treePending") return;
+    hashHandled.current = true;
+    if (flags.familyVizHourglass === true && location.hash === `#${OUTLINE_ID}`) showOutline();
+  }, [flags, resolved?.id, shown]);
   const [spoken, setSpoken] = useState("");
   const announced = useRef(null);
   useEffect(() => {
@@ -478,15 +523,19 @@ export function TreeApp() {
     const links = { kin: flags.familyVizKinship === true && Boolean(sub) && graph.has(sub), poster: bigOffered && hasLayout, table: timeOn };
     return <HourglassView graph={graph} focus={resolved.id} from={new URLSearchParams(location.search).get("from")} notice={resolved.fellBack ? COPY.notFound : ""} links={links} sync={setFocus} onFailed={() => setTreeFailed(true)} />;
   }
+  // familyVizHourglass (HFY-TSK-379 pass 4): the "tree" tab, the "centred on" chip and the cards' "see {first} in the tree" link; with the flag off none of them exists.
+  const hourglass = flags?.familyVizHourglass === true;
+  const bigHref = hourglass ? treeUrl(location, resolved.id) : null;
   return (
     <div className="hfy-tree hfy-tree--ready" data-tree-mode={shown === FAMILY_VIEW ? FAMILY_VIEW : chartFailed ? "outline" : shown}>
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
+      {hourglass && graph.person(resolved.id) ? <CentredChip name={graph.person(resolved.id).name} local /> : null}
       {treeFailed ? <p className="hfy-tree__notice" role="status" data-tree-hourglass-failed>{COPY.treeFailed}</p> : null}
       {chartFailed && shown !== FAMILY_VIEW ? (
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || (shown === "pending" && view !== FACES_VIEW)} whole={bigOffered} facesTab={faces} />
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || (shown === "pending" && view !== FACES_VIEW)} whole={bigOffered} facesTab={faces} treeHref={bigHref} />
           {shown === "pending" && view === FACES_VIEW ? <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading /> : null}
           {shown === FACES_VIEW ? (
             FacesTab ? <FacesTab graph={graph} fetcher={fetcher} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading />
@@ -501,6 +550,14 @@ export function TreeApp() {
               : bigFailed ? <p className="hfy-tree__notice" role="status" data-tree-poster-failed>{COPY.bigTreeFailed}</p>
               : BigTree ? <BigTree graph={graph} viewer={sub} onOpen={(id) => { setView("cards"); history.replaceState(null, "", viewUrl(location, "cards")); onFocus(id, "list"); }} />
               : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-poster-loading />
+          ) : null}
+          {shown === "cards" && bigHref ? (
+            <p className="hfy-tree__seetree" data-tree-seetree>
+              <a className="hfy-tree__see" href={treeUrl(location, resolved.id, resolved.id)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v6M6 9h12M6 9v4M18 9v4M12 15v6M4 13h4v4H4zM16 13h4v4h-4z" /></svg>
+                {TREE_COPY.see(firstNameOf(graph.person(resolved.id)))}
+              </a>
+            </p>
           ) : null}
           {shown === "cards" ? (
             <ChartBoundary onFailed={() => setChartFailed(true)}>
