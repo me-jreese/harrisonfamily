@@ -72,7 +72,7 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "5d18d24d",
+        "js": "5171178a",
         "css": "ba18296d"
       },
       "moderation-queue": {
@@ -975,10 +975,10 @@
     loadIsland("life-dates-queue", { onError() { /* the page keeps its "not available yet" note */ } });
   });
 
-  // HFY-TSK-388-0B: mediaBrowserV1 mounts the All media page and the media detail page on the static /media/ page (island media-browser: no id in the address
+  // HFY-TSK-388-0B: mediaBrowserV1 mounts the All media page and the media detail page on the static /all-media/ page (island media-browser: no id in the address
   // is the grid, ?id=<gramps_id> is one item). Not in the main menu. With the flag off the bundle is not requested and the page keeps its "not available yet" note.
   resolveFlags().then((flags) => {
-    if (flags.mediaBrowserV1 !== true || !/^\/media\/?(index\.html)?$/.test(window.location.pathname)) return;
+    if (flags.mediaBrowserV1 !== true || !/^\/all-media\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("media-browser", { onError() { /* the page keeps its "not available yet" note */ } });
   });
 

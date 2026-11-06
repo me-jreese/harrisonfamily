@@ -1,4 +1,4 @@
-// HFY-TSK-388-0B: mediaBrowserV1 mounts the media-browser island on the static /media/ page only.
+// HFY-TSK-388-0B: mediaBrowserV1 mounts the media-browser island on the static /all-media/ page only.
 // Run: node --test tests/client/*.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -26,19 +26,19 @@ async function islandsRequested({ flags, pathname, search = "" }) {
   return new Set(requested.map((u) => (u.match(/\/js\/islands\/([a-z-]+)\.(?:js|css)/) || [])[1]).filter(Boolean));
 }
 
-test("mediaBrowserV1 on: /media/ loads media-browser, with or without an id in the address", async () => {
-  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/media/" })).has("media-browser"));
-  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/media/", search: "?id=M0001" })).has("media-browser"));
-  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/media/index.html" })).has("media-browser"));
+test("mediaBrowserV1 on: /all-media/ loads media-browser, with or without an id in the address", async () => {
+  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/all-media/" })).has("media-browser"));
+  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/all-media/", search: "?id=M0001" })).has("media-browser"));
+  assert.ok((await islandsRequested({ flags: { mediaBrowserV1: true }, pathname: "/all-media/index.html" })).has("media-browser"));
 });
 
-test("mediaBrowserV1 off or absent: /media/ loads nothing", async () => {
-  assert.ok(!(await islandsRequested({ flags: { mediaBrowserV1: false }, pathname: "/media/" })).has("media-browser"));
-  assert.ok(!(await islandsRequested({ flags: {}, pathname: "/media/" })).has("media-browser"));
+test("mediaBrowserV1 off or absent: /all-media/ loads nothing", async () => {
+  assert.ok(!(await islandsRequested({ flags: { mediaBrowserV1: false }, pathname: "/all-media/" })).has("media-browser"));
+  assert.ok(!(await islandsRequested({ flags: {}, pathname: "/all-media/" })).has("media-browser"));
 });
 
 test("mediaBrowserV1 on: other paths load nothing (a wrong path, the posts page, a deeper path)", async () => {
-  for (const pathname of ["/", "/posts/", "/person/", "/me/dates/", "/media/other/", "/medias/"]) {
+  for (const pathname of ["/", "/posts/", "/person/", "/me/dates/", "/media/", "/media/index.html", "/all-media/other/", "/medias/"]) {
     assert.ok(!(await islandsRequested({ flags: { mediaBrowserV1: true }, pathname, search: "?id=M0001" })).has("media-browser"), pathname);
   }
 });

@@ -61,7 +61,7 @@ export const personIdOf = (subject) => {
   return m && GID.test(m[1]) ? m[1] : null;
 };
 /** Where a `media:<gramps_id>` thread notification lands (HFY-TSK-387-0I). */
-export const mediaPath = (gid) => `/media/?id=${encodeURIComponent(gid)}`;
+export const mediaPath = (gid) => `/all-media/?id=${encodeURIComponent(gid)}`;
 const personPath = (gid) => `/person/?id=${encodeURIComponent(gid)}`;
 const labelOf = (x) => (typeof x?.label === "string" && x.label ? x.label : undefined);
 

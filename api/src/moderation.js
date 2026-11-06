@@ -264,7 +264,7 @@ export function hrefOf(target) {
   const anchor = target.kind === "photo" ? "#photos" : "";
   if (to.kind === "post") return `/posts/?id=${enc(to.id)}${anchor}`;
   const t = to.thread;
-  const where = t.startsWith("post:") ? `/posts/?id=${enc(t.slice(5))}` : t.startsWith("person:") ? `/person/?id=${enc(t.slice(7))}` : t.startsWith("media:") ? `/media/?id=${enc(t.slice(6))}` : "/me/review/";
+  const where = t.startsWith("post:") ? `/posts/?id=${enc(t.slice(5))}` : t.startsWith("person:") ? `/person/?id=${enc(t.slice(7))}` : t.startsWith("media:") ? `/all-media/?id=${enc(t.slice(6))}` : "/me/review/";
   return `${where}#comment-${to.id}`;
 }
 

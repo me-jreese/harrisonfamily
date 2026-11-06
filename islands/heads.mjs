@@ -38,7 +38,7 @@ export const PAGES = [
   // the Life dates rapid-entry queue page (lifeDatesV1, HFY-TSK-388-0E)
   "me/dates/index.html",
   // the All media page and the media detail page (mediaBrowserV1, HFY-TSK-388-0B)
-  "media/index.html",
+  "all-media/index.html",
   // the notification inbox page (inboxV1, HFY-TSK-185)
   "me/inbox/index.html",
   // the family tree page (familyViz, HFY-TSK-201)

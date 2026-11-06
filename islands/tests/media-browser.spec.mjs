@@ -1,4 +1,4 @@
-// HFY-TSK-388-0B: the All media page and the media detail page on /media/ (island media-browser), flag mediaBrowserV1, at 375 and 1280. Synthetic people and
+// HFY-TSK-388-0B: the All media page and the media detail page on /all-media/ (island media-browser), flag mediaBrowserV1, at 375 and 1280. Synthetic people and
 // photos only; /auth, /api/me, /api/media, /api/media/:id and the flags file are stubbed with the real reply shapes (docs/reference/api.md, Media Browser).
 // At most four screenshots in all (list and detail at each width), attached to the report. Run: HFY_SITE=<dir> PW_PORT=<port> npx playwright test tests/media-browser.spec.mjs --workers=1
 import { test, expect } from "@playwright/test";
@@ -48,7 +48,7 @@ for (const [name, viewport] of VIEWPORTS) {
     test.use({ viewport });
 
     test("flag off: the bundle is not requested and the page keeps its note", async ({ page }) => {
-      const state = await open(page, "/media/", { flag: false });
+      const state = await open(page, "/all-media/", { flag: false });
       await page.waitForTimeout(400);
       expect(state.islandRequests).toEqual([]);
       await expect(page.locator("[data-media-off]")).toBeVisible();
@@ -56,14 +56,14 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("signed out: a sign-in line and no request for photos", async ({ page }) => {
-      const state = await open(page, "/media/", { session: null });
+      const state = await open(page, "/all-media/", { session: null });
       await expect(page.locator("[data-media-signin]")).toContainText("to see the family photos.");
       await expect(page.locator("[data-media-signin] a")).toHaveAttribute("href", /\/auth\/login\?returnTo=/);
       expect(state.lists).toEqual([]);
     });
 
     test("the list: counts, cells linking to the detail with the section and filter, the badge, the end line, axe, no sideways scroll", async ({ page }, testInfo) => {
-      const state = await open(page, "/media/?section=media");
+      const state = await open(page, "/all-media/?section=media");
       await expect(page.getByRole("link", { name: /Photo M0001/ })).toBeVisible();
       expect(state.lists[0]).toMatchObject({ section: "media", filter: "all" });
       await expect(page.getByText(L.end(3))).toBeVisible();
@@ -77,7 +77,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("more pages load on scroll and the end line follows; a filter chip changes the request and the address", async ({ page }) => {
-      const state = await open(page, "/media/?section=media", {
+      const state = await open(page, "/all-media/?section=media", {
         list: (q, n) => (q.get("filter") === "needs_tags" ? { cards: [], nextCursor: null, counts: { media: 0, posts: 0 } }
           : n === 1 ? { cards: [card("M0001"), card("M0002")], nextCursor: "c2", counts: { media: 3, posts: 0 } } : { cards: [card("M0003")], nextCursor: null, counts: { media: 3, posts: 0 } }),
       });
@@ -93,18 +93,18 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("an empty list and a failed list say so, with a retry", async ({ page }) => {
-      await open(page, "/media/?filter=of_me", { list: { cards: [], nextCursor: null, counts: { media: 0, posts: 0 } } });
+      await open(page, "/all-media/?filter=of_me", { list: { cards: [], nextCursor: null, counts: { media: 0, posts: 0 } } });
       await expect(page.getByText(L.emptyOfMe)).toBeVisible();
     });
 
     test("a failed first page shows the error line and retry", async ({ page }) => {
-      await open(page, "/media/", { list: { __status: 503 } });
+      await open(page, "/all-media/", { list: { __status: 503 } });
       await expect(page.getByText(L.error)).toBeVisible();
       await expect(page.getByRole("button", { name: new RegExp(L.retry, "i") })).toBeVisible();
     });
 
     test("the detail: title, year, description, origin line, tagged people (a living person is not linked), comments host, previous and next, axe", async ({ page }, testInfo) => {
-      const state = await open(page, "/media/?id=M0002&section=media&filter=all");
+      const state = await open(page, "/all-media/?id=M0002&section=media&filter=all");
       await expect(page.getByRole("heading", { level: 1, name: "Picnic by the lake" })).toBeVisible();
       expect(state.details[0]).toMatchObject({ id: "M0002", section: "media", filter: "all" });
       await expect(page.getByText("Everyone at the lake.")).toBeVisible();
@@ -120,7 +120,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("previous and next stay in the section and filter and move the address; focus lands on the new heading", async ({ page }) => {
-      const state = await open(page, "/media/?id=M0002&section=media&filter=needs_tags", { details: { M0003: detail("M0003", { card: card("M0003", { title: "Second picnic" }), previousId: "M0002", nextId: null, position: 3 }) } });
+      const state = await open(page, "/all-media/?id=M0002&section=media&filter=needs_tags", { details: { M0003: detail("M0003", { card: card("M0003", { title: "Second picnic" }), previousId: "M0002", nextId: null, position: 3 }) } });
       await expect(page.getByRole("heading", { level: 1, name: "Picnic by the lake" })).toBeVisible();
       await page.getByRole("link", { name: new RegExp(L.next, "i") }).first().click();
       await expect(page.getByRole("heading", { level: 1, name: "Second picnic" })).toBeVisible();
@@ -130,7 +130,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("origin line variants: an upload says 'added by', a gramps import says nothing", async ({ page }) => {
-      await open(page, "/media/?id=M0002", { item: detail("M0002", { origin: "upload", originRef: "I0005", originBy: { displayName: "Lena Example" } }) });
+      await open(page, "/all-media/?id=M0002", { item: detail("M0002", { origin: "upload", originRef: "I0005", originBy: { displayName: "Lena Example" } }) });
       await expect(page.getByText(/added by/i)).toBeVisible();
       await expect(page.getByRole("link", { name: "Lena Example" })).toHaveAttribute("href", "/person/?id=I0005");
       await page.unroute(/\/api\/media\/[^/?]+(\?.*)?$/);
@@ -142,14 +142,14 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("not found and a failed read", async ({ page }) => {
-      await open(page, "/media/?id=M0404", { item: { __status: 404 } });
+      await open(page, "/all-media/?id=M0404", { item: { __status: 404 } });
       await expect(page.getByText(L.notAvailable)).toBeVisible();
-      await open(page, "/media/?id=M0500", { item: { __status: 500 } });
+      await open(page, "/all-media/?id=M0500", { item: { __status: 500 } });
       await expect(page.getByText(L.errorDetail)).toBeVisible();
     });
 
     test("the shipped tag editor: 'tag people' appears for a member with photoTagEdit on and opens the editor's panel; absent with the flag off", async ({ page }) => {
-      await open(page, "/media/?id=M0002", { photoTagEdit: true });
+      await open(page, "/all-media/?id=M0002", { photoTagEdit: true });
       const toggle = page.getByRole("button", { name: "tag people" });
       await expect(toggle).toBeVisible();
       expect((await toggle.boundingBox()).height).toBeGreaterThanOrEqual(44);
@@ -160,7 +160,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("no tag editor with photoTagEdit off", async ({ page }) => {
-      await open(page, "/media/?id=M0002", { photoTagEdit: false });
+      await open(page, "/all-media/?id=M0002", { photoTagEdit: false });
       await expect(page.getByRole("heading", { level: 1, name: "Picnic by the lake" })).toBeVisible();
       await expect(page.getByRole("button", { name: "tag people" })).toHaveCount(0);
     });
