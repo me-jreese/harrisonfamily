@@ -8,7 +8,13 @@ import { newIdempotencyKey } from "../lib/editor-save.js";
 import { readClasses } from "../lib/life-dates-model.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
-import { COPY, addPending, addedText, alreadySent, ask, candidatesFrom, cardBody, checkCard, eligible, errorText, knownLine, progressText, readReply, sentText, sureText } from "../lib/life-dates-queue-model.js";
+import { COPY, addPending, addedText, alreadySent, ask, candidatesFrom, cardBody, checkCard, createTimingRecorder, debugOn, eligible, errorText, knownLine, progressText, readReply, sentText, sureText } from "../lib/life-dates-queue-model.js";
+
+// Per-card timing (HFY-TSK-400, O-9): in memory only, read through window.__hfyQueueStats?.() and console.debug, both only with ?hfy_debug=1. Members see nothing.
+const timing = createTimingRecorder();
+const debug = debugOn(window.location.search);
+if (debug) window.__hfyQueueStats = () => timing.stats();
+const lap = () => { const s = timing.stop(); if (debug && s !== null) console.debug("hfy queue stats", timing.stats()); };
 
 const store = () => { try { return window.sessionStorage; } catch { return { getItem: () => null, setItem: () => {} }; } };
 
@@ -38,7 +44,7 @@ function Card({ row, handle, onAdvance, onSkip }) {
   const [sure, setSure] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => { timing.start(); input.current?.focus(); }, []);
   const errId = `${id}-err`;
 
   async function send({ confirm = false, unknown = false } = {}) {
@@ -154,12 +160,13 @@ function Queue() {
   const nextName = here ? here.row.name : "";
   const total = rows.length;
   const advance = (o) => {
+    lap();
     if (o.saved) setAdded((n) => n + 1);
     setSent(o.saved);
     setNote(o.notes.join(" "));
     setIdx(here.i + 1);
   };
-  const skip = () => { setSent(false); setNote(""); setIdx(here.i + 1); };
+  const skip = () => { lap(); setSent(false); setNote(""); setIdx(here.i + 1); };
 
   return (
     <section className="hfy-lq" aria-label={COPY.title} aria-busy={phase === "loading" || cur === null}>

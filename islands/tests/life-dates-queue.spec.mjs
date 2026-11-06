@@ -13,7 +13,7 @@ const classesFor = (handle) => {
   return { birth: handle === "hI0005" || handle === "hI0006" ? none : { class: "year", year: 1830 }, death: handle === "hI0003" ? { class: "precise", year: 1900 } : none, livingByRule: true, sharedEvent: { birth: false, death: false } };
 };
 
-async function open(page, { flag = true, session = "I9002", manifest = MANIFEST, reply = null, status = 201 } = {}) {
+async function open(page, { flag = true, session = "I9002", manifest = MANIFEST, reply = null, status = 201, query = "" } = {}) {
   const state = { posts: [], keys: [], islandRequests: [] };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: false, profileLinks: false, lifeDatesV1: flag } }));
@@ -34,7 +34,7 @@ async function open(page, { flag = true, session = "I9002", manifest = MANIFEST,
     for (const k of ["birth", "death"]) if (body[k]) rows[k] = { status: "proposed", action: "create" };
     return r.fulfill({ status: 201, json: { applied: null, proposal: { id: "P1" }, summary: [], marks_deceased: Boolean(body.death), rows } });
   });
-  await page.goto("/me/dates/", { waitUntil: "domcontentloaded" });
+  await page.goto(`/me/dates/${query}`, { waitUntil: "domcontentloaded" });
   return state;
 }
 const q = (page, name) => page.locator(`[data-q="${name}"]`);
@@ -92,6 +92,32 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(q(page, "progress")).toHaveText("2 of 5 people in this branch");
       await expect(page.getByLabel("what year did Bram Example die?")).toBeFocused();
       expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith("hfy:lifedates:pending:")))).toEqual(["hfy:lifedates:pending:I0007"]);
+    });
+
+    test("timing (O-9): no hook without ?hfy_debug=1; with it, two saves give {cards: 2, medianSeconds}; members see nothing new", async ({ page }) => {
+      await open(page);
+      await expect(q(page, "name")).toHaveText("Gus Example");
+      expect(await page.evaluate(() => typeof window.__hfyQueueStats)).toBe("undefined");
+      const debug = await page.context().newPage();
+      const logs = [];
+      debug.on("console", (m) => { if (m.type() === "debug") logs.push(m.text()); });
+      await open(debug, { query: "?hfy_debug=1" });
+      await expect(q(debug, "name")).toHaveText("Gus Example");
+      expect(await debug.evaluate(() => window.__hfyQueueStats())).toEqual({ cards: 0, medianSeconds: null });
+      await q(debug, "year").fill("1900");
+      await q(debug, "year").press("Enter");
+      await expect(q(debug, "name")).toHaveText("Bram Example");
+      await q(debug, "year").fill("1910");
+      await q(debug, "year").press("Enter");
+      await expect(q(debug, "progress")).toHaveText("3 of 5 people in this branch");
+      const stats = await debug.evaluate(() => window.__hfyQueueStats());
+      expect(stats.cards).toBe(2);
+      expect(typeof stats.medianSeconds).toBe("number");
+      expect(stats.medianSeconds).toBeGreaterThanOrEqual(0);
+      expect(Object.keys(stats).sort()).toEqual(["cards", "medianSeconds"]);
+      expect(logs.length).toBe(2);
+      expect(await debug.evaluate(() => [...Object.keys(sessionStorage), ...Object.keys(localStorage)].filter((k) => /stat|timing|median/i.test(k)))).toEqual([]);
+      await debug.close();
     });
 
     test("skip and i don't know write nothing and mark nothing; the no-birth-year row type asks for a birth year and offers no 'died, year unknown'", async ({ page }) => {
