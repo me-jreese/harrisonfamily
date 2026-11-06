@@ -72,7 +72,8 @@ test("a photo still reaches a post as an attachment (the kit draws it), whatever
 });
 
 test("the build wires the policy: build.mjs lists hfyContentSanitizePolicy and hfyCommentsSanitizePolicy and the wrapper imports the real KitMarkdown", () => {
-  assert.match(readFileSync(new URL("../build.mjs", import.meta.url), "utf8"), /plugins: \[hfyCloudscape, hfyNoDocumentEditor, hfyContentSanitizePolicy, hfyCommentsSanitizePolicy\]/);
+  assert.match(readFileSync(new URL("../build.mjs", import.meta.url), "utf8"), /plugins: \[hfyCloudscape, \.\.\.HFY_KIT_PLUGINS\]/);
+  assert.match(readFileSync(new URL("../kit-content.mjs", import.meta.url), "utf8"), /HFY_KIT_PLUGINS = \[hfyNoDocumentEditor, hfyContentSanitizePolicy, hfyCommentsSanitizePolicy, hfyRoutedModules\]/);
   const wrapper = readFileSync(new URL("../src/lib/hfy-markdown.jsx", import.meta.url), "utf8");
   assert.match(wrapper, /import \{ KitMarkdown as KitMarkdownBase \} from "@io-kit\/md\/react"/);
   assert.match(wrapper, /hfySanitizePolicy/);

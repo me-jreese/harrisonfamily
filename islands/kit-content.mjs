@@ -11,6 +11,7 @@
 // documentEditorLeaks(metafile) -> the island outputs that would still ship DocumentEditor, which would then render without
 //   Cloudscape; build.mjs fails on any.
 import { build } from "esbuild";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const IN_KIT_CONTENT = /(^|[\\/])node_modules[\\/]@io-kit[\\/]content[\\/]/;
@@ -53,6 +54,35 @@ export const hfyCommentsSanitizePolicy = {
     b.onResolve({ filter: /^@io-kit\/md\/react$/ }, (args) => (IN_KIT_COMMENTS.test(args.importer) ? { path: HFY_COMMENTS_MARKDOWN } : undefined));
   }
 };
+
+// hfyRoutedModules -> esbuild plugin (HFY-TSK-382): the BUILD DETERMINISM fix. A plugin that resolves to a bare path (the two plugins
+// above do) hands esbuild a file with no module type, while esbuild's own resolver stamps the same file ESM, because islands/package.json
+// says "type": "module". esbuild parses a file once, under whichever import reached it first, and the imports run in parallel, so a file
+// reached BOTH ways was parsed with either module type from run to run. For lib/hfy-markdown.jsx (plugin from @io-kit/content, relative
+// import from person.jsx and from hfy-comments-markdown.jsx) that decided whether its `react/jsx-runtime` import was emitted as
+// `__toESM(x, 1)` or `__toESM(x)`, which changed the bytes of the big shared chunk, hence its content hash, hence its file name, hence
+// the file name in every entry that imports it: about 1 build in 8 differed. This plugin resolves EVERY import of a plugin-routed file
+// (relative or not) to the same bare path, so each such file has one module type, whatever the schedule. The guard is
+// tests/build-determinism.test.mjs, which fails when any import of a routed file still reaches esbuild's own resolver.
+export const ROUTED_MODULES = [HFY_MARKDOWN, HFY_COMMENTS_MARKDOWN];
+/** The routed module that a relative import resolves to, with or without its `.jsx` extension; undefined for any other file. */
+export function routedModuleOf(resolveDir, path) {
+  const abs = resolve(resolveDir, path);
+  return ROUTED_MODULES.find((m) => m === abs || m === `${abs}.jsx`);
+}
+export const hfyRoutedModules = {
+  name: "hfy-routed-modules",
+  setup(b) {
+    // Every relative import: ROUTED_MODULES alone decides, so a file added to it needs no change here.
+    b.onResolve({ filter: /^\.\.?\// }, (args) => {
+      const routed = routedModuleOf(args.resolveDir || dirname(args.importer), args.path);
+      return routed ? { path: routed } : undefined;
+    });
+  }
+};
+
+/** The kit plugins of the island build, in order (build.mjs), and of tests/build-determinism.test.mjs, which must bundle the same way. */
+export const HFY_KIT_PLUGINS = [hfyNoDocumentEditor, hfyContentSanitizePolicy, hfyCommentsSanitizePolicy, hfyRoutedModules];
 
 /** `<output> <- <input>` for every island output that carries DocumentEditor or the stub; empty on a good build. */
 export function documentEditorLeaks(metafile) {

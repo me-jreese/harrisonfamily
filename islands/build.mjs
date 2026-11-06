@@ -27,7 +27,7 @@ import { fontFaceCss, fontFiles, preloadHref } from "./fonts.mjs";
 import { expectedHeads, resolveToken } from "./heads.mjs";
 import { COPY_EXTRA, COPY_PAGES, applyCopy } from "./copy.mjs";
 import { htmlPages, sha8, stampSources, versionHtml, versionManifestCss } from "./assets.mjs";
-import { documentEditorLeaks, hfyCommentsSanitizePolicy, hfyContentSanitizePolicy, hfyNoDocumentEditor } from "./kit-content.mjs";
+import { HFY_KIT_PLUGINS, documentEditorLeaks } from "./kit-content.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -97,7 +97,8 @@ const islandOptions = {
   // hfyNoDocumentEditor (kit-content.mjs): keeps @io-kit/content's DocumentEditor import from bundling Cloudscape's stylesheets.
   // hfyContentSanitizePolicy (kit-content.mjs): the post body renders with the HFY SanitizePolicy (no markdown images, no mailto:).
   // hfyCommentsSanitizePolicy (kit-content.mjs): the same for a comment body (@io-kit/comments), whose kit policy would allow https images and mailto:.
-  plugins: [hfyCloudscape, hfyNoDocumentEditor, hfyContentSanitizePolicy, hfyCommentsSanitizePolicy],
+  // hfyRoutedModules (kit-content.mjs, HFY-TSK-382): resolves every import of those two wrappers the same way, so the chunk names are deterministic.
+  plugins: [hfyCloudscape, ...HFY_KIT_PLUGINS],
   metafile: true,
   write: false,
   logLevel: "silent"
