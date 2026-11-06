@@ -1,0 +1,15 @@
+/* "add a photo" in the person page's photos section (person-add-photo.jsx, HFY-TSK-388-0A pass 3, board B8). The form, picker, progress and prompt are the kit's
+   media.css; this file only places them. Aliases only (--io-*): 44 px targets, 16 px inputs come from the kit, wraps at 375, no sideways scroll. */
+.hfy-ap-host { margin: 0 0 var(--io-space-4); max-width: 100%; min-width: 0; }
+.hfy-ap { max-width: 100%; }
+.hfy-ap .hfy-ap__btn { min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); }
+.hfy-ap__panel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--io-space-3); box-sizing: border-box; max-width: var(--io-layout-card); padding: var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border); border-radius: var(--io-radius-lg); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
+}
+.hfy-ap__panel > .io-media { max-width: 100%; }
+.hfy-ap__panel:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }
+@media (prefers-reduced-motion: reduce) { .hfy-ap, .hfy-ap * { transition: none; animation: none; scroll-behavior: auto; } }
+/* The kit's "tag people" link is an anchor styled as the primary button: keep the button's text colour over the page's link colour (contrast) and no underline. */
+.hfy-ap .io-media-dlg a.io-media-btn, .hfy-ap .io-media-dlg a.io-media-btn:visited { color: var(--io-color-semantic-accent-text); text-decoration: none; }
+.hfy-ap .io-media-dlg a.io-media-btn:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-control-focus-offset); }

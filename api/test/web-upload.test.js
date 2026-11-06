@@ -67,8 +67,9 @@ async function graduated(who, purpose, subject, extra = {}) {
 describe("the switch and the routes", () => {
   it("gates the commit on mediaAddV1 and the portrait route on portraitV1, with no environment switch", () => {
     expect(SERVER_SWITCHES.some((n) => /WEB_UPLOAD|POST_GRADUATE/.test(n))).toBe(false);
-    const gates = Object.fromEntries(ROUTES.filter((r) => r.name.startsWith("mediaUpload.")).map((r) => [r.name, [r.gate.type, r.gate.name]]));
-    expect(gates).toEqual({ "mediaUpload.commit": ["feature", "mediaAddV1"], "mediaUpload.portrait": ["feature", "portraitV1"] });
+    const gates = Object.fromEntries(ROUTES.filter((r) => r.name.startsWith("mediaUpload.")).map((r) => [r.name, [r.gate?.type, r.gate?.name]]));
+    expect(gates).toEqual({ "mediaUpload.commit": ["feature", "portraitV1"], "mediaUpload.portrait": ["feature", "portraitV1"] });
+    expect(ROUTES.find((r) => r.name === "mediaUpload.commit").gate.anyOf).toEqual(["portraitV1", "mediaAddV1"]); // dark unless either is on; the handler then decides by purpose
   });
   it("answers 404 on every web route and refuses the web purposes while off, and a plain post presign is untouched", async () => {
     flags.mediaAddV1 = false;
@@ -85,6 +86,23 @@ describe("the switch and the routes", () => {
     flags.portraitV1 = true;
     flags.mediaAddV1 = false;
     expect([await presignStatus("portrait"), await presignStatus("item")]).toEqual([201, 404]);
+  });
+  it("the commit follows the purpose: portraitV1 alone commits a portrait, mediaAddV1 alone an item, and each stays 404 without its own flag", async () => {
+    const commitStatus = async (purpose) => {
+      const up = await presign(ME, purpose, ME);
+      return (await call(ME, "POST", "/api/media/uploads", commitRows([{ uploadId: up.uploadId, purpose, subject: ME, ...(purpose === "item" ? { title: "synthetic" } : {}) }]))).status;
+    };
+    flags.mediaAddV1 = false;
+    flags.portraitV1 = true;
+    expect(await commitStatus("portrait")).toBe(200);
+    flags.portraitV1 = true;
+    flags.mediaAddV1 = false;
+    const up = await presign(ME, "portrait", ME);
+    expect((await call(ME, "POST", "/api/media/uploads", commitRows([{ uploadId: up.uploadId, purpose: "item", subject: ME, title: "t" }]))).status).toBe(404);
+    flags.portraitV1 = false;
+    flags.mediaAddV1 = true;
+    expect((await call(ME, "POST", "/api/media/uploads", commitRows([{ uploadId: up.uploadId, purpose: "portrait", subject: ME }]))).status).toBe(404);
+    expect((await call(ME, "POST", "/api/media/uploads", commitRows([]))).status).toBe(400); // either flag on: validation, not 404
   });
   it("needs a session", async () => {
     expect((await w.call("POST", "/api/media/uploads", { body: commitRows([]) })).status).toBe(401);

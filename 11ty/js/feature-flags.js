@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "864d13ab",
+        "js": "8598d656",
         "css": "4cd750ae"
       },
       "family": {
@@ -76,7 +76,7 @@
         "css": "c3d2737a"
       },
       "my-posts": {
-        "js": "add93f63",
+        "js": "753cf2aa",
         "css": "3d97e51e"
       },
       "notifications": {
@@ -88,12 +88,20 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "fddf2e34",
+        "js": "c323ab94",
         "css": "bd2a5788"
+      },
+      "person-add-photo": {
+        "js": "fbf9b922",
+        "css": "5ff12110"
       },
       "person-links": {
         "js": "d1ab2c79",
         "css": "fcacbc39"
+      },
+      "person-portrait": {
+        "js": "bf13961f",
+        "css": "af2df384"
       },
       "photo-tag-edit": {
         "js": "9028a696",
@@ -104,7 +112,7 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "43a07e65",
+        "js": "53b28ddc",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -112,7 +120,7 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "79717665",
+        "js": "8f7e4224",
         "css": "9545b73d"
       },
       "search": {
@@ -942,6 +950,18 @@
   resolveFlags().then((flags) => {
     if (flags.lifeDatesV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
     loadIsland("life-dates", { onError() { /* the page keeps its plain lifespan line */ } });
+  });
+
+  // HFY-TSK-388-0A (pass 3): portraitV1 mounts the portrait control on the person page (island person-portrait: "change photo" on your own record, "suggest a photo" on
+  // another's; it creates a [data-slot="portrait"] host before the hero actions and listens to hfy:person-rendered). mediaAddV1 mounts "add a photo" in the photos section
+  // (island person-add-photo; host [data-slot="add-photo"] before the photo grid). Person page with an id only. Off, the bundle is not requested and the page is as before.
+  resolveFlags().then((flags) => {
+    if (flags.portraitV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("person-portrait", { onError() { /* the page keeps its portrait without the control */ } });
+  });
+  resolveFlags().then((flags) => {
+    if (flags.mediaAddV1 !== true || !/^\/person\/?$/.test(window.location.pathname) || !new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("person-add-photo", { onError() { /* the photos section keeps its gallery without the control */ } });
   });
 
   // HFY-TSK-388-0E: lifeDatesV1 mounts the Life dates rapid-entry queue on the static /me/dates/ page (island life-dates-queue). With the flag off

@@ -12,7 +12,7 @@
 // idempotency receipt. The Media itself is created at commit in either case; it has no MediaRef until the write or the approval, so the Media Browser does not
 // list it (P4-R21). Nothing here deletes anything.
 //
-// Behind the feature gate (features.js): commit needs the flag mediaAddV1, the portrait route portraitV1, and the portrait and item presign purposes follow the same two
+// Behind the feature gate (features.js): commit decides by purpose (an item needs mediaAddV1, a portrait portraitV1; the route gate is either flag), the portrait route needs portraitV1, and the portrait and item presign purposes follow the same two
 // (404 while off, uat principals honoured), read from the deployed flags.json; no environment switch. A member session is required. Idempotent: one marker item per upload,
 // PK `WEBUP#<upload id>`, SK `MEDIA`, whose handle is minted once; applyBatch runs under the key `webupload:<upload id>`; the MediaRef writes carry a key built
 // from the record version they read, so a retry after success finds the ref and writes nothing, and a retry of a proposal replays its receipt.
