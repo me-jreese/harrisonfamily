@@ -246,19 +246,21 @@ Republishing from the legacy ETL is a last resort, for the case where the store 
 
 1. **A desktop pull first.** Run `hfy-sync check`, review the changes that would come from the website, and apply them, so the Gramps tree holds everything the store holds. The ETL publishes from the tree, so anything not pulled is lost from the site.
 2. **A break-glass run with `--no-delete`.** Assume `hfy-data-breakglass` (io only, MFA, one hour; [Rehearse the break-glass sign-in](rehearse-the-break-glass-sign-in.md)). It is an exception to the write guard, so the guard can stay on. Run the legacy sync with its break-glass escape, `--legacy-break-glass`, and with `--no-delete`, so nothing the tree lacks is removed. Member photos and every key the tree does not know stay in place. The procedure is [The legacy ETL publish](#the-legacy-etl-publish-break-glass-only).
-3. **Moderation hides re-applied by a script.** The legacy export does not know about moderation, so every record hidden since the cutover is public again after step 2. Re-apply the hides before you tell anyone the site is back, with [`scripts/moderation/reapply-moderation-hides.sh`](../../scripts/moderation/reapply-moderation-hides.sh), which `hfy-moderation-record-targets` ships. The check below fails closed if the script is missing, and it must pass before step 2 starts:
+3. **Moderation hides re-applied by a script.** The legacy export does not know about moderation, so every record hidden since the cutover is public again after step 2. Re-apply the hides before you tell anyone the site is back, with [`scripts/moderation/reapply-moderation-hides.sh`](../../scripts/moderation/reapply-moderation-hides.sh), which `hfy-moderation-record-targets` ships and HFY-TSK-378 completed. The check below fails closed if the script is missing, and it must pass before step 2 starts:
 
    ```sh
    test -x scripts/moderation/reapply-moderation-hides.sh || { echo 'moderation re-apply script missing: rollback step 2 is blocked (hfy-moderation-record-targets)' >&2; exit 1; }
    ```
 
-   The script reads the open record hides (`MOD#note:`, `MOD#media:` and `MOD#mediaref:` items in the moderation queue) and removes the note and media files it can name. Run it as a dry run first, then with io's go-ahead on record, then check:
+   The script reads the open record hides (`MOD#note:`, `MOD#media:` and `MOD#mediaref:` items in the moderation queue) and removes the note and media files it can name. It prints counts only, never an id, key or content. It is read-only by default; the real run needs `--confirm-reapply` and `--break-glass` (the statement that step 2 ran under io's approval), and it refuses with exit `2` unless the `RENDER_MODE` of the renderer function (`--render-function`, default `hfy-sync-render`) is `off`. Hidden posts, comments and member photos need no step here: they live in the store and under `uploads/`, which the legacy publish cannot write, and the API applies their hides on every read. Run it as a dry run first, then with io's go-ahead on record, then check:
 
    ```sh
    scripts/moderation/reapply-moderation-hides.sh --table <app-table> --site-bucket <site-bucket> --region us-west-2 --dry-run
-   scripts/moderation/reapply-moderation-hides.sh --table <app-table> --site-bucket <site-bucket> --region us-west-2 --confirm-reapply
+   scripts/moderation/reapply-moderation-hides.sh --table <app-table> --site-bucket <site-bucket> --region us-west-2 --confirm-reapply --break-glass
    scripts/moderation/reapply-moderation-hides.sh --table <app-table> --site-bucket <site-bucket> --region us-west-2 --verify
    ```
+
+   Exit `3` is expected even on success: hidden notes, media and MediaRefs stay in the page files until the first `live` render pass after the rollback rewrites them, so that pass is the real fix and you do not tell anyone the site is back before it has run.
 
    The script follows every page of the queue. It exits `3`, with a warning, whenever any hidden item is open, not only a MediaRef: a hidden note's text is embedded in `person/<id>.json`, a hidden Media is named in the person, event and family files, `media/index.json` and `person/search-index.json`, and a MediaRef lives in the page, so only the renderer rewrites those. It does not delete the binary `media/<handle>.<ext>` either. `--verify` exits `1` while a named file is still served and `3` once only the page files remain. The first live pass after the rollback ([Then live](#then-live)) applies the overlay to every key, so do not announce the site until that pass has finished and the report shows no failed write.
 
