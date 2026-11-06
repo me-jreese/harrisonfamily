@@ -18,7 +18,50 @@ export const TABLE_VIEW = "table";
 export const FAMILY_VIEW = "family";
 // The faces tab (HFY-TSK-308, familyVizFaces): a mosaic of face crops grouped by photo. Offered only with the flag on; otherwise it reads as the cards.
 export const FACES_VIEW = "faces";
+// The big hourglass tree (HFY-TSK-379, flag familyVizHourglass): `?view=tree`. Not a view the toggle or the remembered choice knows: it is asked for by the address
+// alone and only while the flag is on, so with the flag off `?view=tree` is an unknown view and reads as it always did (normalizeView gives null).
+export const TREE_VIEW = "tree";
 export const DEFAULT_VIEW = "cards";
+
+// The "new" mark on the family page's tree tab (HFY-TSK-379 pass 4, T-Copy: "a quiet new for the first month"). The tab is offered while familyVizHourglass is
+// on; the mark goes after this date. The date is a release choice (io), not a clock the page reads from a server: change it with the release, see
+// docs/reference/hourglass-tree.md.
+export const TREE_TAB_NEW_UNTIL = "2027-01-31T23:59:59Z";
+
+/** The words of the tree tab, the "centred on" chip and the cards' link (T-Copy: lower case, names keep their capitals; tests/hourglass-copy.test.mjs checks them). */
+export const TREE_COPY = {
+  tab: "tree",
+  fresh: "new",
+  centred: "centred on",
+  change: "change",
+  changeAria: "change who the tree is centred on",
+  see: (first) => (first ? `see ${first} in the tree` : "see the tree")
+};
+
+/** Whether the tree tab still carries its quiet "new". `now` is a Date or a millisecond count; a clock that is not a number reads as past (no mark). */
+export const treeTabIsNew = (now = Date.now()) => Number(now) <= Date.parse(TREE_TAB_NEW_UNTIL);
+
+/** First given name of a graph person, else the first word of the name; "" for none. Titles (dr, mr ...) are skipped, as the hourglass tree does. */
+export function firstNameOf(p) {
+  const tokens = (s) => String(s || "").trim().replace(/^(?:rev|dr|mr|mrs|ms|miss)\.?\s+/i, "").split(/\s+/).filter(Boolean);
+  return p ? tokens(p.given)[0] || tokens(p.name)[0] || "" : "";
+}
+
+/**
+ * The big tree's address for the family page's "tree" tab and the front card's "see {first} in the tree" link: `?view=tree&focus=<id>` and, when the
+ * address already carries one (or `fromId`, the card link's own person), the `from=` person page that the big tree's "back" returns to. Nothing else of
+ * the address is carried (`ggp` and `kin` belong to the views they were set in). Null for an id the page cannot put in an address.
+ */
+export function treeUrl(loc, focus, fromId = null) {
+  if (typeof focus !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(focus)) return null;
+  const from = fromId || new URLSearchParams(loc.search).get("from");
+  const q = new URLSearchParams({ view: TREE_VIEW, focus });
+  if (from && /^[A-Za-z0-9_-]{1,32}$/.test(from)) q.set("from", from);
+  return `${loc.pathname}?${q.toString()}`;
+}
+
+/** Whether the address asks for the big tree (`?view=tree`); the page decides whether it is on offer. */
+export const treeAsked = (search) => new URLSearchParams(search).get("view") === TREE_VIEW;
 
 /** "cards" | "outline" | "lifelines" | "table" | "family" for a raw value (`chart` is an alias of `cards`), else null. */
 export function normalizeView(value) {

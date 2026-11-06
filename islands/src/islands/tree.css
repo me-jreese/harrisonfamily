@@ -84,6 +84,32 @@
 }
 .hfy-tree .hfy-tree__view[aria-pressed="true"] { border-color: var(--io-color-semantic-accent); background: var(--io-color-semantic-surface-raised); font-weight: var(--io-typography-weight-semibold); }
 
+/* familyVizHourglass (HFY-TSK-379 pass 4): the "tree" tab is the last tab and a link (it leaves this view); a quiet "new" follows its word. */
+.hfy-tree a.hfy-tree__view { display: inline-flex; align-items: center; gap: var(--io-space-2); text-decoration: none; }
+.hfy-tree .hfy-tree__new { color: var(--io-color-semantic-text-dim); font-weight: var(--io-typography-weight-regular); }
+
+/* The "centred on {name}" chip with its "change" link: the token-pill colours. On the family page it sits above the tabs; in the big tree it is drawn into the top bar. */
+.hfy-ctx {
+  box-sizing: border-box; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 var(--io-space-3); max-width: 100%; margin: 0 0 var(--io-space-3);
+  padding: 0 var(--io-space-3); border-radius: var(--io-radius-pill); background: var(--io-color-semantic-token-pill-bg); color: var(--io-color-semantic-token-pill-fg);
+  font-family: var(--io-typography-font-ui); font-size: var(--io-typography-size-sm); line-height: var(--io-typography-leading-snug);
+}
+.hfy-tree .hfy-ctx { display: flex; width: fit-content; }
+.hfy-ctx b { font-weight: var(--io-typography-weight-semibold); }
+.hfy-ctx__change { display: inline-flex; align-items: center; justify-content: center; min-width: var(--io-control-tap-min); min-height: var(--io-control-tap-min); color: inherit; font-weight: var(--io-typography-weight-semibold); text-decoration: underline; }
+.hfy-ctx :is(a):focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: calc(var(--io-space-1) * -1); }
+.hfy-bt__top .hfy-ctx { margin: 0 0 0 auto; }
+
+/* The cards' one link to the big tree: a button-styled link with a small tree icon, above the cards (a link cannot sit inside a card, which is a button). */
+.hfy-tree__seetree { margin: 0 0 var(--io-space-3); }
+.hfy-tree .hfy-tree__see {
+  box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--io-space-2); min-height: var(--io-control-tap-min); padding: 0 var(--io-space-4);
+  border: 1px solid var(--io-color-semantic-border-strong); border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface-raised); color: var(--io-color-semantic-text);
+  font-weight: var(--io-typography-weight-semibold); text-decoration: none;
+}
+.hfy-tree .hfy-tree__see:hover { border-color: var(--io-color-semantic-accent); }
+.hfy-tree .hfy-tree__see svg { flex: none; }
+
 /* The page: the focus navigator, then the generation outline (side by side from the wide breakpoint). */
 .hfy-tree__outline { margin-top: var(--io-space-5); }
 .hfy-tree__outline h2 { margin: 0 0 var(--io-space-3); font-size: var(--io-typography-size-md); font-weight: var(--io-typography-weight-semibold); }
@@ -93,7 +119,7 @@
 }
 @media (min-width: 64rem) {
   .hfy-tree--ready { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--io-space-5); align-items: start; }
-  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views, .hfy-tree__kin) { grid-column: 1 / -1; }
+  .hfy-tree--ready > :is(.hfy-tree__notice, .hfy-tree__live, .hfy-tree__views, .hfy-tree__kin, .hfy-ctx, .hfy-tree__seetree) { grid-column: 1 / -1; }
   .hfy-tree__outline { margin-top: 0; }
 }
 

@@ -10,13 +10,14 @@
 //   GET /person/graph.json  200 render | 401 (after the refresh retry) sign in, back here | 403/404 "being prepared" | bad body: retry
 import "./tree.css";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { resolveMerged } from "../lib/merged-person.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
-import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, initialView, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
+import { FACES_VIEW, FAMILY_VIEW, LIFELINES_VIEW, TABLE_VIEW, TREE_COPY, firstNameOf, initialView, treeAsked, treeTabIsNew, treeUrl, viewParam, viewUrl, writeStoredView } from "../lib/tree-view.js";
 import { layoutOf } from "../lib/bigtree-model.js";
 import { useFlags } from "../lib/use-flags.js";
 import { useMedia } from "../lib/use-media.js";
@@ -29,8 +30,10 @@ export const COPY = {
   notFound: "we couldn't find that person, so here is someone to start from.",
   chartFailed: "the chart didn't load. the outline below has everything.",
   bigTreePrepared: "the whole-family view is being prepared.",
-  bigTreeFailed: "the whole-family view didn't load. the outline below has everything."
+  bigTreeFailed: "the whole-family view didn't load. the outline below has everything.",
+  treeFailed: "the big tree didn't load. the cards below have everyone."
 };
+const OUTLINE_ID = "hfy-tree-outline";
 
 // The cards view is its own chunk (lib/tree-chart.jsx). If the chunk fails to load, or the browser refuses the custom element (the chunk
 // defines it as it evaluates, so the import rejects), the page drops to outline-only mode: TreeApp says so in COPY.chartFailed and keeps the
@@ -58,7 +61,8 @@ const loadKinship = () => (kinshipImport ||= import("../lib/tree-kinship.jsx").c
 
 /** The pill and, once opened, the panel. Rendered only for a signed-in member who is in the graph, with familyVizKinship on. */
 export function KinshipSlot({ graph, viewer, focus, onFocus }) {
-  const [open, setOpen] = useState(false);
+  // `?kin=1` (the big hourglass tree's "how are we related?") opens the panel at once, for the person in the address.
+  const [open, setOpen] = useState(() => new URLSearchParams(location.search).get("kin") === "1");
   const [Panel, setPanel] = useState(null);
   const [failed, setFailed] = useState(false);
   const pill = useRef(null);
@@ -95,6 +99,88 @@ const loadBigTree = () => (bigTreeImport ||= import("../lib/tree-bigtree.jsx"));
 let facesImport = null;
 const loadFaces = () => (facesImport ||= import("../lib/tree-faces.jsx"));
 const BIGTREE_QUERY = "(min-width: 64rem)";
+// The big hourglass tree (HFY-TSK-379, familyVizHourglass, ?view=tree) is a plain-DOM lazy chunk too (lib/tree-hourglass-big.js), loaded only when that view
+// is asked for with the flag on. It draws a full-screen view of its own, so the page's toggle, navigator and outline are not rendered beside it; a chunk that
+// will not load drops the page to the cards (the same people), with a line that says so.
+let hourglassImport = null;
+const loadHourglass = () => (hourglassImport ||= import("../lib/tree-hourglass-big.js"));
+
+/** The big hourglass tree: the chunk draws into the host; `go` is its way to put a new middle person in the address and the page's state. */
+function HourglassView({ graph, focus, from, notice, links, sync, onFailed }) {
+  const host = useRef(null);
+  // The big tree's top bar, once drawn: the "centred on" chip is this page's, drawn into it (a portal), so the hourglass chunk and its byte budget stay as they were.
+  const [top, setTop] = useState(null);
+  // The newest props, read when the chunk mounts: a graph that reloads remounts on whoever is in the middle now, not on the first person.
+  const now = useRef(null);
+  // Whether the visitor has moved the stage since the middle person was last centred (see the resize effect below).
+  const moved = useRef(false);
+  now.current = { focus, from, notice, links, sync, onFailed };
+  useEffect(() => {
+    let live = true;
+    let api = null;
+    const fail = (e) => { if (live) { console.error("HFY tree: HOURGLASS_CHUNK_FAILED", e); now.current.onFailed(); } };
+    loadHourglass().then((m) => {
+      if (!live) return;
+      const o = now.current;
+      moved.current = false;
+      api = m.mountBig(host.current, { graph, focus: o.focus, from: o.from, ggp: new URLSearchParams(location.search).get("ggp") === "1", links: o.links, notice: o.notice, sync: (id) => { moved.current = false; now.current.sync(id); } });
+      setTop(host.current.querySelector(".hfy-bt__top"));
+    }).catch(fail);
+    return () => { live = false; api?.destroy(); setTop(null); };
+  }, [graph]);
+  // The chip can make the top bar a row taller (a phone wraps it under the title), which shortens the stage after the chunk centred the middle person in it. Put them
+  // back in the middle when the stage changes size, but only while the visitor has not moved the stage themselves: a phone's address bar or keyboard also resizes
+  // it, and that must not throw away where they have panned to. A touch, wheel, key or press on the stage marks it moved; the chunk's own tap-to-re-centre
+  // (`sync`) clears the mark again.
+  useEffect(() => {
+    const stage = top && host.current?.querySelector(".hfy-bt__stage");
+    if (!stage || typeof ResizeObserver === "undefined") return undefined;
+    const centre = () => {
+      const a = stage.querySelector("[aria-current]")?.getBoundingClientRect();
+      if (!a) return;
+      const b = stage.getBoundingClientRect();
+      stage.scrollTo({ left: stage.scrollLeft + a.left + a.width / 2 - b.left - b.width / 2, top: stage.scrollTop + a.top + a.height / 2 - b.top - b.height / 2, behavior: "auto" });
+    };
+    const mark = () => { moved.current = true; };
+    const kinds = ["wheel", "touchstart", "pointerdown", "keydown"];
+    kinds.forEach((k) => stage.addEventListener(k, mark, { passive: true }));
+    let seen = false; // the observer reports once when it starts
+    const ro = new ResizeObserver(() => { if (seen && !moved.current) centre(); seen = true; });
+    ro.observe(stage);
+    if (!moved.current) centre();
+    return () => { ro.disconnect(); kinds.forEach((k) => stage.removeEventListener(k, mark)); };
+  }, [top]);
+  const name = graph.person(focus)?.name;
+  return (
+    <>
+      <div ref={host} className="hfy-bt-host" data-tree-hourglass />
+      {top && name ? createPortal(<CentredChip name={name} href={`${viewUrl({ pathname: location.pathname, search: `?focus=${focus}`, hash: "" }, "cards")}#${OUTLINE_ID}`} />, top) : null}
+    </>
+  );
+}
+
+/** Put the keyboard on the page's generation outline, which lists everyone and re-centres on a choice: the page's own way to pick another person. */
+function showOutline() {
+  const o = document.getElementById(OUTLINE_ID);
+  if (!o) return false;
+  o.focus();
+  o.scrollIntoView?.({ block: "start" });
+  return true;
+}
+
+/**
+ * "centred on {name}" and "change" (HFY-TSK-379 pass 4, T-Both): the person every view of the page is about. "change" has no board-defined target. The page has
+ * no search of its own; the one place that lists everyone and re-centres on a pick is the generation outline, so "change" goes there: it takes the keyboard to the
+ * outline when the page has one (the family views), and in the big tree, which has none, it is a link to the cards view for the same person that opens on the outline.
+ */
+function CentredChip({ name, href = `#${OUTLINE_ID}`, local = false }) {
+  return (
+    <p className="hfy-ctx" data-tree-ctx>
+      <span>{TREE_COPY.centred} <b>{name}</b></span>
+      <a className="hfy-ctx__change" href={href} aria-label={TREE_COPY.changeAria} data-tree-ctx-change onClick={local ? (e) => { if (showOutline()) e.preventDefault(); } : undefined}>{TREE_COPY.change}</a>
+    </p>
+  );
+}
 
 class ChartBoundary extends Component {
   constructor(props) { super(props); this.state = { failed: false }; }
@@ -239,12 +325,16 @@ export function GenerationOutline({ graph, focus, onFocus, sheet = false }) {
 }
 
 /** The cards | outline switch: two buttons in a group, the current one pressed. Both are always real buttons, 44 px at every width. */
-export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false }) {
+export function ViewToggle({ view, onChoose, lifelines = false, whole = false, facesTab = false, treeHref = null }) {
   return (
     <div className="hfy-tree__views" role="group" aria-label="view" data-tree-views>
       {["cards", "outline", ...(lifelines ? [LIFELINES_VIEW, TABLE_VIEW] : []), ...(facesTab ? [FACES_VIEW] : []), ...(whole ? [FAMILY_VIEW] : [])].map((v) => (
         <button key={v} type="button" className="hfy-tree__view" aria-pressed={view === v ? "true" : "false"} data-tree-view={v} onClick={() => onChoose(v)}>{v === FAMILY_VIEW ? "whole family" : v}</button>
       ))}
+      {treeHref ? (
+        // familyVizHourglass: the last tab opens the big tree for the person in the middle (a real address, so Back returns here); it is a link, not a pressed button, because it leaves this view.
+        <a className="hfy-tree__view hfy-tree__view--tree" href={treeHref} data-tree-view="tree">{TREE_COPY.tab}{treeTabIsNew() ? <span className="hfy-tree__new">{TREE_COPY.fresh}</span> : null}</a>
+      ) : null}
     </div>
   );
 }
@@ -280,9 +370,17 @@ export function TreeApp() {
   const timeOn = flags?.familyVizTime === true;
   const [Lifelines, setLifelines] = useState(null);
   const [lifelinesFailed, setLifelinesFailed] = useState(false);
+  // familyVizHourglass (HFY-TSK-379): `?view=tree` is the big tree. With the flag off it is an unknown view (view above is then what it always was);
+  // while the flags are on their way it holds a placeholder rather than flashing the cards.
+  // Read once, on purpose: the tree tab and the cards' link are plain links (a full navigation), and the big tree keeps its own history and popstate inside itself,
+  // so this page is never moved to or from `?view=tree` by a pushState of its own.
+  const [treeAskedNow] = useState(() => treeAsked(location.search));
+  const [treeFailed, setTreeFailed] = useState(false);
+  const treeOn = treeAskedNow && flags?.familyVizHourglass === true && !treeFailed;
+  const treePending = treeAskedNow && flags === undefined;
   const [FacesTab, setFacesTab] = useState(null);
   const [facesFailed, setFacesFailed] = useState(false);
-  const shown = view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW || view === TABLE_VIEW ? (lifelinesFailed ? "cards" : timeOn ? view : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
+  const shown = treeOn ? "tree" : treePending ? "treePending" : view === FACES_VIEW ? (facesFailed ? "cards" : faces ? FACES_VIEW : flags === undefined ? "pending" : "cards") : view === LIFELINES_VIEW || view === TABLE_VIEW ? (lifelinesFailed ? "cards" : timeOn ? view : flags === undefined ? "pending" : "cards") : view === FAMILY_VIEW && !bigOffered ? "cards" : view;
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -419,6 +517,13 @@ export function TreeApp() {
     setFocus(id);
     setTimeout(() => document.getElementById("hfy-tree-focus-name")?.focus(), 0);
   }, []);
+  // The big tree's "change" opens the cards view at the generation outline (#hfy-tree-outline): once the page is drawn, with familyVizHourglass on, the keyboard goes there.
+  const hashHandled = useRef(false);
+  useEffect(() => {
+    if (hashHandled.current || flags === undefined || !resolved?.id || shown === "tree" || shown === "treePending") return;
+    hashHandled.current = true;
+    if (flags.familyVizHourglass === true && location.hash === `#${OUTLINE_ID}`) showOutline();
+  }, [flags, resolved?.id, shown]);
   const [spoken, setSpoken] = useState("");
   const announced = useRef(null);
   useEffect(() => {
@@ -440,14 +545,24 @@ export function TreeApp() {
   }
   if (!resolved) return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
   if (!resolved.id) return <div className="hfy-tree"><State>{COPY.prepared}</State></div>;
+  if (shown === "treePending") return <div className="hfy-tree" aria-busy="true"><div className="hfy-tree__skeleton" data-tree-loading /></div>;
+  if (shown === "tree") {
+    const links = { kin: flags.familyVizKinship === true && Boolean(sub) && graph.has(sub), poster: bigOffered && hasLayout, table: timeOn };
+    return <HourglassView graph={graph} focus={resolved.id} from={new URLSearchParams(location.search).get("from")} notice={resolved.fellBack ? COPY.notFound : ""} links={links} sync={setFocus} onFailed={() => setTreeFailed(true)} />;
+  }
+  // familyVizHourglass (HFY-TSK-379 pass 4): the "tree" tab, the "centred on" chip and the cards' "see {first} in the tree" link; with the flag off none of them exists.
+  const hourglass = flags?.familyVizHourglass === true;
+  const bigHref = hourglass ? treeUrl(location, resolved.id) : null;
   return (
     <div className="hfy-tree hfy-tree--ready" data-tree-mode={shown === FAMILY_VIEW ? FAMILY_VIEW : chartFailed ? "outline" : shown}>
       {resolved.fellBack ? <p className="hfy-tree__notice" role="status" data-tree-notice>{COPY.notFound}</p> : null}
+      {hourglass && graph.person(resolved.id) ? <CentredChip name={graph.person(resolved.id).name} local /> : null}
+      {treeFailed ? <p className="hfy-tree__notice" role="status" data-tree-hourglass-failed>{COPY.treeFailed}</p> : null}
       {chartFailed && shown !== FAMILY_VIEW ? (
         <p className="hfy-tree__notice" role="status" data-tree-chart-failed>{COPY.chartFailed}</p>
       ) : (
         <>
-          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || (shown === "pending" && view !== FACES_VIEW)} whole={bigOffered} facesTab={faces} />
+          <ViewToggle view={shown === "pending" ? view : shown} onChoose={onView} lifelines={timeOn || (shown === "pending" && view !== FACES_VIEW)} whole={bigOffered} facesTab={faces} treeHref={bigHref} />
           {shown === "pending" && view === FACES_VIEW ? <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading /> : null}
           {shown === FACES_VIEW ? (
             FacesTab ? <FacesTab graph={graph} fetcher={fetcher} /> : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-faces-loading />
@@ -462,6 +577,14 @@ export function TreeApp() {
               : bigFailed ? <p className="hfy-tree__notice" role="status" data-tree-poster-failed>{COPY.bigTreeFailed}</p>
               : BigTree ? <BigTree graph={graph} viewer={sub} onOpen={(id) => { setView("cards"); history.replaceState(null, "", viewUrl(location, "cards")); onFocus(id, "list"); }} />
               : <div className="hfy-tree__skeleton hfy-tree__skeleton--chart" aria-hidden="true" data-tree-poster-loading />
+          ) : null}
+          {shown === "cards" && bigHref ? (
+            <p className="hfy-tree__seetree" data-tree-seetree>
+              <a className="hfy-tree__see" href={treeUrl(location, resolved.id, resolved.id)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v6M6 9h12M6 9v4M18 9v4M12 15v6M4 13h4v4H4zM16 13h4v4h-4z" /></svg>
+                {TREE_COPY.see(firstNameOf(graph.person(resolved.id)))}
+              </a>
+            </p>
           ) : null}
           {shown === "cards" ? (
             <ChartBoundary onFailed={() => setChartFailed(true)}>

@@ -24,6 +24,13 @@ export function fillTreeLink(doc, personId, familyViz) {
   return true;
 }
 
+/**
+ * Which of the hourglass footer's "prefer a list?" links exist for these flags (viz.md section 14). The outline view of /tree/ is always rendered with familyViz
+ * (it is the accessible path, section 12.3), so its link shows whenever the hourglass does; the table view is the lifelines' screen-reader twin
+ * (lib/tree-view.js TABLE_VIEW) and exists only with familyVizTime. Without familyViz nothing is drawn at all.
+ */
+export const hourglassLinks = (flags) => ({ outline: Boolean(flags) && flags.familyViz === true, table: Boolean(flags) && flags.familyViz === true && flags.familyVizTime === true });
+
 /** Event dispatched when the mini focus view is wanted but not drawn; person-page.js then draws the Graphviz frame it had held back. */
 export const MINI_UNAVAILABLE = "hfy:person-mini-unavailable";
 
@@ -32,27 +39,47 @@ export function mountTreeLink(win = window) {
   const doc = win.document;
   let flagOn = false;
   let miniOn = false;
+  let hourglassOn = false;
+  let tableOn = false;
   let resolved = false;
   const cache = {}; // the graph, loaded once for this mount
   const idNow = () => new URLSearchParams(win.location.search).get("id");
   const unavailable = (id) => doc.dispatchEvent(new CustomEvent(MINI_UNAVAILABLE, { detail: { personId: id } }));
-  const fill = (id) => {
-    const linked = fillTreeLink(doc, id, flagOn);
-    // HFY-TSK-289 (familyVizPersonMini): the mini focus view shares the host with the link. It needs familyViz too (the graph is /tree/'s).
-    const host = doc.querySelector('[data-slot="tree-link"]');
-    if (!host) { unavailable(id); return; }
+  const fetcher = (u, i) => (win.HFYFeatureFlags?.dataFetch ? win.HFYFeatureFlags.dataFetch(u, i, { interactive: false }) : win.fetch(u, i));
+  // What the page shows without the hourglass: the card mini focus view (HFY-TSK-289, familyVizPersonMini) in the tree-link host, else the Graphviz frame
+  // that person-page.js held back. The hourglass's "cards" view and its fallback draw exactly this.
+  const classic = (id, host, linked) => {
     if (!(miniOn && linked)) { host.querySelector("[data-person-mini]")?.remove(); unavailable(id); return; }
-    const fetcher = (u, i) => (win.HFYFeatureFlags?.dataFetch ? win.HFYFeatureFlags.dataFetch(u, i, { interactive: false }) : win.fetch(u, i));
     import("./person-mini.js")
       .then((m) => m.fillMini(doc, host, id, treeLinkHref(id), fetcher, cache))
       .then((shown) => { if (!shown && idNow() === id) unavailable(id); })
       .catch(() => unavailable(id));
   };
+  const fill = (id) => {
+    const linked = fillTreeLink(doc, id, flagOn);
+    // HFY-TSK-289 (familyVizPersonMini): the mini focus view shares the host with the link. It needs familyViz too (the graph is /tree/'s).
+    const host = doc.querySelector('[data-slot="tree-link"]');
+    if (!host) { unavailable(id); return; }
+    const plain = () => classic(id, host, linked);
+    // HFY-TSK-379 (familyVizHourglass, needs familyViz): the tree/cards switch and the hourglass; it wins over the mini view. Any failure is the plain page.
+    if (!(hourglassOn && linked && id)) { plain(); return; }
+    import("./hourglass-ui.js")
+      .then((m) => m.fillHourglass(doc, host, id, { fetcher, cache, links: { table: tableOn }, classic: plain }))
+      .then((took) => { if (!took) plain(); })
+      .catch(plain);
+  };
   // Before the flags are read nothing is wanted or signalled: the first fill below runs once they are.
   const onRendered = (e) => { if (resolved) fill(e?.detail?.personId ?? idNow()); };
   Promise.resolve(win.HFYFeatureFlags?.resolveFlags?.())
     .catch(() => null)
-    .then((flags) => { flagOn = Boolean(flags) && flags.familyViz === true; miniOn = flagOn && flags.familyVizPersonMini === true; resolved = true; fill(idNow()); });
+    .then((flags) => {
+      flagOn = Boolean(flags) && flags.familyViz === true;
+      miniOn = flagOn && flags.familyVizPersonMini === true;
+      hourglassOn = flagOn && flags.familyVizHourglass === true;
+      tableOn = hourglassLinks(flags).table;
+      resolved = true;
+      fill(idNow());
+    });
   doc.addEventListener("hfy:person-rendered", onRendered);
   return () => doc.removeEventListener("hfy:person-rendered", onRendered);
 }

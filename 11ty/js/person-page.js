@@ -98,10 +98,13 @@
   // HFY-TSK-289: with familyVizPersonMini (and familyViz) on, the Graphviz frame is not drawn and the mini focus view (islands, in the
   // [data-slot="tree-link"] host) takes its place. Off, or when the flags cannot be read, the frame renders exactly as before. Set before
   // each render by miniFlagOn(); the frame code below is the flag-off path and goes when viz-graphviz-retire-flip deletes the SVGs.
+  // HFY-TSK-379: familyVizHourglass (with familyViz) holds the frame back the same way, because the hourglass tree (islands) takes its place; it wins over
+  // the mini view. The frame is drawn when the visitor picks "cards" with the mini view off, and when the hourglass cannot be drawn.
   let personMiniOn = false;
   let lastRendered = null;
-  // The islands signal (tree-link.js) when the mini view is wanted but not drawn: graph.json missing, gated or without this person,
-  // the chunk failing, or the two flag reads disagreeing. The frame held back above is then drawn, so the slot is never blank.
+  // The islands signal (tree-link.js) when the mini view or the hourglass is wanted but not drawn: graph.json missing, gated or without this person,
+  // the chunk failing, the two flag reads disagreeing, or (hourglass) the visitor choosing "cards" with no mini view. The frame held back above is
+  // then drawn, so the slot is never blank. The event keeps its name: it always means "the frame is wanted after all".
   document.addEventListener("hfy:person-mini-unavailable", (event) => {
     const detail = event && event.detail;
     if (!personMiniOn || !lastRendered || !detail || detail.personId !== lastRendered.personId) {
@@ -110,6 +113,26 @@
     personMiniOn = false;
     renderFamilyVisualization(lastRendered.person, lastRendered.personId);
   });
+
+  // HFY-TSK-379: the signal above comes only from the person island. If that island never runs (personV2 off, or its script fails to load) nothing would
+  // draw the frame held back, and the family section would be blank. So, a few seconds after a render that held the frame back, an empty
+  // [data-slot="tree-link"] host (the island fills it as soon as it has the flags: the link, the switch or the mini view) means "no island": draw the frame.
+  const ISLAND_WAIT_MS = 4000;
+  let islandWatch = null;
+  function watchForIsland(personId) {
+    clearTimeout(islandWatch);
+    if (!personMiniOn) {
+      return;
+    }
+    islandWatch = setTimeout(() => {
+      const host = document.querySelector('[data-slot="tree-link"]');
+      if (!personMiniOn || !lastRendered || lastRendered.personId !== personId || (host && host.firstElementChild)) {
+        return;
+      }
+      personMiniOn = false;
+      renderFamilyVisualization(lastRendered.person, lastRendered.personId);
+    }, ISLAND_WAIT_MS);
+  }
 
   document.addEventListener("DOMContentLoaded", () => {
     const app = document.getElementById("person-app");
@@ -283,6 +306,7 @@
     const hasEvents = renderEvents(person);
     const hasFamilyList = renderFamily(person);
     const hasFamilyVisualization = renderFamilyVisualization(person, personId);
+    watchForIsland(personId);
     if (!hasFamilyList && !hasFamilyVisualization) {
       const familyData = document.getElementById("person-family-data");
       if (familyData) {
@@ -437,11 +461,12 @@
   }
 
   // Starts with fetchPerson and is awaited after it. fetchPerson's dataFetch already waits for feature-flags.js and resolveFlags caches its
-  // promise, so by then this adds no delay (flag off included). Resolves true only for familyViz and familyVizPersonMini both true; any failure or a missing feature-flags.js is false.
+  // promise, so by then this adds no delay (flag off included). Resolves true only for familyViz with familyVizPersonMini or familyVizHourglass; any failure or a
+  // missing feature-flags.js is false.
   function miniFlagOn() {
     return waitForFeatureFlags(2000)
       .then((ff) => (ff && typeof ff.resolveFlags === "function" ? ff.resolveFlags() : null))
-      .then((flags) => Boolean(flags) && flags.familyViz === true && flags.familyVizPersonMini === true)
+      .then((flags) => Boolean(flags) && flags.familyViz === true && (flags.familyVizPersonMini === true || flags.familyVizHourglass === true))
       .catch(() => false);
   }
 
