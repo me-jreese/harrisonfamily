@@ -1,3 +1,8 @@
 /* The posts-page media carousel host (media-carousel.jsx, HFY-TSK-388-0C). The band's own look is the kit's browser.css; this only places it above the feed.
    Aliases only (--io-*); it never widens the page, so there is no sideways scroll at 375 px. */
 .hfy-mc { margin: 0 0 var(--io-space-4); min-width: 0; max-width: 100%; }
+
+/* HFY-TSK-404: the kit's .io-media-band-clip is a grid with one implicit "auto" column, whose track grows to the strip's full scroll width (every card in a row, 772 px for 14 cards).
+   The header, a grid item, then spanned that width and its "all media" link sat past the clip's overflow:hidden edge, off-screen at 375 px. A bounded track keeps the header at the
+   band's width and leaves the sideways scrolling to the strip. */
+.hfy-mc .io-media-band-clip { grid-template-columns: minmax(0, 1fr); }

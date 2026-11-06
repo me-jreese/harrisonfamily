@@ -24,19 +24,19 @@
         "css": "0bc02cef"
       },
       "edit-entry": {
-        "js": "8c1a5024",
+        "js": "7f4152b0",
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "027b5a73",
+        "js": "3ed953d2",
         "css": "4cd750ae"
       },
       "family": {
-        "js": "892fec0d",
+        "js": "bae09afe",
         "css": "e52fd206"
       },
       "family-entry": {
-        "js": "892de9ca",
+        "js": "2ca3d18f",
         "css": "978fbe15"
       },
       "follow": {
@@ -60,11 +60,11 @@
         "css": "e44c3a91"
       },
       "life-dates": {
-        "js": "a0648af5",
+        "js": "e47807c3",
         "css": "159c53fd"
       },
       "life-dates-queue": {
-        "js": "d26cc7bf",
+        "js": "49b55291",
         "css": "ea3388ce"
       },
       "links-editor": {
@@ -76,8 +76,8 @@
         "css": "83db50ff"
       },
       "media-carousel": {
-        "js": "30542cfa",
-        "css": "42a8b072"
+        "js": "d7381324",
+        "css": "c64b6ba7"
       },
       "moderation-queue": {
         "js": "794c62cf",
@@ -128,7 +128,7 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "138691f1",
+        "js": "7619475f",
         "css": "9545b73d"
       },
       "search": {

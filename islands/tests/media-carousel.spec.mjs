@@ -35,6 +35,33 @@ async function open(page, { flag = true, session = "I9001", list = null, reduced
   await page.goto("/posts/", { waitUntil: "domcontentloaded" });
   return s;
 }
+// HFY-TSK-404: WCAG contrast of two computed "rgb(...)"/"rgba(...)" colours, so the header link is proven readable and not merely present.
+const lum = (c) => { const [r, g, b] = c.match(/[\d.]+/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+async function headerLink(page) {
+  const link = page.locator(".io-media-band-head .io-media-link");
+  await expect(link).toBeVisible();
+  await expect(link).toHaveText(L.allMedia);
+  await expect(link).toHaveAttribute("href", "/all-media/");
+  return page.evaluate(() => {
+    const a = document.querySelector(".io-media-band-head .io-media-link"), t = document.querySelector(".io-media-band-title");
+    const b = a.getBoundingClientRect(), c = document.querySelector(".io-media-band-clip").getBoundingClientRect(), tr = t.getBoundingClientRect();
+    let el = a, bg = "rgb(255, 255, 255)";
+    while (el) { const v = getComputedStyle(el).backgroundColor; if (v && !/rgba\(0, 0, 0, 0\)|transparent/.test(v)) { bg = v; break; } el = el.parentElement; }
+    return { w: b.width, h: b.height, left: b.left, right: b.right, clipLeft: c.left, clipRight: c.right, titleRight: tr.right, vw: document.documentElement.clientWidth, color: getComputedStyle(a).color, bg };
+  });
+}
+const expectHeaderLinkVisible = async (page) => {
+  const m = await headerLink(page);
+  expect(m.w).toBeGreaterThan(0);
+  expect(m.h).toBeGreaterThanOrEqual(44);
+  expect(m.left).toBeGreaterThanOrEqual(m.titleRight);
+  expect(m.left).toBeGreaterThanOrEqual(m.clipLeft);
+  expect(m.right).toBeLessThanOrEqual(m.clipRight + 0.5);
+  expect(m.right).toBeLessThanOrEqual(m.vw);
+  expect(m.color).not.toBe(m.bg);
+  expect(contrast(m.color, m.bg)).toBeGreaterThanOrEqual(4.5);
+};
 const band = (page) => page.locator("section.io-media-carousel");
 const firstPost = (page) => page.getByText("Feed post number 12.").first();
 const noSideways = async (page) => expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -66,6 +93,16 @@ test.describe("phone 375x667", () => {
     expect(await axeViolations(page)).toEqual([]);
     await testInfo.attach("posts-375", { body: await page.screenshot(), contentType: "image/png" });
   });
+
+  for (const scheme of ["dark", "light"]) {
+    test(`the "all media" link shows on the right of the header row above the strip (${scheme} scheme)`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: scheme });
+      await open(page);
+      await expect(band(page)).toBeVisible();
+      await expectHeaderLinkVisible(page);
+      await noSideways(page);
+    });
+  }
 
   test("scrolling into the feed collapses the band, the top restores it", async ({ page }) => {
     await open(page);
@@ -133,6 +170,12 @@ test.describe("phone 375x667", () => {
 
 test.describe("desktop 1280", () => {
   test.use({ viewport: DESKTOP });
+
+  test("the \"all media\" link shows on the right of the header row", async ({ page }) => {
+    await open(page);
+    await expect(band(page)).toBeVisible();
+    await expectHeaderLinkVisible(page);
+  });
 
   test("a 280 px band, 44 px scroll buttons that work from the keyboard, axe, no sideways scroll", async ({ page }, testInfo) => {
     await open(page);
