@@ -108,8 +108,8 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "7a6a97b8",
-        "css": "bf26d487"
+        "js": "79717665",
+        "css": "9545b73d"
       },
       "search": {
         "js": "99872d4f",
@@ -929,16 +929,6 @@
       loadIsland("person-links", { onError() { /* the person page stands without the links section */ } });
     } else if (/^\/me\/links\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("links-editor", { onError() { /* the page keeps its "not available yet" note */ } });
-    }
-  });
-
-  // HFY-TSK-388-0D: lifeDatesV1 mounts the Life dates block on the person page (island life-dates; BRD 5.7, D-21): one plain line under the
-  // lifespan line and, for a signed-in member, an in-place editor that proposes years through POST /api/life-dates. With the flag off the
-  // bundle is not requested and the person page is as before.
-  resolveFlags().then((flags) => {
-    if (flags.lifeDatesV1 !== true) return;
-    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
-      loadIsland("life-dates", { onError() { /* the person page stands without the life dates block */ } });
     }
   });
 

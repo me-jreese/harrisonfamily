@@ -16,6 +16,8 @@ import { DuplicatesTab } from "../lib/admin-delete-ui.jsx";
 import { createProposalGateSource, proposalToCard } from "../lib/proposal-gate-source.js";
 import { CHIPS, COPY, TAB_LABEL, VIEW_OF, locationFor, parseLocation, pickCard, pickTab, tabsFor } from "../lib/review-model.js";
 import { Chips, ProposalCard, ProposalRow, usePersonNames } from "../lib/review-ui.jsx";
+import { LIFE_DATES_FLAG, splitQueue } from "../lib/review-batch-model.js";
+import { BatchApprove, ConflictCompare } from "../lib/review-batch-ui.jsx";
 
 export const signInHref = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
 
@@ -35,13 +37,15 @@ function useWide() {
 const NO_CHIP = Object.freeze({ id: "none", states: [], empty: "" });
 const FILTER = Object.freeze({}); // the gates `state` filter is ignored: each chip names its own proposal states
 
-function Review({ tabs }) {
+function Review({ tabs, lifeDates = false }) {
   const initial = useMemo(() => parseLocation(location.search), []);
   const [tab, setTab] = useState(() => pickTab(tabs, initial.tab));
   const [chipId, setChipId] = useState(() => (CHIPS[pickTab(tabs, initial.tab)] || [])[0]?.id);
   const [selectedId, setSelectedId] = useState(initial.id);
   const [overrides, setOverrides] = useState(() => new Map());
   const [missing, setMissing] = useState(false);
+  const [flash, setFlash] = useState("");
+  const [compareKey, setCompareKey] = useState(null); // lifeDatesV1: the contested years being compared
   const [truncated, setTruncated] = useState(false);
   const isWide = useWide();
   const names = usePersonNames();
@@ -78,6 +82,10 @@ function Review({ tabs }) {
     const merged = inbox.cards.map((c) => pickCard(c, overrides.get(c.id)));
     return tab === "review" ? merged : [...merged].reverse();
   }, [inbox.cards, overrides, tab]);
+
+  // lifeDatesV1 (Q-L2): the batch and the contested years, over the waiting suggestions of the queue.
+  const batchOn = lifeDates && tab === "review" && chip.id === "waiting";
+  const compareGroup = batchOn && compareKey ? splitQueue(listed.map((c) => c.hfy)).groups.find((g) => g.key === compareKey) || null : null;
 
   // The open card stays open when a list read no longer has it (a decision or a conflict moves it to another chip): the last card shown is held.
   const held = useRef(null);
@@ -136,6 +144,10 @@ function Review({ tabs }) {
         {showList && (
           <section className="hfy-review__list" aria-label={COPY.list} ref={listRef} data-hfy-list>
             <Chips chips={chips} active={chip.id} onPick={pickChip} label={COPY.filters} />
+            {batchOn && flash && <p className="hfy-review__ok" role="status" data-hfy-flash>{flash}</p>}
+            {batchOn && !first && !inbox.error && (compareGroup
+              ? <ConflictCompare key={compareGroup.key} group={compareGroup} source={source} names={names} onClose={() => setCompareKey(null)} onChanged={onChanged} onNotice={setFlash} />
+              : <BatchApprove views={listed.map((c) => c.hfy)} source={source} names={names} onChanged={onChanged} onCompare={setCompareKey} />)}
             {first && <div className="hfy-review__skeleton" role="status" aria-label={COPY.loading} />}
             {inbox.error && <p className="hfy-review__problem" role="alert">{COPY.loadFailed} <button type="button" className="hfy-review__btn" onClick={() => inbox.refresh()}>{COPY.retry}</button></p>}
             {!first && !inbox.error && !listed.length && <p className="hfy-review__note" role="status" data-hfy-empty>{chip.empty}</p>}
@@ -150,7 +162,7 @@ function Review({ tabs }) {
         {showDetail && (
           <section className="hfy-review__detail" aria-label="suggestion" tabIndex={-1} ref={detailRef} data-hfy-detail>
             {selectedId && !isWide && <button type="button" className="hfy-review__back" onClick={close} data-hfy-back>{COPY.back}</button>}
-            {selected && <ProposalCard key={selected.id} card={selected} source={source} api={api} mode={tab} names={names} onCardChanged={onCardChanged} onChanged={onChanged} />}
+            {selected && <ProposalCard key={selected.id} card={selected} source={source} api={api} mode={tab} names={names} onCardChanged={onCardChanged} onChanged={onChanged} lifeDates={lifeDates} />}
             {selectedId && !selected && !missing && <div className="hfy-review__skeleton" role="status" aria-label={COPY.loading} />}
             {selectedId && !selected && missing && <p className="hfy-review__note" role="status">{COPY.gone}</p>}
             {!selectedId && <p className="hfy-review__note" data-hfy-pick>{COPY.pickOne}</p>}
@@ -188,7 +200,7 @@ function ReviewPage() {
   else if (me.editing === false) body = <p className="hfy-review__note" role="status">{COPY.off}</p>;
   else {
     const tabs = tabsFor({ admin: me.admin === true, flags });
-    body = tabs.length ? <Review tabs={tabs} /> : <p className="hfy-review__note" role="status">{COPY.unavailable}</p>;
+    body = tabs.length ? <Review tabs={tabs} lifeDates={flags[LIFE_DATES_FLAG] === true} /> : <p className="hfy-review__note" role="status">{COPY.unavailable}</p>;
   }
   return <div className="hfy-reviewpage" aria-busy={Boolean(pending)}>{body}</div>;
 }
