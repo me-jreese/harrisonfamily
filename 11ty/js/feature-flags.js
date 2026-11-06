@@ -72,12 +72,12 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "32149598",
-        "css": "6c4a9e76"
+        "js": "dd4ea851",
+        "css": "83db50ff"
       },
       "media-carousel": {
         "js": "30542cfa",
-        "css": "289c73b5"
+        "css": "42a8b072"
       },
       "moderation-queue": {
         "js": "794c62cf",
@@ -112,8 +112,8 @@
         "css": "af2df384"
       },
       "photo-tag-edit": {
-        "js": "41c49b82",
-        "css": "fd74c3e8"
+        "js": "a6eea071",
+        "css": "6d3e841a"
       },
       "photo-tags": {
         "js": "5993b868",
