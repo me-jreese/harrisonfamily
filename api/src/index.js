@@ -232,7 +232,7 @@ export const handler = async (event, context) => {
       subscriptions: new DynamoSubscriptionStore(ddb, cmds, table),
       preferences: new DynamoPreferencesStore(ddb, cmds, table),
       inbox: createInboxStore(),
-      getAdmins, listMembers, personExists,
+      getAdmins, listMembers, personExists, getOwners: getGroups.owners,
       presignGet: createPresignGet(), // the sync pull routes: snapshot and blob downloads, 300 s
       syncBucket: env.SYNC_BUCKET ?? "harrisonfamily-sync",
       presignPut: createPresignPut(), // signs content-type, no empty-body checksum (HFY-R58)

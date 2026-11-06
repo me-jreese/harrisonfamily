@@ -326,7 +326,7 @@ class MassDeleteGuard(unittest.TestCase):
         class Overlay:
             hide = set()
 
-            def apply(self, objects):
+            def apply(self, objects, hints=()):
                 kept = [o for o in objects if o["handle"] not in self.hide]
                 return kept, {f"note/{h}.json" for h in self.hide}
 

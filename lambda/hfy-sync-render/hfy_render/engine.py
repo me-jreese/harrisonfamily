@@ -115,7 +115,7 @@ class Deps:
     metrics: Any
     mode: str
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
-    overlay: Any = None  # hook for hfy-moderation-record-targets: .apply(objects) -> (objects, exempt_delete_keys)
+    overlay: Any = None  # the MOD# overlay (overlay.ModOverlay): .apply(objects, hints) -> (objects, exempt_delete_keys); hints are the objects moderation markers of the range name
     text_gate: Any = None
     workers: int = 8
     remaining_ms: Callable[[], int] = lambda: 10 ** 9
@@ -306,7 +306,7 @@ class Engine:
         object_list = [objects[k] for k in sorted(objects)]
         exempt_keys: Set[str] = set()
         if d.overlay is not None:
-            object_list, exempt = d.overlay.apply(object_list)
+            object_list, exempt = d.overlay.apply(object_list, list(view.moderation_refs))
             exempt_keys = set(exempt or ())
         media_files = self._media_files({(o["_class"], o["handle"]): o for o in object_list if o.get("_class") == "Media"})
         rendered = site.render(object_list, media_files=media_files, generated_at=view.last_at or site.DEFAULT_GENERATED_AT, text_gate=d.text_gate)

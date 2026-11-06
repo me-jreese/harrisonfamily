@@ -235,8 +235,8 @@ RB=$(python3 "$T/runbook-check.py" "$DOC" "$INFRA/$GUARD")
 for k in "cutover headings in order: True" "rollback names the primary, then the last-resort steps in order: True" "primary rollback needs no republish: True" \
   "legacy republish is last resort only: True" "break-glass run uses --no-delete and --legacy-break-glass: True" "script flags named exist: True" \
   "moderation re-apply check fails closed and names its blocker: True" "the approval flag is explained as the G-cutover record: True" "approval gate named: True" "no broken relative links: True"; do contains "runbook: $k" "$RB" "$k"; done
-# The re-apply script is absent today, so the runbook's fail-closed check must stop (AC3 stays partial until hfy-moderation-record-targets ships it).
+# The re-apply script ships with hfy-moderation-record-targets (HFY-TSK-216), so the runbook's fail-closed check passes; it would stop (exit 1) if the script were removed.
 set +e; (cd "$ROOT" && { test -x scripts/moderation/reapply-moderation-hides.sh || { echo blocked >&2; exit 1; }; }) >/dev/null 2>&1; MRC=$?; set -e
-eq "the fail-closed moderation check stops while the script is absent" "$MRC" 1
+eq "the fail-closed moderation check passes while the script exists" "$MRC" 0
 # The rollback is dry-run checked: the policy-level step is exercised above (--remove --dry-run) and the runbook names that command.
 contains "the runbook names the rollback dry run" "$(cat "$DOC")" "apply-data-write-guard.sh --remove --dry-run"
