@@ -1,8 +1,7 @@
 // /posts/ page (HFY-TSK-067, flag postsV2): the list, or one post (?id=<ulid>) with the kit comments thread for post:<ulid>.
 import { useEffect, useState } from "react";
-import { ArticleView } from "@io-kit/content/react";
 import { mountIsland } from "../lib/mount.jsx";
-import { Banner, CARD_PROPS, COPY, PostList, PostRow, Skeletons, friendlyError, source, usePosts, useTimeTitles } from "../lib/posts-ui.jsx";
+import { ArticleRow, Banner, COPY, PostList, PostRow, Skeletons, friendlyError, source, usePosts, useTimeTitles } from "../lib/posts-ui.jsx";
 import { ContribLine } from "../lib/contrib-line.jsx";
 import { Comments } from "../lib/comments-ui.jsx";
 
@@ -36,7 +35,7 @@ function One({ id }) {
           {deleteError && <Banner>{deleteError}</Banner>}
           {s.post.type === "post"
             ? <ul className="hfy-posts__list"><PostRow post={s.post} link={false} remove={remove} replace={(post) => setS((cur) => ({ ...cur, post }))} /></ul>
-            : <div className="hfy-posts__item"><ArticleView post={s.post} {...CARD_PROPS} /></div>}
+            : <ArticleRow post={s.post} replace={(post) => setS((cur) => ({ ...cur, post }))} />}
           <Comments subject={`post:${s.post.id}`} />
         </article>
       )}

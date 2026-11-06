@@ -137,6 +137,27 @@ test("a plain hide tells the author a moderator hid it, and a visible question c
   await page.goto("/posts/", { waitUntil: "domcontentloaded" });
   await expect(row(page, 1).locator("[data-hfy-mod-banner]")).toHaveText("a moderator hid this.");
   await expect(row(page, 2).locator("[data-hfy-mod-banner]")).toHaveText("Ada Example asked: Which summer was this?");
+  // an edit does not show a plain hide again (social.md 11.2), so only the item that carries a note offers "edit"
+  await expect(row(page, 1).getByRole("button", { name: "edit", exact: true })).toHaveCount(0);
+  await expect(row(page, 2).getByRole("button", { name: "edit", exact: true })).toBeVisible();
+});
+
+test("an open moderation with no note and no hide draws no empty banner for the author", async ({ page }) => {
+  await stub(page, { viewer: "author", posts: [asAuthor(post(1, { moderation: { state: "question", hidden: false, by: ADMIN, at: T0, open: true } })), asAuthor(post(2))] });
+  await page.goto("/posts/", { waitUntil: "domcontentloaded" });
+  await expect(row(page, 2)).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(row(page, 1)).toBeVisible();
+  await expect(feed(page).locator("[data-hfy-mod-banner], [data-hfy-mod-notice]")).toHaveCount(0);
+});
+
+test("flag off: the list is what the server sent, a hidden post included (nothing is filtered client side)", async ({ page }) => {
+  await stub(page, { viewer: "member", posts: [post(1, { moderation: HIDE }), post(2)], flag: false });
+  await page.goto("/posts/", { waitUntil: "domcontentloaded" });
+  await expect(row(page, 2)).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(row(page, 1)).toHaveCount(1);
+  await expect(feed(page).locator("[data-hfy-moderate], [data-hfy-mod-badge], [data-hfy-mod-banner]")).toHaveCount(0);
 });
 
 test("flag off (the default): no control, no badge, no banner, and no /api/me request", async ({ page }) => {
@@ -310,6 +331,20 @@ test("a post's photos each get a hide control (only the admin), and hiding one n
   await expect(page.getByRole("dialog", { name: "moderate" }).getByRole("button")).toHaveText(["unhide photo"]);
 });
 
+test("a photo the kit drops (an unsafe url) in the middle of a post never shifts a control onto the wrong photo", async ({ page }) => {
+  const UNSAFE = { kind: "image", url: `javascript:alert(1)//uploads/posts/${ULID(73)}/x.jpg`, mime: "image/jpeg", alt: "dropped photo" };
+  const s = await stub(page, { viewer: "admin", posts: [asAdmin(post(1, { attachments: [PHOTO_A, UNSAFE, PHOTO_B] }))] });
+  await page.goto("/posts/", { waitUntil: "domcontentloaded" });
+  const photos = row(page, 1).locator(".iok-content-media > li");
+  await expect(photos).toHaveCount(2); // the kit drew the two safe photos
+  await expect(row(page, 1).getByRole("button", { name: /^moderate photo/ })).toHaveCount(2);
+  await photos.nth(1).getByRole("button", { name: /^moderate photo/ }).click();
+  await page.getByRole("dialog", { name: "moderate" }).getByRole("button", { name: "hide photo" }).click();
+  await expect.poll(() => s.moderation.length).toBe(1);
+  // the second drawn photo is PHOTO_B, not the dropped one that sat between them
+  expect(s.moderation[0].target).toEqual({ kind: "photo", parent: { kind: "post", id: ULID(1) }, attachment: ULID(72) });
+});
+
 test("the other member and the author get no photo control", async ({ browser }) => {
   for (const viewer of ["member", "author"]) {
     const ctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
@@ -319,6 +354,43 @@ test("the other member and the author get no photo control", async ({ browser })
     await expect(row(page, 1).locator(".iok-content-media > li")).toHaveCount(1);
     await page.waitForTimeout(300);
     await expect(page.locator("[data-hfy-moderate]")).toHaveCount(0);
+    await ctx.close();
+  }
+});
+
+// ------------------------------------------------------------------------------------------------------------------- an article on its own page
+// /posts/?id= for a post that is not type "post" goes through the kit's ArticleView; it carries the same moderation as a feed row.
+const article = (n, over = {}) => post(n, { type: "article", title: "Synthetic article", ...over });
+
+test("an article page: the admin gets the control, the hidden badge, unhide and a photo control; the author the banner and edit; another member nothing", async ({ browser }) => {
+  const hidden = article(1, { moderation: ASK, attachments: [PHOTO_A] });
+  const views = { admin: asAdmin(hidden), author: asAuthor(hidden), member: article(1, { attachments: [PHOTO_A] }) };
+  for (const viewer of ["admin", "author", "member"]) {
+    const ctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    const page = await ctx.newPage();
+    const s = await stub(page, { viewer, posts: [views[viewer]], after: () => asAdmin(article(1, { attachments: [PHOTO_A] })) });
+    await page.goto(`/posts/?id=${ULID(1)}`, { waitUntil: "domcontentloaded" });
+    const art = page.locator("[data-hfy-post-kind='article']");
+    await expect(art).toBeVisible();
+    await expect(art.locator("[data-testid='article-view']")).toBeVisible();
+    await page.waitForTimeout(400);
+    if (viewer === "admin") {
+      await expect(art.locator("[data-hfy-mod-badge]")).toHaveText("hidden");
+      await expect(art.getByRole("button", { name: /^moderate photo/ })).toHaveCount(1);
+      await art.getByRole("button", { name: "moderate, article" }).click();
+      await expect(page.getByRole("dialog", { name: "moderate" }).getByRole("button")).toHaveText(["hide", "ask for changes…", "ask a question…", "unhide"]);
+      await page.keyboard.press("Escape");
+      await art.getByRole("button", { name: "unhide", exact: true }).click();
+      await expect.poll(() => s.moderation.length).toBe(1);
+      expect(s.moderation[0]).toEqual({ target: { kind: "post", id: ULID(1) }, action: "unhide", version: T0 });
+      await expect(art.getByRole("status").filter({ hasText: "unhidden." })).toBeVisible();
+    } else if (viewer === "author") {
+      await expect(art.locator("[data-hfy-mod-banner]")).toHaveText("Ada Example asked: Please add who is in the photo. — edit it to show it again.");
+      await expect(art.getByRole("button", { name: "edit", exact: true })).toBeVisible();
+      await expect(art.locator("[data-hfy-moderate]")).toHaveCount(0);
+    } else {
+      await expect(art.locator("[data-hfy-moderate], [data-hfy-mod-badge], [data-hfy-mod-banner]")).toHaveCount(0);
+    }
     await ctx.close();
   }
 });

@@ -81,6 +81,11 @@ export function createHfyCommentSource(api, { onAdded, moderation = false, onMod
     for (const c of r?.thread?.comments ?? []) seen.set(c.id, c);
     return r;
   };
+  // A comment this session made or changed is as current as a listed one.
+  const keep = (c) => {
+    if (c && typeof c === "object" && c.id) seen.set(c.id, c);
+    return c;
+  };
   return {
     // `order` (asc, the default, or desc) goes through as GET /api/comments?order=; a cursor is bound to the order that issued it.
     list: (threadId, opts = {}) => wrap(api.get("/comments", { query: { subject: threadId, cursor: opts.cursor, limit: opts.limit, order: opts.order } }), "list").then(remember),
@@ -107,10 +112,11 @@ export function createHfyCommentSource(api, { onAdded, moderation = false, onMod
       // The last client step for the photo captions too (the composer's own pre-check normally holds a hit before it gets here).
       for (const a of photos ?? []) refuseContactInfo(a.alt);
       const c = await wrap(api.post("/comments", { subject: threadId, body: input.body, ...(photos ? { attachments: photos } : {}), ...(input.parentId ? { parentId: input.parentId } : {}) }), "create");
+      keep(c);
       if (onAdded) onAdded(c);
       return c;
     },
-    edit: (threadId, id, input) => refuseContactInfo(input.body, true) || wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit"),
+    edit: (threadId, id, input) => refuseContactInfo(input.body, true) || wrap(api.patch(`/comments/${enc(id)}`, { body: input.body }, { query: { subject: threadId } }), "edit").then(keep),
     async delete(threadId, id, opts = {}) {
       await wrap(api.del(`/comments/${enc(id)}`, { query: { subject: threadId, reason: opts.reason } }), "delete");
     },

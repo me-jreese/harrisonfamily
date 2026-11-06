@@ -3,7 +3,7 @@
 import "@io-kit/content/content.css";
 import "../posts.css";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { PostCard, useTimeline } from "@io-kit/content/react";
+import { ArticleView, PostCard, useTimeline } from "@io-kit/content/react";
 import { api } from "./api.js";
 import { createHfyContentSource, norm } from "./content-source.js";
 import { formatTime, watchTimeTitles } from "./time.js";
@@ -177,26 +177,52 @@ const initialOf = (label) => (String(label || "").trim().match(/\p{L}|\p{N}/u)?.
  */
 export function PostRow({ post, link, remove, replace }) {
   const [asking, setAsking] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [ping, setPing] = usePing();
   const del = useRef(null);
   const card = useRef(null);
   const canDelete = Boolean(post.can?.delete && remove);
-  // moderationV1 (HFY-TSK-191): off, none of this draws. Who is looking decides the notice; the post's own can.moderate (the server's) decides the
-  // control, so it appears on a post, a story (a post about a person) and each of its photos only when the server says this viewer may moderate.
+  const m = usePostModeration(post, replace, card);
+  const keep = () => {
+    setAsking(false);
+    requestAnimationFrame(() => del.current?.focus());
+  };
+  return (
+    <li className="hfy-posts__item hfy-posts__post" ref={card} data-hfy-post-kind={m.kind}>
+      <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(m.author)}</span>
+      <PostCard post={post} {...CARD_PROPS} />
+      {m.chrome}
+      {(link || canDelete || m.moderate) && (
+        <div className="hfy-posts__footer" data-hfy-post-footer>
+          {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={m.author ? `comments on ${m.author}'s post` : undefined}>comments</a>}
+          {canDelete && <button type="button" className="hfy-btn hfy-btn--quiet" ref={del} aria-expanded={asking} onClick={() => setAsking(true)}>{CARD_LABELS.delete}</button>}
+          {m.control}
+        </div>
+      )}
+      {m.ping}
+      {asking && <ConfirmDelete onDelete={() => remove(post)} onKeep={keep} />}
+    </li>
+  );
+}
+
+/**
+ * The moderation of one post, shared by the feed's PostRow and the single-post page's article view (HFY-TSK-191), so a story or an article
+ * gets the same notice, per-photo controls, edit form and ping as a post. Off (moderationV1 default), every piece is null and nothing draws.
+ * Who is looking decides the notice; the item's own can.moderate (the server's) decides the control, so it appears on a post, a story (a post
+ * about a person), an article and each of their photos only when the server says this viewer may moderate. `ref` is the card's element
+ * (the kit draws the photos inside it). Returns the pieces to place: `chrome` (notice, photo controls, edit form), `control` (the
+ * "moderate" button, for the footer), `ping`, and `moderate`, `kind`, `author`.
+ */
+export function usePostModeration(post, replace, ref) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [ping, setPing] = usePing();
   const mod = useModerator();
   const on = mod?.enabled === true;
   const viewer = mod?.viewer ?? null;
   const own = on && viewer?.id != null && viewer.id === post.author?.id;
   const admin = on && viewer?.admin === true && !own;
   const moderate = on && !own && post.can?.moderate === true;
-  const slots = usePhotoSlots(card, post, moderate);
-  const keep = () => {
-    setAsking(false);
-    requestAnimationFrame(() => del.current?.focus());
-  };
-  // One moderation call: the response's `item` is the post as this admin now sees it, swapped into the list.
+  const slots = usePhotoSlots(ref, post, moderate);
+  // One moderation call: the response's `item` is the post as this admin now sees it, swapped in.
   const act = async (target, input) => {
     const r = await moderation.act(target, input, versionOf(post));
     replace?.(r?.item ? norm(r.item) : await source.get(post.id));
@@ -212,25 +238,38 @@ export function PostRow({ post, link, remove, replace }) {
     setEditing(false);
     setPing(next.moderation ? "saved." : MOD_COPY.pingSaved);
   };
-  const author = post.author?.label || "";
-  const kind = post.subject ? "story" : "post";
+  const kind = post.type !== "post" ? "article" : post.subject ? "story" : "post";
+  return {
+    on,
+    moderate,
+    kind,
+    author: post.author?.label || "",
+    chrome: on ? (
+      <>
+        <PostNotice moderation={post.moderation} own={own} admin={admin} canEdit={Boolean(post.can?.edit)} busy={busy} onUnhide={unhide} onEdit={() => setEditing(true)} />
+        <PhotoControls slots={slots} act={(attachment, input) => act(photoTarget(postTarget(post), postPhotoId(attachment)), input)} />
+        {editing && <PostEditForm post={post} onSave={save} onCancel={() => setEditing(false)} />}
+      </>
+    ) : null,
+    control: moderate ? <ModerateControl moderation={post.moderation} onAct={(input) => act(postTarget(post), input)} name={kind} /> : null,
+    ping: on ? <Ping text={ping} /> : null,
+  };
+}
+
+/**
+ * The single-post page's view of a post that is not a plain post (a story-length article): the kit's ArticleView with the same moderation
+ * as a feed row (HFY-TSK-191), `replace` swapping in the item as the server now shows it.
+ */
+export function ArticleRow({ post, replace }) {
+  const card = useRef(null);
+  const m = usePostModeration(post, replace, card);
   return (
-    <li className="hfy-posts__item hfy-posts__post" ref={card} data-hfy-post-kind={kind}>
-      <span className="hfy-posts__avatar" aria-hidden="true">{initialOf(author)}</span>
-      <PostCard post={post} {...CARD_PROPS} />
-      {on && <PostNotice moderation={post.moderation} own={own} admin={admin} canEdit={Boolean(post.can?.edit)} busy={busy} onUnhide={unhide} onEdit={() => setEditing(true)} />}
-      <PhotoControls slots={slots} act={(attachment, input) => act(photoTarget(postTarget(post), postPhotoId(attachment)), input)} />
-      {editing && <PostEditForm post={post} onSave={save} onCancel={() => setEditing(false)} />}
-      {(link || canDelete || moderate) && (
-        <div className="hfy-posts__footer" data-hfy-post-footer>
-          {link && <a className="hfy-btn hfy-btn--quiet hfy-posts__open" href={postHref(post)} aria-label={author ? `comments on ${author}'s post` : undefined}>comments</a>}
-          {canDelete && <button type="button" className="hfy-btn hfy-btn--quiet" ref={del} aria-expanded={asking} onClick={() => setAsking(true)}>{CARD_LABELS.delete}</button>}
-          {moderate && <ModerateControl moderation={post.moderation} onAct={(input) => act(postTarget(post), input)} name={kind === "story" ? "story" : "post"} />}
-        </div>
-      )}
-      {on && <Ping text={ping} />}
-      {asking && <ConfirmDelete onDelete={() => remove(post)} onKeep={keep} />}
-    </li>
+    <div className="hfy-posts__item" ref={card} data-hfy-post-kind={m.kind}>
+      <ArticleView post={post} {...CARD_PROPS} />
+      {m.chrome}
+      {m.moderate && <div className="hfy-posts__footer" data-hfy-post-footer>{m.control}</div>}
+      {m.ping}
+    </div>
   );
 }
 
@@ -250,9 +289,10 @@ export function EmptyPosts({ action }) {
  */
 export function PostList({ posts, link = true, emptyAction, capped = false, showEmpty = true }) {
   const { items: all, cursor, status, error, more, remove, replace } = posts;
-  // The server never sends a hidden post to anyone but its author and admins; a stray one is dropped here (and held back until who is looking is known).
+  // The server never sends a hidden post to anyone but its author and admins; with moderationV1 on, a stray one is dropped here. Off, the list
+  // is exactly what the server sent.
   const mod = useModerator();
-  const items = all.filter((p) => moderationVisible(p, mod?.viewer));
+  const items = mod?.enabled === true ? all.filter((p) => moderationVisible(p, mod.viewer)) : all;
   const ref = useTimeTitles();
   return (
     <div className="hfy-posts__feed" ref={ref}>

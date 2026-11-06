@@ -23,9 +23,13 @@ export const SHEET_QUERY = "(max-width: 42.99rem)";
 // ---- who is looking ---------------------------------------------------------------------------------------------------------------------
 
 let loading = null;
-/** `{ enabled, viewer: { id, admin } | null }`, once per page: the flag first (off => nothing else is asked), then /api/me and the edge session. */
+/**
+ * `{ enabled, viewer: { id, admin } | null }`, once per page: the flag first (off => nothing else is asked), then /api/me and the edge session.
+ * A failed lookup is not remembered: the next caller asks again.
+ */
 export function loadModerator() {
-  return (loading ??= (async () => {
+  if (loading) return loading;
+  const p = (async () => {
     let flags = {};
     try { flags = (await globalThis.HFYFeatureFlags?.resolveFlags?.()) ?? {}; } catch { flags = {}; }
     if (flags?.[FLAG] !== true) return { enabled: false, viewer: null };
@@ -33,7 +37,10 @@ export function loadModerator() {
     // The session's sub is the author id on every post and comment; /api/me's id is the same principal and is the fallback.
     const id = session?.authenticated ? session.sub : (me?.id ?? null);
     return { enabled: true, viewer: { id, admin: canModerate(me) } };
-  })());
+  })();
+  loading = p;
+  p.catch(() => { if (loading === p) loading = null; });
+  return p;
 }
 /** Drop the shared answer (tests). */
 export function forgetModerator() { loading = null; }
@@ -191,12 +198,13 @@ export function PostNotice({ moderation, own, admin, canEdit, onUnhide, onEdit, 
   if (!parts || (!own && !admin)) return null;
   const by = parts.by ? <PersonName id={parts.by.id} name={parts.by.label} /> : null;
   if (own) {
+    // A plain hide stays hidden when the author edits (social.md 11.2), so it shows the line and no "edit"; only a note (changes or a question) invites one.
+    const text = parts.asked ? <>{by} {COPY.askedTemplate} {parts.note}{parts.editToShow ? <> — {COPY.editToShow}</> : null}</> : parts.hidden ? COPY.hiddenByModerator : null;
+    if (text === null) return null;
     return (
       <div className="hfy-mod__notice" data-hfy-mod-notice="author">
-        <p className="hfy-mod__banner" role="status" data-hfy-mod-banner>
-          {parts.asked ? <>{by} {COPY.askedTemplate} {parts.note}{parts.editToShow ? <> — {COPY.editToShow}</> : null}</> : parts.hidden ? COPY.hiddenByModerator : null}
-        </p>
-        {canEdit && <button type="button" className="hfy-btn hfy-btn--quiet hfy-mod__edit" data-hfy-mod-edit onClick={onEdit}>{COPY.edit}</button>}
+        <p className="hfy-mod__banner" role="status" data-hfy-mod-banner>{text}</p>
+        {canEdit && parts.asked && <button type="button" className="hfy-btn hfy-btn--quiet hfy-mod__edit" data-hfy-mod-edit onClick={onEdit}>{COPY.edit}</button>}
       </div>
     );
   }
@@ -267,13 +275,18 @@ export function usePhotoSlots(ref, post, enabled) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!enabled || !el) { setSlots([]); return undefined; }
-    const shown = (Array.isArray(attachments) ? attachments : []).filter((a) => safeUrl(a.url) !== "");
+    const shown = (Array.isArray(attachments) ? attachments : []).map((a) => ({ a, src: safeUrl(a.url) })).filter((x) => x.src !== "");
     const sync = () => {
-      const items = [...el.querySelectorAll(".iok-content-media > li")];
+      // Each photo is matched to its attachment by the url the kit drew (the <img src>, the <a href> of a file), never by position, so a photo
+      // the kit dropped or reordered cannot hand its control to another. A url that repeats is matched in order.
+      const left = [...shown];
       const next = [];
-      items.forEach((li, i) => {
-        const a = shown[i];
-        if (!a || !postPhotoId(a)) return;
+      el.querySelectorAll(".iok-content-media > li").forEach((li) => {
+        const drawn = li.querySelector("img")?.getAttribute("src") ?? li.querySelector("a")?.getAttribute("href");
+        const at = left.findIndex((x) => x.src === drawn);
+        if (at < 0) return;
+        const [{ a }] = left.splice(at, 1);
+        if (!postPhotoId(a)) return;
         let host = li.querySelector(":scope > .hfy-mod__photo");
         if (!host) {
           host = document.createElement("div");

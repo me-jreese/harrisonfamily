@@ -158,3 +158,22 @@ test("moderate(): a refusal becomes a CommentError with the DS line (the kit sho
   const empty = createHfyCommentSource({ post: async () => ({}) }, { moderation: true });
   await assert.rejects(() => empty.moderate(THREAD, ULID(3), { action: "hide" }), (e) => e.message === COPY.failed);
 });
+
+test("moderate(): a comment created or edited in this session carries its version too, not only a listed one", async () => {
+  const sent = [];
+  const made = comment({ id: ULID(4), created_at: T0 });
+  const api = {
+    post: async (path, body) => {
+      if (path === "/comments") return made;
+      sent.push(body);
+      return { target: body.target, moderation: null, item: { ...made, moderation: { state: "hidden", hidden: true, by: BY, at: T1, open: true } } };
+    },
+    patch: async () => ({ ...made, edited_at: T1 }),
+  };
+  const src = createHfyCommentSource(api, { moderation: true });
+  await src.create(THREAD, { body: "hello" });
+  await src.moderate(THREAD, made.id, { action: "hide" });
+  await src.edit(THREAD, made.id, { body: "hello again" });
+  await src.moderate(THREAD, made.id, { action: "hide" });
+  assert.deepEqual(sent.map((b) => b.version), [T0, T1]);
+});
