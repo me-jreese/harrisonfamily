@@ -88,14 +88,14 @@ test("roleOf: the site's reading of the page's tree, in the DS vocabulary", () =
 
 test("tagView: the Gramps tag data, cleaned; the relationship is separate", () => {
   const v = tagView({
-    grampsId: "I4", name: "  Sib Example ", rect: [30, 20, 10, 5], isPrimary: true, source: "site",
+    grampsId: "I4", name: "  Sib Example ", rect: [30, 20, 10, 5], isPrimary: true,
     attributes: [{ type: "Age", value: 12 }, { type: "", value: "" }, null, { type: "Label" }],
     notes: ["  a note ", "", { text: "second" }, null], citations: ["Title A", { title: "Title B" }, {}]
   }, PERSON);
   assert.deepEqual(v, {
     grampsId: "I4", name: "Sib Example", rect: [10, 5, 30, 20], isPrimary: true,
     attributes: [{ type: "Age", value: "12" }, { type: "Label", value: "" }], notes: ["a note", "second"], citations: ["Title A", "Title B"],
-    source: "site", role: "sibling", area: "upper left · 10% from the left, 5% from the top, 20% wide, 15% tall"
+    role: "sibling", area: "upper left · 10% from the left, 5% from the top, 20% wide, 15% tall"
   });
   assert.equal(attributeLine({ type: "Age", value: "12" }), "Age: 12");
   assert.equal(attributeLine({ type: "Label", value: "" }), "Label");
@@ -112,7 +112,7 @@ test("tagView: a tag without a name or an id is dropped; a null rect has no area
   assert.equal(v.name, "someone");
   assert.equal(v.rect, null);
   assert.equal(v.area, "no area marked");
-  assert.deepEqual([v.attributes, v.notes, v.citations, v.isPrimary, v.source], [[], [], [], false, "gramps"]);
+  assert.deepEqual([v.attributes, v.notes, v.citations, v.isPrimary], [[], [], [], false]);
   assert.equal(personHref({ grampsId: null }), null);
 });
 

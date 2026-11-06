@@ -148,14 +148,14 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.getByText(L.errorDetail)).toBeVisible();
     });
 
-    test("the shipped tag editor: 'tag people' appears for a member with photoTagEdit on and opens the editor's panel; absent with the flag off", async ({ page }) => {
+    test("the kit tag editor: 'tag people' appears for a member with photoTagEdit on and opens the editor (tests/tag-kit.spec.mjs has the flows); absent with the flag off", async ({ page }) => {
       await open(page, "/all-media/?id=M0002", { photoTagEdit: true });
       const toggle = page.getByRole("button", { name: "tag people" });
       await expect(toggle).toBeVisible();
       expect((await toggle.boundingBox()).height).toBeGreaterThanOrEqual(44);
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-pressed", "true");
-      await expect(page.locator("[data-hfy-tag-panel]")).toBeVisible();
+      await expect(page.locator("section.io-media-tags")).toBeVisible();
       await noSideways(page);
     });
 

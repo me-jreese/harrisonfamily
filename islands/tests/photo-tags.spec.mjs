@@ -246,7 +246,7 @@ test("1280 hover on a name: its region is highlighted and the hovercard shows th
   // the portrait flag on the second tag
   await fig.locator(".photo-tags__name").nth(1).hover();
   await expect(fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"]')).toContainText("Father Example · their portrait");
-  await expect(fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"]')).toContainText("tagged on the site");
+  await expect(fig.locator(".photo-tags__item").nth(1).locator('[role="tooltip"]')).toContainText("tagged in the family tree");
 });
 
 test("1280 keyboard: Tab reaches the name link, then its show button, whose focus shows the card and the region; Enter pins the panel with the page link; the thumbnail's focus shows every label", async ({ page }) => {

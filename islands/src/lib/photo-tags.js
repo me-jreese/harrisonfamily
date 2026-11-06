@@ -143,7 +143,8 @@ export function cleanAttributes(list) {
 /** "type: value", or whichever half exists. */
 export const attributeLine = (a) => (a.type && a.value ? `${a.type}: ${a.value}` : a.type || a.value);
 
-export const SOURCE_LINE = { gramps: "tagged in the family tree", site: "tagged on the site" };
+// V-1 (BRD T-14): a tag looks the same wherever it came from (desk import, site, post), so the overlay has one line and never branches on the origin.
+export const SOURCE_LINE = "tagged in the family tree";
 
 /**
  * One tag as the island shows it: { grampsId, name, rect (normalised or null), isPrimary, attributes, notes, citations, source, role,
@@ -164,7 +165,6 @@ export function tagView(tag, person) {
     attributes: cleanAttributes(tag.attributes),
     notes: textList(tag.notes, ["text", "raw", "string"]),
     citations: textList(tag.citations, ["title", "text"]),
-    source: tag.source === "site" ? "site" : "gramps",
     role: roleOf(person, grampsId),
     area: areaWords(rect)
   };

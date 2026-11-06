@@ -59,7 +59,7 @@ export function buildDetails(view, { link = false } = {}) {
   row("attributes", view.attributes.map(attributeLine));
   row("notes", view.notes);
   row("citations", view.citations);
-  row("source", [SOURCE_LINE[view.source]]);
+  row("source", [SOURCE_LINE]);
   box.append(facts);
   // "family" is the fallback for someone outside this page's tree, not a relationship the site knows: no line rather than a placeholder.
   if (view.role && view.role !== "family" && ROLE_PHRASE[view.role]) {

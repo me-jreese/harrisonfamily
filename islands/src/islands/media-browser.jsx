@@ -2,7 +2,7 @@
 // island on the static /all-media/ page: with no `id` in the address it renders the kit's MediaBrowserPage (sections, filter chips, grid, cursor pagination; the
 // section and filter live in the address), with `?id=<gramps_id>` the kit's MediaDetail. Both read through the browse adapter (lib/hfy-media-browse.js).
 // The detail slots: renderTagList is the accessible list of the tagged people (a living person is redacted by the server and not linked), renderEditor hosts
-// the SHIPPED tag editor (lib/media-tag-editor-host.jsx, flag photoTagEdit; D-40) and renderComments is an empty host for the comment thread
+// the kit tag editor (lib/media-tag-editor-host.jsx, flag photoTagEdit; D-40, swapped in HFY-TSK-388-0G), renderOverlay the kit overlay and renderComments is an empty host for the comment thread
 // (`[data-slot="media-comments"]`, subject media:<gramps_id>), which MediaCommentsHost (lib/media-comments-host.jsx, flag mediaCommentsV1, HFY-TSK-389-0A) fills with the kit comments thread. The page needs a signed-in member
 // (the routes are member-only); a visitor gets a sign-in line. /all-media/ is not in the main menu (D-31): the shell keeps "posts" as the current item.
 import "@io-kit/media/tokens.css";
@@ -13,6 +13,7 @@ import { DEFAULT_LABELS, MediaBrowserPage, MediaDetail, detailContextFromSearch,
 import { createHfyMediaBrowse } from "../lib/hfy-media-browse.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { mountIsland } from "../lib/mount.jsx";
+import { TagOverlay } from "@io-kit/media/tags";
 import { MediaTagEditorHost } from "../lib/media-tag-editor-host.jsx";
 import { MediaCommentsHost } from "../lib/media-comments-host.jsx";
 
@@ -26,6 +27,13 @@ const POST_HREF = (id) => `${POSTS}?id=${encodeURIComponent(id)}`;
 const PERSON_HREF = (id) => `/person/?id=${encodeURIComponent(id)}`;
 const LABELS = { position: (n, total) => (n > 0 && total > 0 ? DEFAULT_LABELS.position(n, total) : "") };
 const signIn = () => `/auth/login?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
+
+// The boxes on the photo: the kit overlay (HFY-TSK-388-0G, the D-40 swap). It reads the same tags as the list and never looks at where a tag came from (V-1);
+// a proposal is dashed with "pending review". The list below stays the main accessible form.
+function KitOverlay({ detail }) {
+  const name = (id) => detail.tags.find((t) => t.personId === id)?.person.displayName ?? "living family member";
+  return <TagOverlay tags={detail.tags} names={name} aspect={(detail.card.width || 4) / (detail.card.height || 3)} />;
+}
 
 function TagList({ detail }) {
   const tags = detail.tags;
@@ -81,6 +89,7 @@ function MediaBrowser() {
           <MediaDetail
             source={source} mediaId={h.id} context={h.ctx} onNavigate={h.onNavigate} postsHref={POSTS} postHref={POST_HREF} personHref={PERSON_HREF} labels={LABELS}
             renderOverlaySwitch={() => null}
+            renderOverlay={(p) => <KitOverlay detail={p.detail} />}
             renderTagList={(p) => <TagList detail={p.detail} />}
             renderEditor={(p) => <MediaTagEditorHost detail={p.detail} reload={p.reload} enabled={photoTagEdit} />}
             renderComments={(p) => <MediaCommentsHost subject={p.subject} enabled={mediaComments} />}

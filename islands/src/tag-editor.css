@@ -1,0 +1,32 @@
+/* The tag editor's own pieces (HFY-TSK-388-0G pass 2). The editor, the boxes, the picker and the toasts are the kit's tags.css; this file places the "tag people" toggle, the
+   host on the media page and in the lightbox, and the hand-over from the page's photo to the editor. Aliases only (--io-*): 44 px targets, wraps at 375, no sideways scroll. */
+.hfy-tag-host { margin: var(--io-space-4) 0; min-width: 0; max-width: 100%; }
+.hfy-tag-toggle {
+  min-height: var(--io-control-tap-min); min-width: var(--io-control-tap-min); padding: 0 var(--io-space-4); border: 1px solid var(--io-color-semantic-border-strong);
+  border-radius: var(--io-radius-md); background: var(--io-color-semantic-surface); color: var(--io-color-semantic-text); font: inherit; cursor: pointer;
+}
+.hfy-tag-toggle[aria-pressed="true"] { border-color: var(--io-color-semantic-accent); font-weight: var(--io-typography-weight-semibold); }
+.hfy-tag-toggle:focus-visible { outline: var(--io-control-focus-ring) solid var(--io-color-semantic-focus); outline-offset: var(--io-space-1); }
+.hfy-tag-note { margin: var(--io-space-2) 0; color: var(--io-color-semantic-text-dim); overflow-wrap: anywhere; }
+.hfy-tag-editor { min-width: 0; max-width: 100%; }
+.photo-tag-edit-host { margin: var(--io-space-3) 0; padding: 0 var(--io-space-3); min-width: 0; max-width: 100%; }
+/* The editor draws the photo and the boxes: the page's own give way while it is open. */
+.io-media-detail[data-hfy-tagging] .io-media-detail-main .io-media-stage,
+.io-media-detail[data-hfy-tagging] .io-media-detail-full,
+.io-media-detail[data-hfy-tagging] .hfy-mb-people { display: none; }
+#mediaLightbox.photo-tag-edit-on #mediaLightboxImage,
+#mediaLightbox.photo-tag-edit-on [class*="photo-tags__lightbox"],
+#mediaLightbox.photo-tag-edit-on .photo-tags__layer { display: none; }
+@media (prefers-reduced-motion: reduce) { .hfy-tag-toggle { transition: none; } }
+
+/* WCAG 2.4.11 (focus not obscured): the kit keeps the box being named in view with scrollIntoView, but its scroll padding sits on the editor, which does not scroll. Here the
+   scroller is the page (media detail) or the lightbox body (person page), so the padding for the bottom-anchored person sheet goes on whichever holds an editor. */
+html:has(.io-media-tags),
+.modal-body:has(.io-media-tags) { scroll-padding-block-end: 50dvh; }
+
+/* The kit's .io-media-chip sets display, which beats the hidden attribute of the idle save chip (tags.css, .io-media-chip), leaving an empty pill in the layout. */
+.io-media-save[hidden] { display: none; }
+
+/* Both kit stylesheets name a class .io-media-stage: tags.css (absolute, inset 0, inside the editor's viewport) and browser.css (the detail page's own photo, relative). Loaded after
+   browser.css, tags.css pulled the detail page's photo out of the flow and over the "tag people" toggle at the two-column width. The page's own photo stays in the flow. */
+.io-media-detail .io-media-detail-main .io-media-stage { position: relative; inset: auto; transform: none; transition: none; }
