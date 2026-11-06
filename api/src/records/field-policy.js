@@ -2,7 +2,7 @@
 // BRD2 D2-13, section 11.2, Q2-15). It decides, for each EditOp, whether the viewer saves it now ("direct"), sends it for review
 // ("proposal"), or may not do it on the web at all ("admin", "desk", "derived", "never").
 //
-//   const fp = createFieldPolicy({ answers: { "own-death-event": "owner-direct" } });   // io's Q2-15 answers; none = the defaults
+//   const fp = createFieldPolicy({ answers: { "spouse-children": "owner-direct" } });   // io's Q2-15 answers; none = the defaults
 //   const own = await ownRecord(actor, view);                                           // { cls, handle, gramps_id } | null
 //   const classes = await classifyOps(ops, { actor, view, objects, policy: fp });       // [{ id, obj, code, kinds, relation }]
 //
@@ -191,7 +191,7 @@ export const Q2_15_ROWS = Object.freeze([
     kind: "own-death-event",
     own: P,
     other: P,
-    alternatives: { "owner-direct": { own: D } },
+    alternatives: {}, // P4-R24 (D-17, D-19): adding or removing a Death event is a proposal for everyone, the owner included; there is no switch
   },
   {
     id: "custom-type-string",

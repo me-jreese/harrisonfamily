@@ -210,8 +210,7 @@ describe("Birth and Death structure on the own record (IF-02)", () => {
   it("adding or removing the own Death event follows the Q2-15 row: proposal by default", async () => {
     const add = { op: "add", obj: ME, path: "/event_ref_list", value: eref("hd1") };
     assert.equal(await codeOf(add), "proposal");
-    const owner = createFieldPolicy({ answers: { "own-death-event": "owner-direct" } });
-    assert.equal(await codeOf(add, { policy: owner }), "direct");
+    assert.throws(() => createFieldPolicy({ answers: { "own-death-event": "owner-direct" } }), "no owner-direct answer exists (P4-R24)");
   });
   it("adding a Burial EventRef is direct for an event nobody else uses, a proposal for someone else's", async () => {
     const w = world();
@@ -330,7 +329,7 @@ describe("Q2-15 switches change data, not code", () => {
     assert.equal(await codeOf(spouse, { policy: p }), "direct");
     assert.equal(await codeOf(spouse, { policy: p, actor: actorOf("I9002") }), "proposal");
   });
-  it("own-death-event: default proposal, owner-direct direct, for add, remove and delete", async () => {
+  it("own-death-event: always a proposal, owner included, for add, remove and delete; no alternative answer (P4-R24)", async () => {
     const w = world();
     w[ME].event_ref_list.push(eref("hd1"));
     const ops = [
@@ -338,10 +337,10 @@ describe("Q2-15 switches change data, not code", () => {
       { op: "remove", obj: ME, path: "/event_ref_list/@ref=hd1", base: eref("hd1") },
       { op: "delete", obj: "Event:hd1", base: contentHash(w["Event:hd1"]) },
     ];
-    const p = createFieldPolicy({ answers: { "own-death-event": "owner-direct" } });
+    assert.deepEqual(Q2_15_ROWS.find((r) => r.id === "own-death-event").alternatives, {});
     for (const op of ops) {
       assert.equal(await codeOf(op, { objects: w }), "proposal", op.op);
-      assert.equal(await codeOf(op, { objects: w, policy: p }), "direct", op.op);
+      assert.equal(await codeOf(op, { objects: w, actor: actorOf("I9002") }), "proposal", `${op.op} by another member`);
     }
   });
   it("custom-type-string: default admin-only, the proposal answer lets a member propose it", async () => {

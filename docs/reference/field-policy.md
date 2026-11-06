@@ -232,7 +232,7 @@ Each row below is one switch that changes data, not code. The default is the fir
 | Switch | What it decides | Default (own / other) | Other answers |
 | --- | --- | --- | --- |
 | `spouse-children` | Spouse and children on the own record (R-24 relationship proposals) | `proposal` / `proposal` | `owner-direct`: own `direct` |
-| `own-death-event` | Adding, removing or retyping the own Death event (it changes the living classification, D2-08) | `proposal` / `proposal` | `owner-direct`: own `direct` |
+| `own-death-event` | Adding, removing or retyping the own Death event (it changes the living classification, D2-08) | `proposal` / `proposal` | none: always a proposal, the owner included (P4-R24; BRD D-17, D-19) |
 | `custom-type-string` | A new custom type string (members choose only existing ones, DEC-E10) | `admin` / `admin` | `proposal`: own `proposal`, other `proposal` |
 | `desk-list` | Desktop-only fields: Gramps IDs, private flags, LDS, group/sort/display-as, the place title (DEC-E8) | `desk` / `desk` | `admin-web`: admin `direct` |
 
