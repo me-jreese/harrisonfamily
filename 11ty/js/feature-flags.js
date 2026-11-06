@@ -44,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "ec2c7845",
+        "js": "8edb72d4",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "745a03e7",
+        "js": "7576ef58",
         "css": "38a33f05"
       },
       "join": {
@@ -63,8 +63,12 @@
         "js": "dba45074",
         "css": "a475a3dd"
       },
+      "moderation-queue": {
+        "js": "794c62cf",
+        "css": "c3d2737a"
+      },
       "my-posts": {
-        "js": "6400b81d",
+        "js": "0fb311a9",
         "css": "acb4acbc"
       },
       "notifications": {
@@ -76,7 +80,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "fa23ad52",
+        "js": "b862304f",
         "css": "a3ad2b3b"
       },
       "person-links": {
@@ -92,11 +96,11 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "dac0352c",
+        "js": "68f2a67f",
         "css": "ca219197"
       },
       "review": {
-        "js": "83a6e3db",
+        "js": "ff51d145",
         "css": "d3f4cc44"
       },
       "search": {
@@ -104,7 +108,7 @@
         "css": "9e007813"
       },
       "settings": {
-        "js": "f185da8e",
+        "js": "23424cab",
         "css": "be4f0b90"
       },
       "shell": {
@@ -112,7 +116,7 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "b68af309",
+        "js": "32c2905b",
         "css": "3610897c"
       },
       "tree": {
