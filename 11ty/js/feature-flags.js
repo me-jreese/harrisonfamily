@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "7100b704",
+        "js": "4ce4fc68",
         "css": "4cd750ae"
       },
       "family": {
@@ -58,6 +58,10 @@
       "join-entry": {
         "js": "ccdd15a7",
         "css": "e44c3a91"
+      },
+      "life-dates": {
+        "js": "e2eae520",
+        "css": "159c53fd"
       },
       "links-editor": {
         "js": "dba45074",
@@ -96,7 +100,7 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "ef1d518d",
+        "js": "43a07e65",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -104,7 +108,7 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "8be01fa3",
+        "js": "7a6a97b8",
         "css": "bf26d487"
       },
       "search": {
@@ -124,7 +128,7 @@
         "css": "c249f04c"
       },
       "tree": {
-        "js": "3a6979f8",
+        "js": "958e4efe",
         "css": "894963fd"
       }
     },
@@ -925,6 +929,16 @@
       loadIsland("person-links", { onError() { /* the person page stands without the links section */ } });
     } else if (/^\/me\/links\/?(index\.html)?$/.test(window.location.pathname)) {
       loadIsland("links-editor", { onError() { /* the page keeps its "not available yet" note */ } });
+    }
+  });
+
+  // HFY-TSK-388-0D: lifeDatesV1 mounts the Life dates block on the person page (island life-dates; BRD 5.7, D-21): one plain line under the
+  // lifespan line and, for a signed-in member, an in-place editor that proposes years through POST /api/life-dates. With the flag off the
+  // bundle is not requested and the person page is as before.
+  resolveFlags().then((flags) => {
+    if (flags.lifeDatesV1 !== true) return;
+    if (/^\/person\/?$/.test(window.location.pathname) && new URLSearchParams(window.location.search).has("id")) {
+      loadIsland("life-dates", { onError() { /* the person page stands without the life dates block */ } });
     }
   });
 
