@@ -7,7 +7,6 @@
 import "../graduate.css";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api } from "./api.js";
-import { PersonName } from "./person-name.jsx";
 import { COPY, TITLE_MAX, errorLine, graduate, initialTitle, markerState, onPage, photosHref, threadPerson } from "./graduate.js";
 
 // Names the page has learned (a picked row, a lookup), by person id, shared by every control on the page.
@@ -43,13 +42,12 @@ function useName(id) {
 }
 
 /** The badge: "on {name}'s page" (a link to the person's photos). The name is the family index's, or "a family page" when it is not known. */
-export function GraduateBadge({ person, name, soon = false }) {
+export function GraduateBadge({ person, name }) {
   const shown = useName(name ? null : person);
   const text = name || shown;
   return (
     <p className="hfy-grad__done" data-hfy-grad-done>
-      <a className="hfy-grad__badge" href={photosHref(person)} data-hfy-grad-badge>{text ? onPage(text) : "on a family page"}</a>
-      {soon && <span className="hfy-grad__soon">{COPY.syncLater}</span>}
+      <a className="hfy-grad__badge" href={photosHref(person)} data-hfy-grad-badge>{text ? onPage(text) : COPY.onFamilyPage}</a>
     </p>
   );
 }
@@ -228,4 +226,3 @@ export function GraduateControl({ comment, attachment, subject, onAdded, client 
   );
 }
 
-export { PersonName };

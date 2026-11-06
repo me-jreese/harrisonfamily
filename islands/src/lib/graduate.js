@@ -25,7 +25,8 @@ export const COPY = {
   pending: "adding to a page…",
   needPerson: "pick a page from the list.",
   titleLong: `keep the title under ${TITLE_MAX + 1} characters.`,
-  syncLater: "added — it shows on the page after the next sync.",
+  onFamilyPage: "on a family page",
+  personGone: "that page isn't there. pick another.",
   ping: "added to the page.",
   // errors (social.md section 15: E15 and E17 share a line, E16 sits under the title, E18 names the page)
   unavailable: "couldn't add it to the page right now. try again in a minute.",
@@ -99,6 +100,7 @@ export function errorLine(e, names = () => undefined) {
   }
   if (status === 400 || code === "validation" || code === "contact_info" || code === "dob_not_allowed" || status === 422) return { text: COPY.invalid, field: "title" };
   if (status === 403 || code === "forbidden") return { text: COPY.forbidden };
+  if (code === "person_not_found") return { text: COPY.personGone };
   if (status === 404 || code === "not_found") return { text: COPY.gone };
   if (code === "moderated") return { text: COPY.moderated };
   if (status === 409 || status >= 500) return { text: COPY.unavailable };

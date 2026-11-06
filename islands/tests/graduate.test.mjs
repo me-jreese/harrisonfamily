@@ -42,6 +42,11 @@ test("markerState: done, a fresh pending, a stale pending, failed and none", () 
   assert.equal(markerState({ state: "pending", person: "I9002", at: at(STALE_PENDING_MS + 1000) }, now).stale, true);
 });
 
+test("errorLine: a missing person is not a missing photo", () => {
+  assert.deepEqual(errorLine(new ApiError(404, "person_not_found", "x")), { text: COPY.personGone });
+  assert.deepEqual(errorLine(new ApiError(404, "not_found", "x")), { text: COPY.gone });
+});
+
 test("errorLine: E15 and E17 share a line, E16 sits under the title, E18 names the page", () => {
   assert.deepEqual(errorLine(new ApiError(503, "graduate_copy_failed", "x")), { text: COPY.unavailable });
   assert.deepEqual(errorLine(new ApiError(503, "graduate_conflict", "x")), { text: COPY.unavailable });
