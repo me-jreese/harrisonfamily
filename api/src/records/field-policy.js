@@ -2,7 +2,7 @@
 // BRD2 D2-13, section 11.2, Q2-15). It decides, for each EditOp, whether the viewer saves it now ("direct"), sends it for review
 // ("proposal"), or may not do it on the web at all ("admin", "desk", "derived", "never").
 //
-//   const fp = createFieldPolicy({ answers: { "own-death-event": "owner-direct" } });   // io's Q2-15 answers; none = the defaults
+//   const fp = createFieldPolicy({ answers: { "spouse-children": "owner-direct" } });   // io's Q2-15 answers; none = the defaults
 //   const own = await ownRecord(actor, view);                                           // { cls, handle, gramps_id } | null
 //   const classes = await classifyOps(ops, { actor, view, objects, policy: fp });       // [{ id, obj, code, kinds, relation }]
 //
@@ -92,6 +92,7 @@ export const FIELD_POLICY_ROWS = Object.freeze([
   ["Event", "/type/**", D, P],
   ["Event", "/date/**", D, P],
   ["Event", "/date/**", P, P, { when: "birthLike" }], // the birth year is a proposal (R-09); day and month are never
+  ["Event", "/date/**", P, P, { when: "deathLike" }], // HFY-TSK-386: a death year is always a proposal, own record or another's (BRD D-17, D-19); never a direct write
   ["Event", "/date/dateval/{0,1,4,5}", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
   ["Event", "/date", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
   ["Event", "/date/dateval", "never", "never", { when: ["birthLike", "dayMonthInValue"] }],
@@ -190,7 +191,7 @@ export const Q2_15_ROWS = Object.freeze([
     kind: "own-death-event",
     own: P,
     other: P,
-    alternatives: { "owner-direct": { own: D } },
+    alternatives: {}, // P4-R24 (D-17, D-19): adding or removing a Death event is a proposal for everyone, the owner included; there is no switch
   },
   {
     id: "custom-type-string",
@@ -299,6 +300,7 @@ const MERGED_GID = /^\s*merged gramps ids?\s*$/i;
  *  old (the stored value there), element (the stored list element the op addresses), written (the attribute or URL elements the op
  *  writes, as they stand after it), unresolved, policy (redaction-v1) }. A predicate that cannot tell answers for the stricter row. */
 const WHEN = {
+  deathLike: (c) => c.checks.length === 0 || c.checks.some(({ obj }) => obj && obj.type && obj.type.value === EVENT_TYPE.DEATH),
   birthLike: (c) => c.checks.length === 0 || c.checks.some(({ obj, tree }) => obj && isBirthLike(obj, tree, c.policy)),
   dayMonthInValue: (c) => {
     if (c.value === undefined) return true;

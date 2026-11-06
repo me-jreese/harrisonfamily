@@ -11,6 +11,7 @@ tests:
   - node --test 'scripts/ci/test/**/*.test.mjs'
   - node scripts/ci/check-client-licenses.mjs
   - node scripts/ci/check-sync-catalog.mjs
+  - node --test 'tests/tagging/*.test.mjs'
 parity:
   mode: block
 secrets_scan: trufflehog
