@@ -156,3 +156,12 @@ export async function findPeople(text, limit = 6) {
   const eng = await engine();
   return eng.suggest(text, limit).map((r) => ({ id: r.id, title: r.title, lifespan: r.fields.lifespan || "", photo: r.fields.photo || "" }));
 }
+
+/**
+ * The tag picker's search (HFY-TSK-388-0G): the same local engine, each row also saying whether the person is living, so the tag adapter can offer deceased people
+ * and the viewer only (P4-R2 Q1). `photo` is the small photo's URL, "" when there is none.
+ */
+export async function findTaggablePeople(text, limit = 6) {
+  const eng = await engine();
+  return eng.suggest(text, limit).map((r) => ({ id: r.id, title: r.title, lifespan: r.fields.lifespan || "", photo: r.fields.photo || "", living: r.fields.living === true }));
+}

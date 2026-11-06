@@ -72,3 +72,39 @@ baseline:
     - {where: "gramps/hfygramps/projection.py:755-763", what: "restores the base rect for those held rects, and nulls only the full frame"}
     - {where: "gramps/hfygramps/render/transform.py:431-445", what: "mediaref_rect nulls [0,0,0,0] only: not the full frame, not a point"}
 ```
+
+## Adapter status (HFY-TSK-388-0G, pass 1)
+
+The new HFY tag adapter ([Tag ports of the media adapter](front-end.md#tag-ports-of-the-media-adapter)) is the writer pass 2 puts behind the editor. The shipped editor and its read helpers are unchanged, so the rows above still fail for them: their entries, and the Python rows, stay known-fails here. This section records what the adapter does on the same fixtures. It is a dated record, not a live status: run `node --test tests/tagging/wire-conformance.test.mjs` and, in `islands/`, `node --test tests/hfy-tag-ports.test.mjs tests/hfy-tag-parity.test.mjs`.
+
+```yaml
+adapter:
+  date: 2026-11-06
+  subject: ["islands/src/lib/hfy-tag-wire.js", "islands/src/lib/hfy-tag-ports.js", "islands/src/lib/hfy-media-source.js normalizeRect"]
+  suites: ["tests/tagging/wire-conformance.test.mjs", "islands/tests/hfy-tag-ports.test.mjs", "islands/tests/hfy-tag-parity.test.mjs"]
+  rows:
+    T-1: {editor: pass, adapter: pass}
+    T-2: {editor: fail, adapter: pass, why: "nearest, half up (emitRect, normalizeRect)"}
+    T-3: {editor: fail, adapter: pass, why: "the full frame reads and writes as null"}
+    T-4: {editor: fail, adapter: pass, why: "RECT_INVALID on malformed input; points null, lines kept; validateNewRect guards writes"}
+    T-5: {editor: fail, adapter: pass, why: "smaller than 2x2 is refused before any request; the resize floor in the editor UI is a pass-2 item"}
+    T-6: {editor: pass, adapter: pass}
+    T-8: {editor: pass, adapter: pass, why: "kit geometry fixture, kit side"}
+    T-9:
+      editor: fail
+      adapter: fail
+      why: "a new tag lands at the end (index 2) and a tag with a different rect appends; a byte-identical MediaRef cannot be appended because the ops engine's add is idempotent for an identical element (api/src/records/ops.js, 'an identical element is present'). The adapter returns the existing tag and lists the op in result.identical. D-04 wants an append: raised on the record, it needs an API change."
+      cause: ["api/src/records/ops.js:511"]
+    T-11: {editor: pass, adapter: pass, why: "the same ops for a direct and a proposal route; the server decides"}
+    T-12: {adapter: pass, why: "the tag DTO carries no origin"}
+    T-15: {adapter: "HFY policy", why: "isTaggable is true for every visible person (D-13); the kit's enforcing fixture does not apply"}
+    T-16: {adapter: pass, why: "selfUntag removes the member's own MediaRef through the normal path, with a note, and keeps a reversible audit record"}
+    T-17: {adapter: "HFY policy", why: "the re-add lock is audit-only: a re-add by another member is allowed (as a proposal) and recorded"}
+    T-18: {adapter: "HFY policy", why: "hideAll is a no-op"}
+    V-1: {editor: fail, adapter: pass, why: "the adapter's tag carries no source; the overlay is the editor's and changes in pass 2"}
+  still_known_fail_outside_the_adapter:
+    - {where: "islands/src/lib/photo-tag-edit.js, photo-tags.js", rows: [T-2, T-3, T-4, T-5, T-9, V-1], retired_by: "the editor swap (pass 2)"}
+    - {where: "gramps/hfygramps/rules.py:349-359", what: "rect_problem holds degenerate rects"}
+    - {where: "gramps/hfygramps/projection.py:755-763", what: "restores the base rect for those held rects"}
+    - {where: "gramps/hfygramps/render/transform.py:431-445", what: "mediaref_rect nulls [0,0,0,0] only", note: "the Python renderer fixes are parked until their deploy has io's go-ahead"}
+```

@@ -24,11 +24,11 @@ test("declares the int-percent unit and the 2-unit minimum (D-02, D-07)", () => 
 });
 
 for (const [input, want] of [
-  [null, null], [undefined, null], [[0, 0, 100, 100], null], [[10, 10, 10, 10], null], [[10, 10, 10, 40], [10, 10, 10, 40]], [[10, 10, 60, 60], [10, 10, 60, 60]], [[60, 60, 10, 10], [60, 60, 10, 10]],
+  [null, null], [undefined, null], [[0, 0, 100, 100], null], [[10, 10, 10, 10], null], [[10, 10, 10, 40], [10, 10, 10, 40]], [[10, 10, 60, 60], [10, 10, 60, 60]], [[60, 60, 10, 10], [10, 10, 60, 60]], [[12.5, 7.5, 58.5, 93.5], [13, 8, 59, 94]], [[-1, 0, 20, 20], [0, 0, 20, 20]], [[0, 0, 101, 20], [0, 0, 100, 20]], [[1.5, 0, 20, 20], [2, 0, 20, 20]],
 ]) {
   test(`normalizeRect(${JSON.stringify(input)}) is ${JSON.stringify(want)}`, () => assert.deepEqual(normalizeRect(input), want));
 }
-for (const bad of [[1.5, 0, 20, 20], [-1, 0, 20, 20], [0, 0, 101, 20], [1, 2, 3], "x", [NaN, 0, 1, 1], {}]) {
+for (const bad of [[1, 2, 3], "x", [NaN, 0, 1, 1], {}, [0, 0, Infinity, 1]]) {
   test(`normalizeRect(${JSON.stringify(bad)}) throws INVALID_RECT`, () => assert.throws(() => normalizeRect(bad), (e) => e.code === "INVALID_RECT"));
 }
 
@@ -104,10 +104,10 @@ test("listMedia and getMedia read GET /api/media with the section, filter and cu
   assert.deepEqual(m.calls.map((c) => [c.method, c.url]), [["GET", "/api/media?section=media&filter=needs_tags&cursor=c1&limit=24"], ["GET", "/api/media/O0001?section=all&filter=all"]]);
 });
 
-test("the tag ports are not wired yet and say so; every visible person is taggable (D-13)", async () => {
+test("the consent port is HFY policy: everyone visible is taggable, hideAll is a no-op (D-13)", async () => {
   const s = createHfyMediaSource({ fetch: async () => ({}) });
-  for (const call of [() => s.getTags("O0001"), () => s.putTags([]), () => s.resolvePeople("a"), () => s.consent.selfUntag("I0001", "O0001", 0), () => s.consent.hideAll("I0001")]) {
-    await assert.rejects(call(), (e) => e.code === "NOT_IMPLEMENTED");
-  }
   assert.equal(await s.consent.isTaggable("I0001"), true);
+  assert.equal(await s.consent.hideAll("I0001"), undefined);
+  assert.deepEqual(s.consent.datamapClass.verbs, ["view", "export", "correct", "delete"]);
+  for (const k of ["getTags", "putTags", "resolvePeople"]) assert.equal(typeof s[k], "function");
 });

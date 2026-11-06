@@ -466,6 +466,26 @@ All files are in [`islands/src/lib/`](../../islands/src/lib/).
 | [`people-corpus.js`](../../islands/src/lib/people-corpus.js) | `SEARCH_COPY`, `peopleSource`, `peopleProperties`, `mapPerson`, `suggestPeople` | The local-only people corpus used by the search island and the shell launcher. It seeds from the person manifest and the search index through `HFYFeatureFlags.dataFetch`, as an interactive load, with the `io_id` cookie. Its errors carry a `SEARCH_COPY` line as the message and the technical detail on `cause`. Facets: surname, given name, birth year, death year, living and has photo. `suggestPeople` returns up to six suggestions. |
 | [`cloudscape-theme.js`](../../islands/src/lib/cloudscape-theme.js) | `CLOUDSCAPE_TOKENS` | Cloudscape theme tokens for the search island, each a `var(--io-search-*)` alias. Read only at build time, through the `hfy:cloudscape-theme` import ([Island build](#island-build)). |
 
+### Tag ports of the media adapter
+
+HFY-TSK-388-0G (plan HFY-PLN-004, pass 1) gives the `@io-kit/media` adapter (`createHfyMediaSource` in [`hfy-media-source.js`](../../islands/src/lib/hfy-media-source.js)) its tag and consent ports. No island uses them yet: the `photo-tag-edit` island and `photoTagEdit` are unchanged until the editor swap (pass 2).
+
+| File | Exports | Behavior |
+|---|---|---|
+| [`hfy-tag-wire.js`](../../islands/src/lib/hfy-tag-wire.js) | `planTagOp(bundle, mediaHandle, op)`, `emitRect`, `authorRect`, `normalizeRect`, `validateNewRect`, `newMediaRef`, `changesBody`, `idempotencyKey` | Pure, no kit import (the repo suite `tests/tagging/wire-conformance.test.mjs` runs it). Turns a kit TagOp into the shipped editor's EditOps (`tag.add`, `tag.rect`, `tag.remove`, the `@ref=<handle>#<n>:<hash12>` key, the `base` guard). `normalizeRect` and `validateNewRect` are [`api/src/rect.js`](../../api/src/rect.js). |
+| [`hfy-tag-ports.js`](../../islands/src/lib/hfy-tag-ports.js) | `createTagPorts`, `corpusPeople`, `LIVING_NAME`, `SELF_UNTAG_NOTE` | `getTags` and `readTags` (tags plus the names to show and the version) read `GET /api/media/:id`, which already redacts living people (P4-R18). `putTags` reads the tagged person's edit bundle, plans the op, and posts `POST /api/changes` with a deterministic `Idempotency-Key`. `resolvePeople` offers deceased people and the viewer only (P4-R2 Q1), with the small photo URL when the family index has one. `consent`: `isTaggable` is always true, `hideAll` is a no-op, `selfUntag` is a normal remove of the member's own MediaRef with a note, plus the kit's reversible audit record, the re-add lock (audit-only) and `undoSelfUntag`. |
+| [`tag-store.js`](../../islands/src/lib/tag-store.js) | `createTagStore`, `memoryStore`, `createTagQueue` | IndexedDB with an in-memory fallback for the offline queue of pending TagOps, the self-untag audit records and the locks. `queue.onQueueChange` is the handler for the kit editor's `onQueueChange`; `queue.load()` restores it; `queue.flush(source)` replays it. |
+
+Rules the ports follow:
+
+- **Routes.** The server decides between a direct save (the viewer's own record, or an admin) and a proposal (another person's record, D-09). A proposal comes back under `proposed` with state `pending-proposal`; a saved change comes back under `applied` and, in `receipts`, with the inverse the server returned (`undoReceipt` posts it).
+- **Conflicts.** A base version that is not the media's current version, a missing or different tag at the addressed index, and a `409` from the server are all `conflicts`. Nothing is overwritten. Ops of one `putTags` call share the base version read at the start and run in order, each against a fresh read of the person's bundle.
+- **Rects.** Reads are Gramps-exact: nearest whole percent, half up, clamped, ordered; `null` for the whole image and a point; a line is kept (P4-R16). Writes accept only what `validateNewRect` accepts (integers, at least 2 x 2, the full frame as `null`), and refuse the rest with `INVALID_RECT` before any request. `private` is `false` on a new MediaRef and kept on an edit (D-06). A new MediaRef is appended to `Person.media_list` (D-05).
+- **Differences from the shipped editor.** Rects round to the nearest whole percent, half up (the editor rounds outward), and the adapter does not refuse a second tag with the same rect. The editor's confirmation dry run is not part of the adapter.
+- **Known limit.** A MediaRef byte-identical to one the person already holds cannot be appended: the ops engine's `add` is idempotent for an identical element. The adapter returns the existing tag under `applied` and lists the op in `identical`. [BASELINE](BASELINE.md) row T-9 records it.
+
+Unit tests: `islands/tests/hfy-tag-ports.test.mjs` (the kit's `TAG_FIXTURES` from `@io-kit/media/testing` over a fake API that runs the real ops engine, `islands/tests/support/fake-hfy-api.mjs`, plus the HFY policy rows) and `islands/tests/hfy-tag-parity.test.mjs` (the HFY-TSK-283 scenarios replayed, the requests compared with the shipped editor's).
+
 ### Island build
 
 [`islands/build.mjs`](../../islands/build.mjs) builds every islands output into a site directory:
