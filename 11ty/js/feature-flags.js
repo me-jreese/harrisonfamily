@@ -28,7 +28,7 @@
         "css": "b2ecf4e0"
       },
       "editor": {
-        "js": "8598d656",
+        "js": "4ce4fc68",
         "css": "4cd750ae"
       },
       "family": {
@@ -44,11 +44,11 @@
         "css": "e58e76cd"
       },
       "inbox": {
-        "js": "8edb72d4",
+        "js": "ec2c7845",
         "css": "d6605982"
       },
       "inbox-page": {
-        "js": "7576ef58",
+        "js": "745a03e7",
         "css": "38a33f05"
       },
       "join": {
@@ -71,6 +71,10 @@
         "js": "dba45074",
         "css": "a475a3dd"
       },
+      "media-browser": {
+        "js": "5d18d24d",
+        "css": "ba18296d"
+      },
       "moderation-queue": {
         "js": "794c62cf",
         "css": "c3d2737a"
@@ -92,7 +96,7 @@
         "css": "bd2a5788"
       },
       "person-add-photo": {
-        "js": "fbf9b922",
+        "js": "3e9041f8",
         "css": "5ff12110"
       },
       "person-links": {
@@ -100,11 +104,11 @@
         "css": "fcacbc39"
       },
       "person-portrait": {
-        "js": "bf13961f",
+        "js": "90474d49",
         "css": "af2df384"
       },
       "photo-tag-edit": {
-        "js": "9028a696",
+        "js": "25d42d29",
         "css": "7bf60ae7"
       },
       "photo-tags": {
@@ -112,7 +116,7 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "53b28ddc",
+        "js": "20b772b2",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -969,6 +973,13 @@
   resolveFlags().then((flags) => {
     if (flags.lifeDatesV1 !== true || !/^\/me\/dates\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("life-dates-queue", { onError() { /* the page keeps its "not available yet" note */ } });
+  });
+
+  // HFY-TSK-388-0B: mediaBrowserV1 mounts the All media page and the media detail page on the static /media/ page (island media-browser: no id in the address
+  // is the grid, ?id=<gramps_id> is one item). Not in the main menu. With the flag off the bundle is not requested and the page keeps its "not available yet" note.
+  resolveFlags().then((flags) => {
+    if (flags.mediaBrowserV1 !== true || !/^\/media\/?(index\.html)?$/.test(window.location.pathname)) return;
+    loadIsland("media-browser", { onError() { /* the page keeps its "not available yet" note */ } });
   });
 
   // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]

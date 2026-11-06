@@ -17,6 +17,7 @@
   "inboxV1": true,
   "lifeDatesV1": false,
   "mediaAddV1": false,
+  "mediaBrowserV1": false,
   "moderationRecordsV1": true,
   "moderationV1": true,
   "navMe": true,

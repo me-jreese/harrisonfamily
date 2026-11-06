@@ -227,7 +227,7 @@ const guardKeys = (e, { esc = null } = {}) => {
   if (e.key === "Escape" && esc && esc(e)) { e.preventDefault(); e.stopPropagation(); }
 };
 
-function TagEditor({ detail, me, person }) {
+export function TagEditor({ detail, me, person }) {
   const { media, img, box } = detail;
   const [rev, setRev] = useState(0);
   const [sel, setSel] = useState(null);
