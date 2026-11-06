@@ -72,15 +72,19 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "3c77146d",
-        "css": "10af69ee"
+        "js": "cd056dab",
+        "css": "6c4a9e76"
+      },
+      "media-carousel": {
+        "js": "f5896513",
+        "css": "289c73b5"
       },
       "moderation-queue": {
         "js": "794c62cf",
         "css": "c3d2737a"
       },
       "my-posts": {
-        "js": "753cf2aa",
+        "js": "3f13b27c",
         "css": "3d97e51e"
       },
       "notifications": {
@@ -92,11 +96,11 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "e1f75712",
+        "js": "9ccdd85c",
         "css": "bd2a5788"
       },
       "person-add-photo": {
-        "js": "aaccbc05",
+        "js": "bd523d4e",
         "css": "5ff12110"
       },
       "person-links": {
@@ -104,27 +108,27 @@
         "css": "fcacbc39"
       },
       "person-portrait": {
-        "js": "94e85f47",
+        "js": "1fa9c59f",
         "css": "af2df384"
       },
       "photo-tag-edit": {
-        "js": "ce155f7f",
-        "css": "b9b6eae0"
+        "js": "cb1e2462",
+        "css": "fd74c3e8"
       },
       "photo-tags": {
         "js": "5993b868",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "ec5a18f7",
+        "js": "3745f72c",
         "css": "105346a6"
       },
       "record-moderation": {
-        "js": "8cab6d0e",
+        "js": "f27c3536",
         "css": "5b548e69"
       },
       "review": {
-        "js": "04f5bd21",
+        "js": "e096b941",
         "css": "9545b73d"
       },
       "search": {
@@ -140,7 +144,7 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "c7d5a977",
+        "js": "ea6c9ef7",
         "css": "c249f04c"
       },
       "tree": {
@@ -980,6 +984,13 @@
   resolveFlags().then((flags) => {
     if (flags.mediaBrowserV1 !== true || !/^\/all-media\/?(index\.html)?$/.test(window.location.pathname)) return;
     loadIsland("media-browser", { onError() { /* the page keeps its "not available yet" note */ } });
+  });
+
+  // HFY-TSK-388-0C: mediaBrowserV1 also mounts the media carousel above the feed on the static /posts/ page (island media-carousel: the list, not one post). It
+  // renders nothing signed out or when its read fails, and the feed never waits for it. With the flag off the bundle is not requested.
+  resolveFlags().then((flags) => {
+    if (flags.mediaBrowserV1 !== true || !/^\/posts\/?(index\.html)?$/.test(window.location.pathname) || new URLSearchParams(window.location.search).has("id")) return;
+    loadIsland("media-carousel", { onError() { /* the feed stands on its own */ } });
   });
 
   // HFY-TSK-186: recordSubsV1 mounts the follow toggle on the person page (island follow; it fills the person page's [data-slot="follow"]

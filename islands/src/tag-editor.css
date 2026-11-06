@@ -18,3 +18,15 @@
 #mediaLightbox.photo-tag-edit-on [class*="photo-tags__lightbox"],
 #mediaLightbox.photo-tag-edit-on .photo-tags__layer { display: none; }
 @media (prefers-reduced-motion: reduce) { .hfy-tag-toggle { transition: none; } }
+
+/* WCAG 2.4.11 (focus not obscured): the kit keeps the box being named in view with scrollIntoView, but its scroll padding sits on the editor, which does not scroll. Here the
+   scroller is the page (media detail) or the lightbox body (person page), so the padding for the bottom-anchored person sheet goes on whichever holds an editor. */
+html:has(.io-media-tags),
+.modal-body:has(.io-media-tags) { scroll-padding-block-end: 50dvh; }
+
+/* The kit's .io-media-chip sets display, which beats the hidden attribute of the idle save chip (tags.css, .io-media-chip), leaving an empty pill in the layout. */
+.io-media-save[hidden] { display: none; }
+
+/* Both kit stylesheets name a class .io-media-stage: tags.css (absolute, inset 0, inside the editor's viewport) and browser.css (the detail page's own photo, relative). Loaded after
+   browser.css, tags.css pulled the detail page's photo out of the flow and over the "tag people" toggle at the two-column width. The page's own photo stays in the flow. */
+.io-media-detail .io-media-detail-main .io-media-stage { position: relative; inset: auto; transform: none; transition: none; }

@@ -17,7 +17,9 @@ import { createHfyMediaSource } from "./hfy-media-source.js";
 import { createHfyMediaBrowse } from "./hfy-media-browse.js";
 import { createTagStore } from "./tag-store.js";
 import { getMe } from "./me.js";
+import { personNames } from "./people-corpus.js";
 
+const WAIT_CLOSE_MS = 4000;
 export const WAITING_COPY = (n) => (n === 1 ? "1 change from earlier is waiting for a connection." : `${n} changes from earlier are waiting for a connection.`);
 
 let shared = null;
@@ -59,6 +61,28 @@ export function HfyTagEditor({ mediaId, onClose, onSaved }) {
   const [names, setNames] = useState({});
   const [kept, setKept] = useState(0);
   const alive = useRef(true);
+  // The kit calls onClose right after "done" has queued the changes. Closing then would unmount the editor before the save answers, and a stale-version banner
+  // (the change is kept so the member can try again) would never show. So "done" waits for the queue to drain and closes; a conflict keeps the editor open; a
+  // queue that stays (offline) closes after WAIT_CLOSE_MS, the changes being kept in the store for the next mount.
+  const closeWanted = useRef(false);
+  const conflictShown = useRef(false);
+  const closeTimer = useRef(0);
+  const finishClose = () => {
+    closeWanted.current = false;
+    clearTimeout(closeTimer.current);
+    if (alive.current && onClose) onClose();
+  };
+  const settleClose = () => {
+    if (!closeWanted.current || conflictShown.current) return;
+    if (kit.queue.pending().length === 0) finishClose();
+  };
+  const handleClose = () => {
+    if (conflictShown.current) { conflictShown.current = false; finishClose(); return; } // a second "done" with the banner up leaves
+    closeWanted.current = true;
+    clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => { if (closeWanted.current && !conflictShown.current) finishClose(); }, WAIT_CLOSE_MS);
+    setTimeout(settleClose, 0);
+  };
 
   const refreshNames = async () => {
     try {
@@ -79,13 +103,16 @@ export function HfyTagEditor({ mediaId, onClose, onSaved }) {
         left = kit.queue.pending().length;
       } catch { left = kit.queue.pending().length; }
       await refreshNames();
-      if (alive.current) { setKept(left); setBoot({ viewer: me && me.id ? me.id : "", label: me && me.label ? me.label : "", locks }); }
+      // The picker offers the member first as "you (<name>)"; the kit reads that name from `names`. /api/me's label can be the id itself, so the family index wins.
+      let label = me && me.label ? me.label : "";
+      try { const known = me && me.id ? (await personNames()).get(me.id) : ""; if (known) label = known; } catch { /* the label stays */ }
+      if (alive.current) { setKept(left); setBoot({ viewer: me && me.id ? me.id : "", label, locks }); }
     })();
-    return () => { alive.current = false; };
+    return () => { alive.current = false; clearTimeout(closeTimer.current); };
   }, [mediaId]);
 
   if (!boot) return <p className="hfy-tag-note" role="status">looking…</p>;
-  const shown = boot.viewer && !names[boot.viewer] && boot.label ? { ...names, [boot.viewer]: boot.label } : names;
+  const shown = boot.viewer && boot.label && (!names[boot.viewer] || names[boot.viewer] === boot.viewer) ? { ...names, [boot.viewer]: boot.label } : names;
   return (
     <div className="hfy-tag-editor" data-hfy-tag-editor>
       {kept > 0 && <p className="hfy-tag-note" role="status" data-hfy-tag-waiting>{WAITING_COPY(kept)}</p>}
@@ -97,9 +124,13 @@ export function HfyTagEditor({ mediaId, onClose, onSaved }) {
         reAddLocks={boot.locks}
         reAddPolicy="audit-only"
         selfUntagPort={kit.port}
-        onQueueChange={kit.queue.onQueueChange}
-        onSaved={(res) => { void refreshNames(); if (onSaved) onSaved(res); }}
-        {...(onClose ? { onClose } : {})}
+        onQueueChange={(ops) => { kit.queue.onQueueChange(ops); setTimeout(settleClose, 0); }}
+        onSaved={(res) => {
+          if (res && Array.isArray(res.conflicts) && res.conflicts.length > 0) { conflictShown.current = true; closeWanted.current = false; clearTimeout(closeTimer.current); }
+          void refreshNames();
+          if (onSaved) onSaved(res);
+        }}
+        {...(onClose ? { onClose: handleClose } : {})}
       />
     </div>
   );

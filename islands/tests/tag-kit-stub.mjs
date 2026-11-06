@@ -52,7 +52,7 @@ export async function stub(page, { flag = true, admin = false, editing = true } 
     I9012: { handle: "hp12", version: 5, obj: { _class: "Person", handle: "hp12", gramps_id: "I9012", media_list: [ref("MTAG1", [60, 15, 90, 45])] } },
     I9003: { handle: "hp3", version: 1, obj: { _class: "Person", handle: "hp3", gramps_id: "I9003", media_list: [] } }
   };
-  const state = { store, calls: [], proposals: [], details: 0, hooks: {}, islandRequests: 0 };
+  const state = { store, calls: [], proposals: [], details: 0, hooks: {}, islandRequests: 0, offline: false };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: true, photoTagEdit: flag, mediaBrowserV1: true, recordEdit: false } }));
   await page.route("**/auth/session", (r) => r.fulfill({ json: { authenticated: true, sub: ME, grampsId: ME, label: "Sam Example" } }));
@@ -109,6 +109,8 @@ export async function stub(page, { flag = true, admin = false, editing = true } 
   await page.route("**/person/I9001.json", (r) => r.fulfill({ json: GALLERY }));
   await page.route("**/media/tree_I9001.svg", (r) => r.fulfill({ contentType: "image/svg+xml", body: readFileSync(new URL("./fixtures/tree-synthetic.svg", import.meta.url), "utf8") }));
   await page.route(/\/media\/MTAG\d\.jpg/, (r) => { const k = Object.values(MEDIA).find((m) => r.request().url().includes(m.handle)); return r.fulfill({ contentType: "image/svg+xml", body: svg(k.w, k.h) }); });
+  // Registered last, so it runs first: while state.offline is set, every API request fails like a lost connection. (context.setOffline does not stop a request a route fulfils.)
+  await page.route("**/api/**", (r) => (state.offline ? r.abort("internetdisconnected") : r.fallback()));
   return state;
 }
 
@@ -143,7 +145,9 @@ export const realCalls = (state) => state.calls;
 
 /** Percent of the photo -> page coordinates (the stage is the photo's shape in the fixtures). */
 export async function at(page, px, py) {
-  const b = await editorOf(page).locator(".io-media-stage").boundingBox();
+  const stage = editorOf(page).locator(".io-media-stage");
+  await stage.scrollIntoViewIfNeeded(); // a point low on a tall photo can be below the fold of a 900 px window
+  const b = await stage.boundingBox();
   return [b.x + (px / 100) * b.width, b.y + (py / 100) * b.height];
 }
 export async function tap(page, px, py) {

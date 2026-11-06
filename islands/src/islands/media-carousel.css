@@ -1,0 +1,3 @@
+/* The posts-page media carousel host (media-carousel.jsx, HFY-TSK-388-0C). The band's own look is the kit's browser.css; this only places it above the feed.
+   Aliases only (--io-*); it never widens the page, so there is no sideways scroll at 375 px. */
+.hfy-mc { margin: 0 0 var(--io-space-4); min-width: 0; max-width: 100%; }

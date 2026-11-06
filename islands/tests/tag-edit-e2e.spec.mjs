@@ -50,9 +50,11 @@ test("scenario 1: a tag drawn on another person becomes a suggestion, an admin a
   const again = await member(browser, world, ME);
   await startTagging(again.page);
   await expect(rows(again.page)).toHaveCount(2);
-  await expect(again.page.locator("#mediaLightbox a.photo-tags__region")).toHaveCount(0); // the editor draws the photo while it is open
-  await again.page.locator("#mediaLightbox section.io-media-tags").getByRole("button", { name: "done" }).click();
+  // the editor draws the photo while it is open: the view layer's boxes are in the page but hidden (photo-tag-edit-on)
   await expect(again.page.locator("#mediaLightbox a.photo-tags__region")).toHaveCount(2);
+  for (const i of [0, 1]) await expect(again.page.locator("#mediaLightbox a.photo-tags__region").nth(i)).toBeHidden();
+  await again.page.locator("#mediaLightbox section.io-media-tags").getByRole("button", { name: "done" }).click();
+  for (const i of [0, 1]) await expect(again.page.locator("#mediaLightbox a.photo-tags__region").nth(i)).toBeVisible();
   await expect(names(again.page)).toHaveText(["Hazel Birchwell", "Briar Testwood"]);
   await again.ctx.close();
 });
@@ -74,7 +76,7 @@ test("scenario 2: a tag on my own record saves now, and 'remove me from this pho
   await editor(page).getByRole("button", { name: "remove me from this photo" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "remove me" }).click();
   await expect.poll(() => realCalls(log).length).toBe(2);
-  await expect(editor(page).getByText("you are removed from this photo.")).toBeVisible();
+  await expect(editor(page).locator(".io-media-toast").getByText("you are removed from this photo.")).toBeVisible();
   expect(mediaRefs(world.me)).toEqual([]);
   expect(world.version("Person", world.me.handle)).toBe(3);
   expect(world.rows("PROP#")).toEqual([]);

@@ -1,4 +1,4 @@
-// The D-11 measurements, shared by the editing audit (edit-d11-audit.spec.mjs, HFY-TSK-282) and the tagging audit (tag-edit-d11-audit.spec.mjs, HFY-TSK-283).
+// The D-11 measurements, shared by the editing audit (edit-d11-audit.spec.mjs, HFY-TSK-282) and the tagging audit (the tagging audit of HFY-TSK-283, retired with the shipped editor).
 // Run in the page: `page.evaluate(`(${MEASURE.toString()})()`)`.
 /** The D-11 measurements, run in the page: a list of findings (empty when the state is clean). */
 export const MEASURE = () => {

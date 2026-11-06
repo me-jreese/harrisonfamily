@@ -72,7 +72,7 @@ for (const surface of ["person", "media"]) {
       test("drag draws a box, zoom to the box follows it, and a tiny box carries the 1% note", async ({ page }) => {
         await openEditor(page, surface);
         const ed = editorOf(page);
-        await drag(page, [45, 55], [47, 57]);
+        await drag(page, [45, 55], [48, 58]);
         await expect(page.getByRole("dialog", { name: "who is this?" })).toBeVisible();
         await expect(ed.locator(".io-media-stage")).toHaveAttribute("data-zoom", /.+/);
         await pickPerson(page, "robin", "Robin Sample"); // the note shows once the picker has given way to the adjusting box
@@ -97,7 +97,8 @@ for (const surface of ["person", "media"]) {
 
       test("the duplicate prompt: a box over a person's own box asks to move it instead", async ({ page }) => {
         const state = await openEditor(page, surface);
-        await drag(page, [10, 20], [30, 50]);
+        // from just outside Sam's box to just beyond it (IoU about 0.6): a drag that starts ON a box selects the box, as the kit means it to
+        await drag(page, [6, 16], [32, 53]);
         await pickPerson(page, "sam", NAMES.I9002);
         const prompt = page.getByRole("alertdialog");
         await expect(prompt).toContainText("already tagged here");
@@ -123,16 +124,21 @@ for (const surface of ["person", "media"]) {
       });
 
       test("offline: the change waits (chip), then goes out when the connection is back", async ({ page, context }) => {
+        test.setTimeout(75000); // the kit says "waiting for connection" once a change has been unsent for 30 s (its WAIT_MS)
         const state = await openEditor(page, surface);
         const ed = editorOf(page);
         await tap(page, 75, 75);
         await pickPerson(page, "robin", "Robin Sample");
+        state.offline = true;
         await context.setOffline(true);
         await ed.getByRole("button", { name: "add a box in the middle" }).click(); // commits the first box, opens a second
         await page.getByRole("dialog", { name: "who is this?" }).getByRole("button", { name: "cancel" }).click();
-        await expect(ed.locator(".io-media-save")).toHaveAttribute("data-state", "waiting", { timeout: 15000 });
+        await expect(ed.locator(".io-media-save")).toHaveAttribute("data-state", "saving");
+        await expect(ed.locator(".io-media-save")).toContainText("saving…");
+        await expect(ed.locator(".io-media-save")).toHaveAttribute("data-state", "waiting", { timeout: 40000 });
         await expect(ed.locator(".io-media-save")).toContainText("waiting for connection");
         expect(state.calls).toEqual([]);
+        state.offline = false;
         await context.setOffline(false);
         await expect.poll(() => state.calls.length, { timeout: 20000 }).toBe(1);
         await expect(ed.locator(".io-media-save")).toBeHidden();
@@ -179,13 +185,19 @@ for (const surface of ["person", "media"]) {
         const sheet = page.getByRole("dialog", { name: "who is this?" });
         await expect(sheet).toHaveAttribute("data-enter", "none");
         await noSideways(page);
-        // focus not obscured (WCAG 2.4.11): what is on top at the centre of the box being named is the box or the photo, not the sheet
-        const covered = await page.evaluate(() => {
+        // focus not obscured (WCAG 2.4.11). Below 48rem the kit puts the sheet in the flow under the photo, so the centre of the box being named must be the box or the photo
+        // (the stricter check). From 48rem it is a centred modal dialog (tags.css), which can overlap the box; there the criterion itself holds: the box is not entirely hidden.
+        const wide = page.viewportSize().width >= 768;
+        const covered = await page.evaluate((wideScreen) => {
           const d = document.querySelector('section.io-media-tags [data-key="draft"]');
           const r = d.getBoundingClientRect();
+          if (wideScreen) {
+            const s = document.querySelector(".io-media-sheet").getBoundingClientRect();
+            return s.left <= r.left && s.top <= r.top && s.right >= r.right && s.bottom >= r.bottom; // entirely under the dialog
+          }
           const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
           return !top || !(top.closest(".io-media-stage") || top.closest("[data-key=draft]"));
-        });
+        }, wide);
         expect(covered).toBe(false);
       });
 

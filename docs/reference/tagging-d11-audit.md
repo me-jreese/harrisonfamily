@@ -38,4 +38,4 @@ The same three scenarios run as API requests ([`api/test/tag-edit-e2e.test.js`](
 2. A tag of oneself, on one's own record, saves now with nothing sent to review; the toast's undo button takes it off again (at the API, the undo the save returned does the same).
 3. (Browser: the editor's own planning catches the stale key before any request, so the server's 409 is asserted only in the API test; together they cover it.) A tag key that went stale, because the tag changed after the page was built, is a conflict: nothing is sent from the page, the API refuses an old key even at a fresh version, and the changed box is never moved.
 
-All ids and names are synthetic. Run the browser specs with `cd islands && PW_PORT=<free port> npx playwright test tests/tag-edit-e2e.spec.mjs tests/tag-edit-d11-audit.spec.mjs`.
+All ids and names are synthetic. Run the browser specs with `cd islands && PW_PORT=<free port> npx playwright test tests/tag-edit-e2e.spec.mjs tests/tag-kit.spec.mjs`.
