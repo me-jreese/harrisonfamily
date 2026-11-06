@@ -80,8 +80,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "7c447efb",
-        "css": "e955e9a8"
+        "js": "d06741ad",
+        "css": "bd2a5788"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -96,16 +96,16 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "f4e4649a",
-        "css": "dfc6ddf3"
+        "js": "3f4eed78",
+        "css": "105346a6"
       },
       "record-moderation": {
         "js": "f5516465",
         "css": "5b548e69"
       },
       "review": {
-        "js": "a18fc4aa",
-        "css": "d9db1c3c"
+        "js": "9e917821",
+        "css": "bf26d487"
       },
       "search": {
         "js": "99872d4f",
