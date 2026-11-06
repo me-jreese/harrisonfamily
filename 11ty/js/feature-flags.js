@@ -9,7 +9,7 @@
     "islands": {
       "about-cta": {
         "js": "9a37a85c",
-        "css": "11377c0e"
+        "css": "ed5ea877"
       },
       "access-requests": {
         "js": "132311c3",
@@ -64,8 +64,8 @@
         "css": "a475a3dd"
       },
       "my-posts": {
-        "js": "bc34d700",
-        "css": "766ac78e"
+        "js": "6400b81d",
+        "css": "acb4acbc"
       },
       "notifications": {
         "js": "339b0773",
@@ -73,11 +73,11 @@
       },
       "onthisday": {
         "js": "87e49941",
-        "css": "88208200"
+        "css": "65c4c96f"
       },
       "person": {
-        "js": "fcaf452e",
-        "css": "a6701c36"
+        "js": "add680d5",
+        "css": "21a82851"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -92,12 +92,12 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "801452c6",
-        "css": "e72cbd1a"
+        "js": "dac0352c",
+        "css": "ca219197"
       },
       "review": {
-        "js": "89934440",
-        "css": "c19778e3"
+        "js": "83a6e3db",
+        "css": "d3f4cc44"
       },
       "search": {
         "js": "99872d4f",
@@ -112,8 +112,8 @@
         "css": "6aa10a05"
       },
       "timeline": {
-        "js": "d0d17f82",
-        "css": "e2b41c1f"
+        "js": "b68af309",
+        "css": "3610897c"
       },
       "tree": {
         "js": "24de6c27",
