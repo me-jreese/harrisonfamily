@@ -72,8 +72,8 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "dd4ea851",
-        "css": "83db50ff"
+        "js": "731cdd9a",
+        "css": "b72e84e6"
       },
       "media-carousel": {
         "js": "d7381324",
@@ -96,7 +96,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "c7a5d50f",
+        "js": "f5b7f642",
         "css": "bd2a5788"
       },
       "person-add-photo": {
@@ -113,14 +113,14 @@
       },
       "photo-tag-edit": {
         "js": "a6eea071",
-        "css": "6d3e841a"
+        "css": "912a7ff2"
       },
       "photo-tags": {
         "js": "5993b868",
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "de38071a",
+        "js": "4a6e444f",
         "css": "105346a6"
       },
       "record-moderation": {
@@ -128,7 +128,7 @@
         "css": "5b548e69"
       },
       "review": {
-        "js": "7619475f",
+        "js": "6facb0b4",
         "css": "9545b73d"
       },
       "search": {

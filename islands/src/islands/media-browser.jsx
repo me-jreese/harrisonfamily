@@ -8,7 +8,8 @@
 import "@io-kit/media/tokens.css";
 import "@io-kit/media/browser.css";
 import "./media-browser.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { DEFAULT_LABELS, MediaBrowserPage, MediaDetail, detailContextFromSearch, detailHrefIn, mediaIdFromSearch } from "@io-kit/media/browser";
 import { createHfyMediaBrowse } from "../lib/hfy-media-browse.js";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
@@ -32,14 +33,27 @@ const signIn = () => `/auth/login?returnTo=${encodeURIComponent(`${location.path
 // a proposal is dashed with "pending review". The list below stays the main accessible form.
 function KitOverlay({ detail }) {
   const name = (id) => detail.tags.find((t) => t.personId === id)?.person.displayName ?? "family member";
-  return <TagOverlay tags={detail.tags} names={name} aspect={(detail.card.width || 4) / (detail.card.height || 3)} />;
+  const aspect = (detail.card.width || 4) / (detail.card.height || 3);
+  // HFY-TSK-404: the stage is as wide as the photo's own aspect allows at 70dvh (media-browser.css reads --io-media-aspect), so the boxes' percentages are the photo's, not a letterbox's.
+  const mark = useRef(null);
+  useLayoutEffect(() => {
+    const stage = mark.current?.closest(".io-media-stage");
+    stage?.style.setProperty("--io-media-aspect", String(aspect));
+    return () => stage?.style.removeProperty("--io-media-aspect");
+  }, [aspect]);
+  return (
+    <>
+      <span ref={mark} hidden />
+      <TagOverlay tags={detail.tags} names={name} aspect={aspect} />
+    </>
+  );
 }
 
+// The kit's detail page draws the "who's in this photo" heading and names the region with it, so this is only the list (HFY-TSK-404: it drew a second heading).
 function TagList({ detail }) {
   const tags = detail.tags;
   return (
-    <section className="hfy-mb-people" aria-labelledby="hfy-mb-people-h" data-media-people>
-      <h2 id="hfy-mb-people-h" className="hfy-mb-people__h">{DEFAULT_LABELS.people}</h2>
+    <div className="hfy-mb-people" data-media-people>
       {tags.length === 0 ? <p className="hfy-mb-people__none">{DEFAULT_LABELS.noTags}</p> : (
         <ul className="hfy-mb-people__list">
           {tags.map((t) => (
@@ -50,7 +64,32 @@ function TagList({ detail }) {
           ))}
         </ul>
       )}
-    </section>
+    </div>
+  );
+}
+
+// "view full size" (HFY-TSK-404): the kit's link goes to the raw original, which in the installed app (no browser bar) has no way back. The click is taken here and the
+// original opens in a full-screen viewer inside the page: a dialog, a visible "close" button, Esc, and the system back (one history entry that keeps the same address).
+// The link keeps its href, so a new-tab or modified click and a page without scripts still reach the image.
+function FullSizeViewer({ src, alt, onClose }) {
+  const close = useRef(null);
+  useEffect(() => {
+    close.current?.focus();
+    const html = document.documentElement;
+    const before = html.style.overflow;
+    html.style.overflow = "hidden";
+    return () => { html.style.overflow = before; };
+  }, []);
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    else if (e.key === "Tab") { e.preventDefault(); close.current?.focus(); }
+  };
+  return createPortal(
+    <div className="hfy-full" role="dialog" aria-modal="true" aria-label="full size photo" onKeyDown={onKeyDown} data-hfy-full>
+      <img className="hfy-full__img" src={src} alt={alt} />
+      <button ref={close} type="button" className="io-media-btn hfy-full__close" onClick={onClose}>close</button>
+    </div>,
+    document.body,
   );
 }
 
@@ -58,16 +97,46 @@ function TagList({ detail }) {
 function DetailHost({ initialId, children }) {
   const root = useRef(null);
   const [nav, setNav] = useState(() => ({ id: initialId, ctx: detailContextFromSearch(location.search) }));
+  const [full, setFull] = useState(null);
+  const fullRef = useRef(null);
+  fullRef.current = full;
   useEffect(() => {
-    const on = () => { const id = mediaIdFromSearch(location.search); if (id) setNav({ id, ctx: detailContextFromSearch(location.search) }); };
+    const on = () => {
+      if (fullRef.current) { setFull(null); return; }
+      const id = mediaIdFromSearch(location.search);
+      if (id) setNav({ id, ctx: detailContextFromSearch(location.search) });
+    };
     window.addEventListener("popstate", on);
     return () => window.removeEventListener("popstate", on);
   }, []);
   useEffect(() => {
     root.current?.querySelectorAll('a[href^="/media/"]').forEach((a) => { const h = a.getAttribute("href"); if (rebase(h) !== h) a.setAttribute("href", rebase(h)); });
   });
+  // Behind the dialog the page is inert; once it is back, focus returns to the link that opened the viewer.
+  const opener = useRef(null);
+  useEffect(() => {
+    if (full) { root.current?.setAttribute("inert", ""); return; }
+    root.current?.removeAttribute("inert");
+    if (opener.current) { const link = opener.current; opener.current = null; if (link.isConnected) link.focus(); }
+  }, [full]);
   const onNavigate = (id, href) => { history.pushState(null, "", rebase(href)); setNav({ id, ctx: detailContextFromSearch(location.search) }); };
-  return <div ref={root}>{children({ id: nav.id, ctx: nav.ctx, onNavigate })}</div>;
+  const openFull = (e) => {
+    const link = e.target instanceof Element ? e.target.closest(".io-media-detail-full a") : null;
+    if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    history.pushState({ hfyFull: true }, "", location.href);
+    const alt = root.current?.querySelector(".io-media-stage-img")?.getAttribute("alt") || "";
+    opener.current = link;
+    setFull({ src: link.getAttribute("href"), alt });
+  };
+  // Close from the button or Esc: step back over the entry the open pushed, and the popstate above closes it (one path for all three ways out).
+  const closeFull = () => { if (history.state?.hfyFull) history.back(); else setFull(null); };
+  return (
+    <>
+      <div ref={root} onClick={openFull}>{children({ id: nav.id, ctx: nav.ctx, onNavigate })}</div>
+      {full && <FullSizeViewer src={full.src} alt={full.alt} onClose={closeFull} />}
+    </>
+  );
 }
 
 function MediaBrowser() {

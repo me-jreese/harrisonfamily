@@ -7,7 +7,8 @@ export function MediaCommentsHost({ subject, enabled }) {
   const on = enabled === true && typeof subject === "string" && /^media:[A-Za-z0-9_.-]{1,64}$/.test(subject);
   return (
     <div data-slot="media-comments" data-subject={subject}>
-      {on && <Comments subject={subject} />}
+      {/* the kit detail page already draws the "comments" heading and names this region with it (HFY-TSK-404) */}
+      {on && <Comments subject={subject} heading={false} />}
     </div>
   );
 }
