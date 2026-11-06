@@ -79,7 +79,7 @@ export function isPopout(search) {
  * The shell options for this screen (chat.md 15.1, 15.3, 15.4). From 43rem the moles dock (the roster panel starts collapsed at every width,
  * HFY-ISS-026, and the choice is remembered per device); under 43rem nothing docks and opening a chat goes to the /chat/ page.
  */
-export function shellOptionsFor({ narrow, medium, navigate }) {
+export function shellOptionsFor({ narrow, navigate }) {
   return {
     ...SHELL_OPTIONS,
     dock: narrow ? false : SHELL_OPTIONS.dock,

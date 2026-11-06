@@ -47,9 +47,7 @@ const breakpoint = (names, fallback) => {
   return v || fallback;
 };
 const phoneLine = () => breakpoint(["--io-bp-palette-min", "--io-bp-medium"], "43rem");
-const wideLine = () => breakpoint(["--io-bp-wide"], "64rem");
 const PHONE_UP = `(min-width: ${phoneLine()})`;
-const WIDE_UP = `(min-width: ${wideLine()})`;
 
 /** The bar's chat slot host, as an external store so the single React tree can portal the entry into it. */
 function slotStore() {
@@ -186,32 +184,48 @@ function PanelGuard() {
   useEffect(() => {
     const root = document.documentElement;
     if (!panelOpen) return undefined;
-    const panel = document.querySelector(".io-chat-panel");
+    // The panel is looked up on every measure, and re-observed when it is replaced, so a remount never leaves a stale reserve.
+    let panel = null;
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => measure()) : null;
     const measure = () => {
-      if (!panel) return;
+      const now = document.querySelector(".io-chat-panel");
+      if (now !== panel) {
+        if (ro && panel) ro.unobserve(panel);
+        panel = now;
+        if (ro && panel) ro.observe(panel);
+      }
+      if (!panel) { root.style.removeProperty(RESERVE_VAR); return; }
       const r = panel.getBoundingClientRect();
       root.style.setProperty(RESERVE_VAR, `${Math.ceil(r.right)}px`);
     };
     measure();
     root.classList.add(OPEN_CLASS);
-    const ro = typeof ResizeObserver === "function" && panel ? new ResizeObserver(measure) : null;
-    if (ro) ro.observe(panel);
     window.addEventListener("resize", measure);
+    const mo = typeof MutationObserver === "function" ? new MutationObserver(() => { if (document.querySelector(".io-chat-panel") !== panel) measure(); }) : null;
+    if (mo) mo.observe(document.body, { childList: true, subtree: true });
     const onKey = (e) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const t = e.target;
-      if (t && t.closest && t.closest(".io-chat-mole, .io-chat-menu, [role=dialog], dialog")) return;
+      // Only when the key is the panel's own: focus inside the panel, or on the page body. A page popover, lightbox, menu or editable
+      // field keeps its Escape.
+      const inPanel = !!(t && t.closest && t.closest(".io-chat-panel"));
+      const onBody = !t || t === document.body || t === document.documentElement;
+      if (!inPanel && !onBody) return;
+      if (t && t.closest && t.closest(".io-chat-mole, .io-chat-menu, [role=dialog], [role=menu], [role=listbox], dialog, [contenteditable], [aria-expanded=true]:not(.io-chat-bar-title)")) return;
       // In the roster's search box the kit's own Escape clears the query, then leaves the box; the next Escape closes the panel.
-      if (t && t.matches && t.matches("input, textarea")) return;
+      if (t && t.matches && t.matches("input, textarea, select")) return;
       setPanelOpen(false);
-      const btn = document.querySelector(".io-chat-panel .io-chat-bar-title");
-      if (btn) btn.focus();
+      if (inPanel) {
+        const btn = document.querySelector(".io-chat-panel .io-chat-bar-title");
+        if (btn) btn.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", measure);
       if (ro) ro.disconnect();
+      if (mo) mo.disconnect();
       root.classList.remove(OPEN_CLASS);
       root.style.removeProperty(RESERVE_VAR);
     };
@@ -250,8 +264,7 @@ const chatPersonHref = (participant) => personHref(participant && participant.id
 
 function App({ client, slot, person, pageHost, popout }) {
   const narrow = !useQuery(PHONE_UP);
-  const medium = !useQuery(WIDE_UP);
-  const options = useMemo(() => shellOptionsFor({ narrow, medium, navigate: (url) => window.location.assign(url) }), [narrow, medium]);
+  const options = useMemo(() => shellOptionsFor({ narrow, navigate: (url) => window.location.assign(url) }), [narrow]);
   const copy = useMemo(() => copyFor({ narrow }), [narrow]);
   return (
     <ChatProvider client={client} options={options} copy={copy} personHref={chatPersonHref}>

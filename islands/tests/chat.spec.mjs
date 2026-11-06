@@ -106,7 +106,7 @@ async function wire(context, { flag = true, session = ME, hub = null, refuse = n
   // panel keep their premise by remembering "open" on a wide screen the way a member who opened it would; `fresh: true` is a first visit.
   if (!fresh) {
     await context.addInitScript(() => {
-      try { if (window.innerWidth >= 1024 && localStorage.getItem("hfy:chat:panel") === null) localStorage.setItem("hfy:chat:panel", "open"); } catch { /* storage blocked */ }
+      try { if (localStorage.getItem("hfy:chat:panel") === null) localStorage.setItem("hfy:chat:panel", "open"); } catch { /* storage blocked */ }
     });
   }
   // `exp`: the session expires `exp` seconds from now until /auth/refresh is called, and an hour after it (the page's single refresh).
@@ -543,7 +543,7 @@ test.describe("1280", () => {
     await wire(context, { hub });
     await page.goto("/contact/", { waitUntil: "domcontentloaded" });
     await expect(panel(page)).toBeVisible();
-    await panel(page).getByRole("button", { name: "chat" }).click(); // the roster starts folded below 64rem
+    await expect(bar(page)).toHaveAttribute("aria-expanded", "true"); // remembered open by wire(), at every width (HFY-TSK-385)
     await panel(page).getByRole("button", { name: /Pat Example/ }).click();
     await panel(page).getByRole("button", { name: /Alex Example/ }).click();
     const chip = page.locator(".io-chat-more > button.io-chat-bar");
