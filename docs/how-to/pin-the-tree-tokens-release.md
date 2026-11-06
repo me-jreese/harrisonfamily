@@ -20,7 +20,7 @@ Placeholders used on this page: `<version>` is the `@io-kit/tokens` version that
 aws codeartifact list-package-versions --domain io --repository io-kit --format npm --namespace io-kit --package tokens --profile <operator-profile> --region us-west-2
 ```
 
-Find `<version>` in the list, with status `Published`. Compare it with the pin in [`islands/package.json`](../../islands/package.json): `grep tokens islands/package.json`. The package was pinned at `0.4.1` when the tree was built, and the release with the tree tokens is a later minor. A minor can carry other changes besides the tree tokens, so step 4 reads the whole delta.
+Find `<version>` in the list, with status `Published`. Compare it with the pin in [`islands/package.json`](../../islands/package.json): `grep tokens islands/package.json`. The package was pinned at `0.4.1` when the tree was built, and the release with the tree tokens is a later minor. A minor can carry other changes besides the tree tokens (`0.5.0` added launcher tokens), so step 4 reads the whole delta. Before step 2, build once and copy `11ty/css/hfy-theme.css` and `11ty/css/auth-edge.css` outside the repository, so that step 4 can diff every custom property, not only the lines git shows. The package ships no CHANGELOG, so the emitted outputs are the record of what changed.
 
 ### 2. Move the pin
 
