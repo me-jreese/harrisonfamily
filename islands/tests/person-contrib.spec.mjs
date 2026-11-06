@@ -11,7 +11,7 @@ const LIVING = { ...PERSON, isLiving: true };
 const OWNER = { id: "I9001", label: "Test Person" };
 const VISITOR = { id: "I9002", label: "Sam Example" };
 const ON = "/person/?id=I9001&hfy_flags=personV2,postsV2,contribV1";
-const OFF = "/person/?id=I9001&hfy_flags=personV2,postsV2";
+const OFF = "/person/?id=I9001&hfy_flags=personV2,postsV2,-contribV1";
 const ULID = (n) => `01JZZZZZZZZZZZZZZZZZZZ${String(n).padStart(4, "0")}`;
 const NAMES = [{ grampsId: "I9001", displayName: "Test Person" }, { grampsId: "I9003", displayName: "Ann Other" }, { grampsId: "I9004", displayName: "Bo Example" }];
 const minutesAgo = (n) => new Date(Date.now() - n * 60e3).toISOString();
