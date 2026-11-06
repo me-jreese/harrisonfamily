@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { CANDIDATES, LINE_TTL_MS, createContribReader, hrefOf, lineText, pickLine, proposalVisible } from "../src/contrib-read.js";
 import { buildEvent, contribOps, hideOps } from "../src/contrib.js";
 import { ROUTES, buildCaps, matchRoute } from "../src/routes.js";
+import { grantAllow, revokeAllow } from "../src/allowlist-store.js";
 import { transact } from "../src/txn.js";
 import { TABLE, cmds, makeApi, signToken } from "./world.js";
 
@@ -398,7 +399,7 @@ describe("contributions.stats", () => {
     const r = await get(w, BEN, "contributions/stats", { author: ANN });
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
-      author: ANN, total: 6, first_at: AT,
+      author: ANN, member: true, total: 6, first_at: AT,
       by_kind: { post: 1, comment: 1, photo: 3, self_edit: 0, proposal_accepted: 0, tag: 1, photo_to_record: 0 },
     });
   });
@@ -406,7 +407,51 @@ describe("contributions.stats", () => {
   it("an unknown author returns zeros, not 404", async () => {
     const r = await get(world(), BEN, "contributions/stats", { author: "I7777" });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ author: "I7777", total: 0, by_kind: { post: 0, comment: 0, photo: 0, self_edit: 0, proposal_accepted: 0, tag: 0, photo_to_record: 0 } });
+    expect(r.body).toEqual({ author: "I7777", member: false, total: 0, by_kind: { post: 0, comment: 0, photo: 0, self_edit: 0, proposal_accepted: 0, tag: 0, photo_to_record: 0 } });
+  });
+
+  it("member is true for a record behind a sign-in, false for a non-member and an unknown record, and names no account", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set([ANN]) } });
+    const mem = await get(w, BEN, "contributions/stats", { author: ANN });
+    expect(mem.body.member).toBe(true);
+    expect(Object.keys(mem.body).sort()).toEqual(["author", "by_kind", "member", "total"]);
+    expect((await get(w, BEN, "contributions/stats", { author: PAGE })).body).toMatchObject({ author: PAGE, member: false, total: 0 });
+    expect((await get(w, BEN, "contributions/stats", { author: "I7777" })).body).toMatchObject({ member: false, total: 0 });
+    expect(JSON.stringify(mem.body)).not.toMatch(/@|sub|email/i);
+  });
+
+  it("an admin-only gramps_id counts as a member (admins have sign-ins)", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set([PAGE]), getAdmins: async () => [ANN] } });
+    expect((await get(w, BEN, "contributions/stats", { author: ANN })).body).toMatchObject({ member: true, total: 0 });
+  });
+
+  it("an empty member list (source unavailable) reads as member false and the stats answer 200", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set(), getAdmins: async () => [ANN] } });
+    const r = await get(w, BEN, "contributions/stats", { author: ANN });
+    expect(r.status).toBe(200);
+    expect(r.body.member).toBe(false);
+  });
+
+  it("a sign-in that is only an active ALLOW# item is a member; a revoked one is not", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set([PAGE]) } });
+    const email = "ann.member@example.com";
+    await grantAllow(w.ddb, cmds, TABLE, { email, sub: ANN, source: "access-request", requestId: "req-1", at: AT, by: "I0001", uid: "u-allow-1" });
+    expect((await get(w, BEN, "contributions/stats", { author: ANN })).body).toMatchObject({ member: true, total: 0 });
+    await revokeAllow(w.ddb, cmds, TABLE, { email, sub: ANN, at: AT, by: "I0001", uid: "u-allow-2" });
+    expect((await get(w, BEN, "contributions/stats", { author: ANN })).body).toMatchObject({ member: false, total: 0 });
+  });
+
+  it("an author with credited contributions is a member even when on no list", async () => {
+    const w = world({ extraDeps: { listMembers: async () => new Set([PAGE]) } });
+    await transact(w.ddb, cmds, TABLE, contribOps({ actor: { id: ANN, label: "Ann" }, at: AT, uid: () => U(1), kind: "tag", ref: { type: "tag", id: "t" }, subject: PAGE }));
+    expect((await get(w, BEN, "contributions/stats", { author: ANN })).body).toMatchObject({ member: true, total: 1 });
+  });
+
+  it("an unreadable member list reads as member false, and the stats still answer", async () => {
+    const w = world({ extraDeps: { listMembers: async () => { throw new Error("down"); } } });
+    const r = await get(w, BEN, "contributions/stats", { author: ANN });
+    expect(r.status).toBe(200);
+    expect(r.body.member).toBe(false);
   });
 
   it("hidden events still count: a withdrawn post keeps its credit in the totals others see", async () => {

@@ -11,7 +11,7 @@ const LIVING = { ...PERSON, isLiving: true };
 const OWNER = { id: "I9001", label: "Test Person" };
 const VISITOR = { id: "I9002", label: "Sam Example" };
 const ON = "/person/?id=I9001&hfy_flags=personV2,postsV2,contribV1";
-const OFF = "/person/?id=I9001&hfy_flags=personV2,postsV2";
+const OFF = "/person/?id=I9001&hfy_flags=personV2,postsV2,-contribV1";
 const ULID = (n) => `01JZZZZZZZZZZZZZZZZZZZ${String(n).padStart(4, "0")}`;
 const NAMES = [{ grampsId: "I9001", displayName: "Test Person" }, { grampsId: "I9003", displayName: "Ann Other" }, { grampsId: "I9004", displayName: "Bo Example" }];
 const minutesAgo = (n) => new Date(Date.now() - n * 60e3).toISOString();
@@ -30,7 +30,7 @@ const entry = (n, over = {}) => {
   return { id: ULID(n), kind: k.kind, at: minutesAgo(n * 90), weight: 1, photos: k.photos ?? 0, ref: { ...k.ref, id: `${k.ref.id}${n}` }, ...(k.subject ? { subject: k.subject } : {}), href: k.href, ...over };
 };
 
-async function stub(page, { me = VISITOR, total = 25, person = LIVING, entries, statsStatus = 200, listStatuses = [] } = {}) {
+async function stub(page, { me = VISITOR, total = 25, person = LIVING, member = true, entries, statsStatus = 200, listStatuses = [] } = {}) {
   const s = { lists: [], stats: 0, external: [], failList: 0 };
   const all = entries ?? Array.from({ length: total }, (_, i) => entry(i + 1));
   page.on("request", (q) => { if (new URL(q.url()).hostname !== "127.0.0.1") s.external.push(q.url()); });
@@ -47,7 +47,7 @@ async function stub(page, { me = VISITOR, total = 25, person = LIVING, entries, 
     if (u.pathname.endsWith("/stats")) {
       s.stats += 1;
       if (statsStatus !== 200) return r.fulfill({ status: statsStatus, json: { error: "x" } });
-      return r.fulfill({ json: { author: u.searchParams.get("author"), total: all.length, by_kind: {} } });
+      return r.fulfill({ json: { author: u.searchParams.get("author"), member, total: all.length, by_kind: {} } });
     }
     const limit = Number(u.searchParams.get("limit") || 10);
     const from = Number(u.searchParams.get("cursor") || 0);
@@ -167,16 +167,20 @@ test("the hero chip 'N contributions' comes from contributions.stats and links t
   await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("hfy-person-contributions-h");
 });
 
-test("the chip says '0 contributions' on a member's page and is hidden on a record that is not a member", async ({ page }) => {
-  await stub(page, { total: 0, person: LIVING });
+test("the chip says '0 contributions' when member is true and is hidden exactly when member is false", async ({ page }) => {
+  await stub(page, { total: 0, person: LIVING, member: true });
   await open(page);
   await expect(page.locator("a[data-hfy-contrib-chip]")).toHaveText("0 contributions");
-  // a deceased person's page with nothing credited: not a member, no chip (the column still says "no contributions yet.")
-  await stub(page, { total: 0, person: { ...PERSON, isLiving: false } });
+  // a living record that is not a member: member false, no chip (the column still says "no contributions yet.")
+  await stub(page, { total: 0, person: LIVING, member: false });
   await open(page);
   await expect(column(page)).toContainText("no contributions yet.");
   await expect(page.locator("a[data-hfy-contrib-chip]")).toHaveCount(0);
   await expect(page.locator('[data-slot="contributions"]')).toBeHidden();
+  // a deceased record that is a member still shows its chip: the page no longer guesses from isLiving
+  await stub(page, { total: 0, person: { ...PERSON, isLiving: false }, member: true });
+  await open(page);
+  await expect(page.locator("a[data-hfy-contrib-chip]")).toHaveText("0 contributions");
 });
 
 test("one contribution reads '1 contribution'; with the stats route failing the chip is silent and the column still lists", async ({ page }) => {

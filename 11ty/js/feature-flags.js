@@ -80,7 +80,7 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "e9b0db6f",
+        "js": "a5c1fa5b",
         "css": "bd2a5788"
       },
       "person-links": {
