@@ -18,6 +18,8 @@ import { FEATURES, MAX_PHOTOS, PHOTO_LABELS, commentPhotoAlt, photoUploadMessage
 import { CappedSection } from "./capped.jsx";
 import { commentFromHash } from "./capped-model.js";
 import { ModerateControl } from "./moderation-ui.jsx";
+import { GraduateControl } from "./graduate-ui.jsx";
+import { COPY as GRAD_COPY } from "./graduate.js";
 import { COPY as MOD_COPY, createModerationClient, commentTarget, photoTarget, pingFor, versionOf } from "./moderation.js";
 
 // R18: record-id mentions (@I0044 / I0044) link to the person page. Module-level so the identity is stable. Every comment author's name
@@ -270,6 +272,7 @@ function watchCommentIds(root) {
 export function Comments({ subject, social = false }) {
   const [session, setSession] = useState(undefined);
   const [moderator, setModerator] = useState(false);
+  const [graduator, setGraduator] = useState(false);
   const [ping, setPing] = useState("");
   const timer = useRef(null);
   const root = useRef(null);
@@ -280,6 +283,9 @@ export function Comments({ subject, social = false }) {
   // moderationV1 (HFY-TSK-191, default off): the kit's hide / ask / unhide menu, badge and banners, and a hide control on each photo. Off, the
   // thread is what it was (the kit's moderate menu then offers "delete as moderator" only).
   const modOn = flags?.moderationV1 === true;
+  // graduateV1 (HFY-TSK-215, default off): "add to a family page…" on each comment photo, for an admin (can.graduate from /api/me). The loader
+  // (feature-flags.js) turns commentPhotosV1 and moderationV1 on with it, so the photos and the hide control it sits beside are there.
+  const gradOn = flags?.graduateV1 === true;
   const [reload, setReload] = useState(0);
   useEffect(() => { getSession().then(setSession); }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -295,7 +301,7 @@ export function Comments({ subject, social = false }) {
   useEffect(() => {
     if (!sid) return undefined;
     let live = true;
-    getMe().then((me) => { if (live) setModerator(canModerate(me)); });
+    getMe().then((me) => { if (live) { setModerator(canModerate(me)); setGraduator(me?.can?.graduate === true); } });
     return () => { live = false; };
   }, [sid]);
   const flash = useCallback((text) => { clearTimeout(timer.current); setPing(text); timer.current = setTimeout(() => setPing(""), 3000); }, []);
@@ -310,9 +316,23 @@ export function Comments({ subject, social = false }) {
     flash(pingFor(input.action, { photo: true }));
     setReload((n) => n + 1);
   }, [subject, flash]);
-  const renderPhotoActions = useMemo(() => (modOn
-    ? (comment, a) => (comment.can?.moderate === true ? <ModerateControl photo moderation={a.moderation?.hidden === true ? { state: "hidden", hidden: true } : undefined} onAct={(input) => photoAct(comment, a, input)} /> : null)
-    : undefined), [modOn, photoAct]);
+  const onGraduated = useCallback(() => flash(GRAD_COPY.ping), [flash]);
+  // One row of controls under a photo: the moderator's hide (moderationV1) and the admin's "add to a family page…" (graduateV1). A hidden photo
+  // cannot be added (the server refuses it), so it gets no graduate control.
+  const renderPhotoActions = useMemo(() => {
+    const showGrad = gradOn && graduator;
+    if (!modOn && !showGrad) return undefined;
+    return (comment, a) => {
+      const hide = modOn && comment.can?.moderate === true
+        ? <ModerateControl photo moderation={a.moderation?.hidden === true ? { state: "hidden", hidden: true } : undefined} onAct={(input) => photoAct(comment, a, input)} />
+        : null;
+      const grad = showGrad && a.moderation?.hidden !== true && comment.moderation?.hidden !== true && typeof a.id === "string"
+        ? <GraduateControl comment={comment} attachment={a} subject={subject} onAdded={onGraduated} />
+        : null;
+      if (!hide && !grad) return null;
+      return grad && hide ? <div className="hfy-photo-actions">{hide}{grad}</div> : (hide ?? grad);
+    };
+  }, [modOn, gradOn, graduator, photoAct, subject, onGraduated]);
   const onUpload = useCallback(async (file) => {
     try {
       const a = await uploadPhoto(api, file, { purpose: "comment" });

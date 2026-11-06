@@ -80,8 +80,8 @@
         "css": "65c4c96f"
       },
       "person": {
-        "js": "7c447efb",
-        "css": "e955e9a8"
+        "js": "d06741ad",
+        "css": "bd2a5788"
       },
       "person-links": {
         "js": "d1ab2c79",
@@ -96,16 +96,16 @@
         "css": "b4b1459b"
       },
       "posts": {
-        "js": "f4e4649a",
-        "css": "dfc6ddf3"
+        "js": "3f4eed78",
+        "css": "105346a6"
       },
       "record-moderation": {
         "js": "f5516465",
         "css": "5b548e69"
       },
       "review": {
-        "js": "a18fc4aa",
-        "css": "d9db1c3c"
+        "js": "9e917821",
+        "css": "bf26d487"
       },
       "search": {
         "js": "99872d4f",
@@ -394,6 +394,12 @@
           const merged = Object.assign({}, build, overrideFlags);
           // HFY-R48: the search island's launcher lives in the shell, so searchV2 implies shellV2 (unless explicitly forced off).
           if (merged.searchV2 === true && overrideFlags.shellV2 !== false) merged.shellV2 = true;
+          // HFY-TSK-215: graduateV1 (add a comment photo to a family page) needs the comment photos and the moderation controls it sits beside,
+          // so it turns commentPhotosV1 and moderationV1 on, unless a preview override explicitly forces one off ("-name").
+          if (merged.graduateV1 === true) {
+            if (overrideFlags.commentPhotosV1 !== false) merged.commentPhotosV1 = true;
+            if (overrideFlags.moderationV1 !== false) merged.moderationV1 = true;
+          }
           return merged;
         });
     }
