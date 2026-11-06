@@ -72,7 +72,7 @@ export async function createEditWorld({ admins = [ADMIN, ADMIN2], photo = false 
   const rows = (prefix) => w.ddb.all().filter((r) => r.PK.startsWith(prefix));
   /** Change a record behind the API's back, as a Gramps sync would (a new version). */
   const bump = (obj, base) => applyBatch(sctx, { principal: "svc-seed", origin: "desktop", idempotencyKey: `bump${++k}`, ops: [{ op: "update", class: obj._class, handle: obj.handle, base_version: base, obj }] });
-  return { ...w, call, stored, version, rows, bump, inbox, me, mother, kid, n1, fam, pic, dispose: () => { if (before === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = before; } };
+  return { ...w, call, rawCall: w.call, stored, version, rows, bump, inbox, me, mother, kid, n1, fam, pic, dispose: () => { if (before === undefined) delete process.env.HFY_EDITING; else process.env.HFY_EDITING = before; } };
 }
 
 /** Runs `fn(world)` and always restores HFY_EDITING, even when `fn` throws. */

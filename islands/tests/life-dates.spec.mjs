@@ -5,10 +5,14 @@ import { readFileSync } from "node:fs";
 import { axeViolations } from "./axe.mjs";
 
 const BASE = JSON.parse(readFileSync(new URL("./fixtures/person-legacy.json", import.meta.url), "utf8"));
+// GET /api/life-dates replies in the real shape (api/src/records/life-dates.js, ruling P4-R29): coarse classes and years only.
+const SHARED = { birth: false, death: false };
+const YEARS = { birth: { class: "year", year: 1890 }, death: { class: "year", year: 1962 }, livingByRule: false, sharedEvent: SHARED };
+const NONE = { birth: { class: "none", year: null }, death: { class: "none", year: null }, livingByRule: true, sharedEvent: SHARED };
 const VIEWPORTS = [["375", { width: 375, height: 812 }], ["1280", { width: 1280, height: 800 }]];
 
-async function open(page, { flag = true, session = "I9002", lifespan = { birth: { year: 1890 }, death: { year: 1962 } }, reply = null, status = 201 } = {}) {
-  const state = { posts: [], keys: [], islandRequests: [] };
+async function open(page, { flag = true, session = "I9002", lifespan = { birth: { year: 1890 }, death: { year: 1962 } }, reply = null, status = 201, classes = YEARS, lifeStatus = 200, hold = null } = {}) {
+  const state = { posts: [], keys: [], gets: [], islandRequests: [] };
   const person = { ...BASE, isLiving: false, lifespan };
   await page.route(/accounts\.google\.com|googleapis|gstatic/, (r) => r.abort());
   await page.route("**/_data/flags.json", (r) => r.fulfill({ json: { authV2: true, shellV2: false, personV2: false, postsV2: false, searchV2: false, notifyV2: false, navMe: false, aboutCta: false, photoTags: false, profileLinks: false, lifeDatesV1: flag } }));
@@ -22,7 +26,12 @@ async function open(page, { flag = true, session = "I9002", lifespan = { birth: 
   await page.route(/\/js\/islands\/life-dates\./, (r) => { state.islandRequests.push(r.request().url()); return r.continue(); });
   await page.route("**/api/me", (r) => r.fulfill({ status: session ? 200 : 401, json: session ? { id: session, label: "Sam Example", admin: false, can: {} } : { error: "unauthenticated" } }));
   await page.route("**/api/records/Person/by-id/*", (r) => r.fulfill({ json: { handle: "hSYNTH1" } }));
-  await page.route("**/api/life-dates", (r) => {
+  await page.route(/\/api\/life-dates(\?|$)/, async (r) => {
+    if (r.request().method() === "GET") {
+      state.gets.push(r.request().url());
+      if (hold) await hold;
+      return r.fulfill({ status: lifeStatus, json: lifeStatus === 200 ? classes : { error: "boom" } });
+    }
     const body = r.request().postDataJSON();
     state.posts.push(body);
     state.keys.push(r.request().headers()["idempotency-key"]);
@@ -69,7 +78,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("saving sends years only under an Idempotency-Key, then shows pending review", async ({ page }) => {
-      const state = await open(page, { lifespan: {} });
+      const state = await open(page, { lifespan: {}, classes: NONE });
       await expect(block(page).locator('[data-ld="line"]')).toHaveText("birth year not recorded · no death recorded");
       await block(page).getByRole("button", { name: "add years" }).click();
       await page.getByLabel("year of birth", { exact: true }).fill("1890");
@@ -84,7 +93,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("validation: range, died before born, announced as alerts; nothing is sent", async ({ page }) => {
-      const state = await open(page, { lifespan: {} });
+      const state = await open(page, { lifespan: {}, classes: NONE });
       await block(page).getByRole("button", { name: "add years" }).click();
       await page.getByLabel("year of birth", { exact: true }).fill("1500");
       await page.getByRole("button", { name: "save" }).click();
@@ -98,7 +107,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("over 120 years asks 'are you sure?' and resends with confirm", async ({ page }) => {
-      const state = await open(page, { lifespan: {} });
+      const state = await open(page, { lifespan: {}, classes: NONE });
       await block(page).getByRole("button", { name: "add years" }).click();
       await page.getByLabel("year of birth", { exact: true }).fill("1800");
       await page.getByLabel("year of death", { exact: true }).fill("1925");
@@ -111,7 +120,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("'died, year unknown' disables the year and sends unknown", async ({ page }) => {
-      const state = await open(page, { lifespan: { birth: { year: 1900 } } });
+      const state = await open(page, { lifespan: { birth: { year: 1900 } }, classes: { ...NONE, birth: { class: "year", year: 1900 } } });
       await expect(block(page).locator('[data-ld="line"]')).toHaveText("born 1900 · date of death unknown");
       await block(page).getByRole("button", { name: "edit years" }).click();
       await page.getByLabel("died, year unknown").check();
@@ -122,7 +131,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("a more exact date on file is read-only with a suggest a correction link, and nothing is sent for it", async ({ page }) => {
-      const state = await open(page, { lifespan: { birth: { year: 1890, month: 3, day: 4 }, death: { year: 1962 } } });
+      const state = await open(page, { classes: { ...YEARS, birth: { class: "precise", year: 1890 } } });
       await block(page).getByRole("button", { name: "edit years" }).click();
       await expect(block(page).locator('[data-ld="birth-ro"]')).toHaveText("1890");
       await expect(block(page)).toContainText("a more exact date is on file");
@@ -133,7 +142,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("server replies precise_on_file and shared_event read as plain notes", async ({ page }) => {
-      await open(page, { lifespan: {}, reply: { rows: { birth: { status: "precise_on_file", current: { year: 1890 } }, death: { status: "shared_event" } } }, status: 200 });
+      await open(page, { lifespan: {}, classes: NONE, reply: { rows: { birth: { status: "precise_on_file", current: { year: 1890 } }, death: { status: "shared_event" } } }, status: 200 });
       await block(page).getByRole("button", { name: "add years" }).click();
       await page.getByLabel("year of birth", { exact: true }).fill("1891");
       await page.getByLabel("year of death", { exact: true }).fill("1962");
@@ -144,7 +153,7 @@ for (const [name, viewport] of VIEWPORTS) {
     });
 
     test("an error reply keeps the editor open with a plain message", async ({ page }) => {
-      await open(page, { lifespan: {}, reply: { error: "boom" }, status: 500 });
+      await open(page, { lifespan: {}, classes: NONE, reply: { error: "boom" }, status: 500 });
       await block(page).getByRole("button", { name: "add years" }).click();
       await page.getByLabel("year of birth", { exact: true }).fill("1890");
       await page.getByRole("button", { name: "save" }).click();
@@ -152,10 +161,85 @@ for (const [name, viewport] of VIEWPORTS) {
       await expect(page.getByLabel("year of birth", { exact: true })).toHaveValue("1890");
     });
 
+    test("signed in: the classes are read from GET /api/life-dates for this person's handle, once", async ({ page }) => {
+      const state = await open(page);
+      await expect(block(page).getByRole("button", { name: "edit years" })).toBeVisible();
+      expect(state.gets).toHaveLength(1);
+      expect(decodeURIComponent(state.gets[0])).toContain("target=Person:hSYNTH1");
+    });
+
+    test("while the classes load only the plain line shows, with no button and no field; then the button appears", async ({ page }) => {
+      let release;
+      const hold = new Promise((r) => { release = r; });
+      const state = await open(page, { hold });
+      await expect(block(page).locator('[data-ld="line"]')).toHaveText("born 1890 · died 1962");
+      await expect.poll(() => state.gets.length).toBe(1);
+      await expect(block(page).getByRole("button")).toHaveCount(0);
+      await expect(block(page).locator("input")).toHaveCount(0);
+      release();
+      await expect(block(page).getByRole("button", { name: "edit years" })).toBeVisible();
+    });
+
+    test("when the classes cannot be read the block stays read-only: a failed request, and a reply of an unknown shape", async ({ page }) => {
+      const failed = await open(page, { lifeStatus: 500 });
+      await expect.poll(() => failed.gets.length).toBe(1);
+      await page.waitForTimeout(300);
+      await expect(block(page).locator('[data-ld="line"]')).toHaveText("born 1890 · died 1962");
+      await expect(block(page).getByRole("button")).toHaveCount(0);
+      await expect(block(page).locator("input")).toHaveCount(0);
+    });
+
+    test("an unreadable class is read-only too", async ({ page }) => {
+      const state = await open(page, { classes: { ...YEARS, birth: { class: "exact", year: 1890 } } });
+      await expect.poll(() => state.gets.length).toBe(1);
+      await page.waitForTimeout(300);
+      await expect(block(page).getByRole("button")).toHaveCount(0);
+    });
+
+    test("an 'about' date opens with about preselected and an unchanged save sends nothing", async ({ page }) => {
+      const state = await open(page, { classes: { ...YEARS, birth: { class: "about", year: 1890 } } });
+      await expect(block(page).locator('[data-ld="line"]')).toHaveText("born about 1890 · died 1962");
+      await block(page).getByRole("button", { name: "edit years" }).click();
+      await expect(page.getByRole("switch", { name: "about, for year of birth" })).toBeChecked();
+      await expect(page.getByRole("switch", { name: "about, for year of death" })).not.toBeChecked();
+      await expect(page.getByLabel("year of birth", { exact: true })).toHaveValue("1890");
+      await page.getByRole("button", { name: "save" }).click();
+      await expect(block(page).locator('[data-ld="message"]')).toHaveText("no changes to save.");
+      expect(state.posts).toEqual([]);
+    });
+
+    test("a precise date shows its year read-only on both rows, and the page has no field to type in", async ({ page }) => {
+      const state = await open(page, { classes: { ...YEARS, birth: { class: "precise", year: 1890 }, death: { class: "precise", year: 1962 } } });
+      await block(page).getByRole("button", { name: "edit years" }).click();
+      await expect(block(page).locator('[data-ld="birth-ro"]')).toHaveText("1890");
+      await expect(block(page).locator('[data-ld="death-ro"]')).toHaveText("1962");
+      await expect(block(page).getByRole("link", { name: "suggest a correction" })).toHaveCount(2);
+      await expect(block(page).locator("input")).toHaveCount(0);
+      expect(state.posts).toEqual([]);
+    });
+
+    test("a date shared with another person's page is read-only with its own note, the other row stays editable", async ({ page }) => {
+      await open(page, { classes: { ...YEARS, sharedEvent: { birth: true, death: false } } });
+      await block(page).getByRole("button", { name: "edit years" }).click();
+      await expect(block(page).locator('[data-ld="birth-ro"]')).toHaveText("1890");
+      await expect(block(page)).toContainText("shared with another person's page");
+      await expect(block(page).getByRole("link", { name: "suggest a correction" })).toHaveAttribute("href", /\/edit\/\?cls=person&id=I9001/);
+      await expect(page.getByLabel("year of birth", { exact: true })).toHaveCount(0);
+      await expect(page.getByLabel("year of death", { exact: true })).toHaveValue("1962");
+    });
+
+    test("a death with no date that is not living by the rule reads 'died, year unknown'", async ({ page }) => {
+      await open(page, { lifespan: { birth: { year: 1900 } }, classes: { birth: { class: "year", year: 1900 }, death: { class: "none", year: null }, livingByRule: false, sharedEvent: SHARED } });
+      await expect(block(page).locator('[data-ld="line"]')).toHaveText("born 1900 · died, year unknown");
+      await block(page).getByRole("button", { name: "edit years" }).click();
+      await expect(page.getByLabel("died, year unknown")).toBeChecked();
+    });
+
     test("signed out: the line only, no button", async ({ page }) => {
-      await open(page, { session: null });
+      const state = await open(page, { session: null });
       await expect(block(page).locator('[data-ld="line"]')).toHaveText("born 1890 · died 1962");
       await page.waitForTimeout(300);
+      expect(state.gets).toEqual([]);
       await expect(block(page).getByRole("button")).toHaveCount(0);
       await noSideways(page);
     });

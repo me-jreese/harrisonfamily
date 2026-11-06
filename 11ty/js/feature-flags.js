@@ -60,7 +60,7 @@
         "css": "e44c3a91"
       },
       "life-dates": {
-        "js": "e2eae520",
+        "js": "926e43a0",
         "css": "159c53fd"
       },
       "links-editor": {

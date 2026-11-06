@@ -1,7 +1,7 @@
 // HFY-TSK-388-0D: the pure helpers of the Life dates block (src/lib/life-dates-model.js). Synthetic years only.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COPY, buildBody, errorText, lineText, readLife, readReply, validate, withPending } from "../src/lib/life-dates-model.js";
+import { COPY, buildBody, draftFrom as draftFromRows, errorText, lineText, readClasses, readLife, readReply, rowsFrom, validate, withPending } from "../src/lib/life-dates-model.js";
 
 const NOW = new Date(2026, 5, 1);
 const EMPTY = { birth: null, death: null };
@@ -19,11 +19,50 @@ test("no line or message ever uses the archive's words", () => {
   assert.doesNotMatch(all, /\bevents?\b|life event|\brole\b|mediaref|\bregion\b/i);
 });
 
-test("readLife: a precise date is flagged, a living person shows no death", () => {
-  const p = { isLiving: false, lifespan: { birth: { year: 1890, month: 3 }, death: { year: 1962 } } };
-  assert.deepEqual(readLife(p).birth, { year: 1890, about: false, precise: true });
+test("readLife: the person JSON gives a year only, never an editable or 'about' row; a living person shows no death", () => {
+  const p = { isLiving: false, lifespan: { birth: { year: 1890, place: "x", month: 3, quality: "estimated", precise: false }, death: { year: 1962 } } };
+  assert.deepEqual(readLife(p).birth, { year: 1890, about: false, locked: true });
   assert.equal(readLife({ isLiving: true, lifespan: { death: { year: 2000 } } }).death, null);
   assert.equal(readLife({ lifespan: { death: {} } }).death.unknown, true);
+});
+
+const SH = { birth: false, death: false };
+const reply = (birth, death, over = {}) => ({ birth, death, livingByRule: false, sharedEvent: SH, ...over });
+const cls = (c, y = null) => ({ class: c, year: y });
+
+test("readClasses: the real reply shape, and anything else is unreadable", () => {
+  const ok = readClasses(reply(cls("about", 1890), cls("none"), { livingByRule: true, sharedEvent: { birth: true, death: false } }));
+  assert.deepEqual(ok, { birth: { cls: "about", year: 1890, shared: true }, death: { cls: "none", year: null, shared: false }, living: true });
+  for (const bad of [null, "x", {}, reply(cls("exact", 1890), cls("none")), reply(cls("year", 1890), null), { ...reply(cls("none"), cls("none")), livingByRule: "yes" }]) assert.equal(readClasses(bad), null);
+  assert.equal(readClasses(reply(cls("year", "1890x"), cls("none"))).birth.year, null);
+});
+
+test("rowsFrom: none, year and about are editable; precise and shared are locked; about is preselected", () => {
+  const rows = (b, d, over) => rowsFrom(readClasses(reply(b, d, over)));
+  assert.deepEqual(rows(cls("none"), cls("none"), { livingByRule: true }), { birth: null, death: null });
+  assert.deepEqual(rows(cls("year", 1890), cls("year", 1962)).birth, { year: 1890, about: false, locked: false, shared: false });
+  const about = rows(cls("about", 1890), cls("about", 1962));
+  assert.equal(about.birth.about, true);
+  assert.equal(about.birth.locked, false);
+  assert.deepEqual(draftFromRows(about).birth, { year: "1890", about: true });
+  const precise = rows(cls("precise", 1890), cls("precise", null));
+  assert.equal(precise.birth.locked, true);
+  assert.equal(precise.death.locked, true);
+  assert.equal(precise.death.year, null);
+  const shared = rows(cls("year", 1890), cls("year", 1962), { sharedEvent: { birth: true, death: false } });
+  assert.equal(shared.birth.locked, true);
+  assert.equal(shared.birth.shared, true);
+  assert.equal(shared.death.locked, false);
+  assert.equal(rows(cls("none"), cls("none")).death.unknown, true, "a death with no date, not living by the rule, is 'died, year unknown'");
+  assert.equal(rows(cls("none"), cls("none"), { livingByRule: true }).death, null);
+});
+
+test("a locked row is never judged or sent, and reads as a line", () => {
+  const cur = rowsFrom(readClasses(reply(cls("precise", 1890), cls("year", 1962))));
+  assert.equal(buildBody("h1", { birth: { year: "1800", about: false }, death: { year: "1962", about: false, unknown: false } }, cur), null);
+  assert.deepEqual(validate({ birth: { year: "1800", about: false }, death: { year: "1962", about: false, unknown: false } }, cur, NOW).errors, {});
+  assert.equal(lineText(cur), "born 1890 · died 1962");
+  assert.equal(lineText(rowsFrom(readClasses(reply(cls("precise", null), cls("precise", null))))), "born · died");
 });
 
 test("validation: 1600 to this year, died not before born, 120 years asks", () => {
@@ -44,7 +83,7 @@ test("the body carries years only, changed rows only, and confirm when asked", (
   assert.deepEqual(buildBody("h1", draft("1890", "1962"), { birth: { year: 1890, about: false }, death: null }, { confirm: true }), { target: "Person:h1", death: { year: 1962 }, confirm: true });
   assert.deepEqual(buildBody("h1", draft("", "", { unknown: true }), EMPTY).death, { unknown: true });
   assert.equal(buildBody("h1", draft("1890"), { birth: { year: 1890 }, death: null }), null);
-  assert.equal(buildBody("h1", draft("1900"), { birth: { year: 1890, precise: true }, death: null }), null);
+  assert.equal(buildBody("h1", draft("1900"), { birth: { year: 1890, locked: true }, death: null }), null);
 });
 
 test("replies: proposed, precise_on_file, shared_event, unchanged and confirm_needed", () => {

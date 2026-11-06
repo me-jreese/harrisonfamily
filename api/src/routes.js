@@ -9,7 +9,7 @@ import { SYNC_ROUTES } from "./sync/routes.js";
 import { recordByGrampsId, recordGet, recordsGate } from "./records/read.js";
 import { bundleGet, editingGate, meEditingExtras, schemaGet } from "./records/edit-bundle.js";
 import { changesPost } from "./records/changes.js";
-import { lifeDatesPost } from "./records/life-dates.js";
+import { lifeDatesGet, lifeDatesPost } from "./records/life-dates.js";
 import { adminDeletesPost, adminDuplicatesList } from "./records/admin-delete.js";
 import { relationshipsPost, relationshipsPreview } from "./records/relationship-routes.js";
 import { proposalsAmend, proposalsGet, proposalsList, proposalsWithdraw } from "./records/proposal-store.js";
@@ -346,6 +346,11 @@ export const ROUTES = defineRoutes([
   {
     name: "changes.post", method: "POST", path: "/changes", summary: "Submit EditOps {target, base_versions, ops, note?, route?: auto|review (admins), dry_run?} with an Idempotency-Key header (not for dry_run): the direct groups save now and the rest becomes one proposal, all in one transaction; 201 {applied: {versions, undo}|null, proposal|null, summary}, or 200 {plan: {direct, review}, warnings, errors} for dry_run (MCP tool hfy_changes_submit)",
     gate: editingGate(), handler: changesPost,
+  },
+  // GET /api/life-dates (HFY-TSK-388-0D, ruling P4-R29): the coarse precision classes of one person's Birth and Death dates for the Life dates island. No MCP tool.
+  {
+    name: "lifeDates.get", method: "GET", path: "/life-dates", summary: "The coarse precision of a person's birth and death dates, ?target=Person:<handle>: 200 {birth: {class, year}, death: {class, year}, livingByRule, sharedEvent: {birth, death}} where class is none|year|about|precise and year is the year or null (a precise date gives its year only, never a month, day, range, text or calendar); livingByRule is true when the person has no death reference; sharedEvent says another person references that event. Read-only, private, not cached; 400 validation (target), 404 not_found (no editing, no such or hidden person) (no MCP tool)",
+    gate: editingGate(), handler: lifeDatesGet,
   },
   // POST /api/life-dates (HFY-TSK-387-0F; BRD D-17..D-28): the simplified Born and Died years compiled into the suggestion POST /api/changes would take. No MCP tool.
   {

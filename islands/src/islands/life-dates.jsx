@@ -2,7 +2,9 @@
 // name; LifeDatesEditor opens in place with Born and Died rows. Both are HFY app islands, not kit packages. Saves go through
 // POST /api/life-dates under an Idempotency-Key and are always proposals (D-24), so after a save the sender sees "pending review" and
 // everyone else keeps the old line. Signed out, the line is all there is. The page rebuilds its hero on every render, so the block is put
-// back after the lifespan line on each hfy:person-rendered.
+// back after the lifespan line on each hfy:person-rendered. How exact each date on file is comes from GET /api/life-dates (ruling P4-R29), read
+// once a signed-in member's page is up: until it answers (and if it fails or sends something unreadable) only the plain line shows, with no edit
+// button, so the block never invites an edit it may not be able to make.
 import "./life-dates.css";
 import { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,7 +12,7 @@ import { api } from "../lib/api.js";
 import { getMe } from "../lib/me.js";
 import { newIdempotencyKey } from "../lib/editor-save.js";
 import { editHref } from "../lib/editor-model.js";
-import { COPY, buildBody, draftFrom, errorText, lineText, readLife, readReply, sureText, validate, withPending } from "../lib/life-dates-model.js";
+import { COPY, buildBody, draftFrom, errorText, lineText, readClasses, readLife, readReply, rowsFrom, sureText, validate, withPending } from "../lib/life-dates-model.js";
 
 const pendingKey = (id) => `hfy:lifedates:pending:${id}`;
 function loadPending(id) {
@@ -34,17 +36,17 @@ function Row({ name, label, draft, setDraft, current, error, inputRef }) {
   const id = useId();
   const isDied = name === "death";
   const row = draft[name];
-  const precise = Boolean(current && current.precise);
+  const locked = Boolean(current && current.locked);
   const unknown = isDied && row.unknown;
   const errId = `${id}-err`;
   const set = (patch) => setDraft({ ...draft, [name]: { ...row, ...patch } });
   return (
     <div className="hfy-ld__row" role="group" aria-label={label}>
       <span className="hfy-ld__rowname" aria-hidden="true">{label}</span>
-      {precise ? (
+      {locked ? (
         <div className="hfy-ld__ro">
           <span className="hfy-ld__yr hfy-ld__yr--ro" data-ld={`${name}-ro`}>{current.year}</span>
-          <span className="hfy-ld__note">{COPY.preciseNote}</span>
+          <span className="hfy-ld__note">{current.shared ? COPY.sharedNote : COPY.preciseNote}</span>
           <a className="hfy-ld__link" href={editHref("Person", draft.__id)}>{COPY.suggest}</a>
         </div>
       ) : (
@@ -71,7 +73,7 @@ function Row({ name, label, draft, setDraft, current, error, inputRef }) {
   );
 }
 
-export function LifeDatesEditor({ personId, current, onClose, onSaved }) {
+export function LifeDatesEditor({ personId, handle, current, onClose, onSaved }) {
   const [draft, setDraft] = useState(() => ({ ...draftFrom(current), __id: personId }));
   const [errors, setErrors] = useState({});
   const [sure, setSure] = useState(null); // years, when the "are you sure?" step is showing
@@ -90,9 +92,6 @@ export function LifeDatesEditor({ personId, current, onClose, onSaved }) {
     if (v.needsSure && !confirm) { setSure(v.years); return; }
     setBusy(true);
     try {
-      const rec = await api.get(`/records/Person/by-id/${encodeURIComponent(personId)}`);
-      const handle = rec && typeof rec.handle === "string" ? rec.handle : null;
-      if (!handle) throw Object.assign(new Error("no handle"), { status: 500 });
       const body = buildBody(handle, clean, current, { confirm });
       if (!body) { setMessage(COPY.noChange); setBusy(false); return; }
       const json = JSON.stringify(body);
@@ -130,8 +129,19 @@ export function LifeDatesEditor({ personId, current, onClose, onSaved }) {
 }
 const MAX_FALLBACK = 121;
 
+/** The person's handle, then the precision classes of the dates on file. Throws when either cannot be read. */
+async function loadLife(personId) {
+  const rec = await api.get(`/records/Person/by-id/${encodeURIComponent(personId)}`);
+  const handle = rec && typeof rec.handle === "string" ? rec.handle : null;
+  if (!handle) throw new Error("no handle");
+  const classes = readClasses(await api.get(`/life-dates?target=${encodeURIComponent(`Person:${handle}`)}`));
+  if (!classes) throw new Error("unreadable classes");
+  return { handle, classes };
+}
+
 export function LifeDates({ personId, person }) {
   const [me, setMe] = useState(null);
+  const [life, setLife] = useState({ status: "idle" }); // idle | loading | ready | failed
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(() => loadPending(personId));
   const [notes, setNotes] = useState([]);
@@ -139,9 +149,17 @@ export function LifeDates({ personId, person }) {
   const back = useRef(false);
   useEffect(() => { if (!open && back.current) { back.current = false; btn.current?.focus(); } }, [open]);
   useEffect(() => { let live = true; getMe().then((m) => { if (live) setMe(m); }); return () => { live = false; }; }, []);
-  const current = readLife(person);
-  const shown = withPending(current, pending);
   const member = Boolean(me && me.id);
+  useEffect(() => {
+    if (!member) return undefined;
+    let live = true;
+    setLife({ status: "loading" });
+    loadLife(personId).then((l) => { if (live) setLife({ status: "ready", ...l }); }, () => { if (live) setLife({ status: "failed" }); });
+    return () => { live = false; };
+  }, [member, personId]);
+  const ready = life.status === "ready";
+  const current = ready ? rowsFrom(life.classes) : readLife(person);
+  const shown = withPending(current, pending);
   const empty = !current.birth && !current.death;
   function close() { back.current = true; setOpen(false); }
   function saved(reply) {
@@ -157,9 +175,9 @@ export function LifeDates({ personId, person }) {
   return (
     <section className="hfy-ld" aria-label={COPY.label} data-ld="block">
       <LifeDatesLine shown={shown} pending={Boolean(pending)}>
-        {member && !open && <button ref={btn} type="button" className="hfy-ld__btn" onClick={() => { setNotes([]); setOpen(true); }} data-ld="open">{empty && !pending ? COPY.add : COPY.edit}</button>}
+        {ready && !open && <button ref={btn} type="button" className="hfy-ld__btn" onClick={() => { setNotes([]); setOpen(true); }} data-ld="open">{empty && !pending ? COPY.add : COPY.edit}</button>}
       </LifeDatesLine>
-      {open && <LifeDatesEditor personId={personId} current={current} onClose={close} onSaved={saved} />}
+      {ready && open && <LifeDatesEditor personId={personId} handle={life.handle} current={current} onClose={close} onSaved={saved} />}
       {notes.length > 0 && <div className="hfy-ld__notes" role="status" data-ld="notes">{notes.map((n) => <p key={n} className="hfy-ld__note">{n}</p>)}</div>}
     </section>
   );

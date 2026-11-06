@@ -1,7 +1,9 @@
 // Life dates on the person page (HFY-TSK-388-0D, flag lifeDatesV1; BRD 5.7, D-17..D-28, board B5): the copy, the plain-language line, the
 // year validation and the request and reply helpers of the Born and Died block. Pure: no DOM, no CSS. The words "event", "life event",
-// "role", "MediaRef" and "region" never appear in anything the member reads (P4-R2: lower-case copy). The route is POST /api/life-dates
-// (HFY-TSK-387-0F); only a year is ever sent (D-25, L-8).
+// "role", "MediaRef" and "region" never appear in anything the member reads (P4-R2: lower-case copy). The routes are POST /api/life-dates
+// (HFY-TSK-387-0F; only a year is ever sent, D-25, L-8) and GET /api/life-dates?target=Person:<handle> (ruling P4-R29), which says, per row, how
+// exact the date on file is: none | year | about | precise, with the year only. The published person JSON carries no day or month (R-19), so the
+// island never guesses precision from it; it reads the classes from the route and treats anything it cannot read as locked.
 export const MIN_YEAR = 1600;
 export const MAX_LIFESPAN = 120;
 
@@ -23,6 +25,7 @@ export const COPY = Object.freeze({
   pending: "pending review",
   pendingNote: "thank you. a family admin will look at this before it shows for everyone.",
   preciseNote: "a more exact date is on file",
+  sharedNote: "this date is shared with another person's page",
   suggest: "suggest a correction",
   sureYes: "yes, save",
   sureNo: "no, go back",
@@ -43,30 +46,64 @@ export const rangeError = (now = new Date()) => `enter a year from ${MIN_YEAR} t
 export const sureText = (years) => `that's ${years} years between born and died. are you sure?`;
 
 const yr = (m) => (m && Number.isInteger(Number(m.year)) && Number(m.year) > 0 ? Number(m.year) : null);
-const isAbout = (m) => Boolean(m) && (m.about === true || m.quality === "estimated" || m.modifier === "about");
-const isPrecise = (m) => Boolean(m) && (Boolean(m.month) || Boolean(m.day) || m.precise === true);
 
-/** What the person JSON shows: { birth: {year, about, precise}|null, death: {year, about, precise, unknown}|null }. A living person's death is not shown. */
+/**
+ * The fallback the person JSON gives while the classes load, or when they cannot be read: only the year, shown as a plain line. It carries no
+ * "about" and no precision, so nothing is ever editable from it. A living person's death is not shown.
+ */
 export function readLife(person) {
   const life = (person && person.lifespan) || {};
   const read = (m, isDeath) => {
     if (!m || typeof m !== "object") return null;
     const year = yr(m);
     if (!year && !isDeath) return null;
-    return { year, about: isAbout(m), precise: isPrecise(m), ...(isDeath ? { unknown: !year } : {}) };
+    return { year, about: false, locked: true, ...(isDeath ? { unknown: !year } : {}) };
   };
   const living = person && person.isLiving === true;
   return { birth: read(life.birth, false), death: living ? null : read(life.death, true) };
+}
+
+const CLASSES = new Set(["none", "year", "about", "precise"]);
+
+/**
+ * Reads a GET /api/life-dates reply: { birth: {cls, year, shared}, death: {cls, year, shared}, living } or null when the reply is not exactly
+ * the shape the route sends (an unknown class counts as unreadable, so the block stays read-only).
+ */
+export function readClasses(reply) {
+  if (!reply || typeof reply !== "object" || typeof reply.livingByRule !== "boolean") return null;
+  const shared = reply.sharedEvent && typeof reply.sharedEvent === "object" ? reply.sharedEvent : {};
+  const row = (m, isShared) => {
+    if (!m || typeof m !== "object" || !CLASSES.has(m.class)) return null;
+    return { cls: m.class, year: yr(m), shared: isShared === true };
+  };
+  const birth = row(reply.birth, shared.birth);
+  const death = row(reply.death, shared.death);
+  return birth && death ? { birth, death, living: reply.livingByRule } : null;
+}
+
+/**
+ * What the editor works from: { birth: {year, about, locked, shared}|null, death: {..., unknown}|null }. none and year are editable, about is
+ * editable with 'about' preselected; precise, or a date shared with another person's page, is locked (read-only with 'suggest a correction').
+ * A death with no date that is not living by the rule reads 'died, year unknown'.
+ */
+export function rowsFrom(classes) {
+  const row = (r, isDeath) => {
+    const locked = r.cls === "precise" || r.shared;
+    if (r.cls === "none" && !locked) return isDeath && !classes.living ? { year: null, about: false, locked: false, shared: false, unknown: true } : null;
+    return { year: r.year, about: r.cls === "about", locked, shared: r.shared, ...(isDeath ? { unknown: false } : {}) };
+  };
+  return { birth: row(classes.birth, false), death: row(classes.death, true) };
 }
 
 const part = (verb, row) => `${verb} ${row.about ? "about " : ""}${row.year}`;
 
 /** 'born about 1890 · died 1962', 'born 1925 · date of death unknown', 'birth year not recorded · no death recorded'. */
 export function lineText({ birth, death }) {
-  const b = birth && birth.year ? part(COPY.born, birth) : "birth year not recorded";
+  const b = birth && birth.year ? part(COPY.born, birth) : birth && birth.locked ? COPY.born : "birth year not recorded";
   let d;
   if (death && death.unknown) d = COPY.unknown;
   else if (death && death.year) d = part(COPY.died, death);
+  else if (death && death.locked) d = COPY.died;
   else d = birth && birth.year ? "date of death unknown" : "no death recorded";
   return `${b} · ${d}`;
 }
@@ -89,13 +126,13 @@ function checkYear(text, now) {
 }
 
 /**
- * Validates a draft against what is shown. Returns { errors: {birth?, death?}, years, needsSure }. A row on file with a more exact date is
+ * Validates a draft against what is shown. Returns { errors: {birth?, death?}, years, needsSure }. A locked row (a more exact date, or a shared one) is
  * read-only and never judged. `years` is the span in force when both years are known; `needsSure` when it is over 120 (D-25).
  */
 export function validate(draft, current, now = new Date()) {
   const errors = {};
-  const b = current.birth && current.birth.precise ? { ok: true, year: current.birth.year } : checkYear(draft.birth.year, now);
-  const dRow = current.death && current.death.precise;
+  const b = current.birth && current.birth.locked ? { ok: true, year: current.birth.year } : checkYear(draft.birth.year, now);
+  const dRow = current.death && current.death.locked;
   const d = draft.death.unknown ? { ok: true, year: null } : dRow ? { ok: true, year: current.death.year } : checkYear(draft.death.year, now);
   if (b.error) errors.birth = b.error;
   if (d.error) errors.death = d.error;
@@ -109,14 +146,14 @@ export function validate(draft, current, now = new Date()) {
   return { errors, years, needsSure: years !== null && years > MAX_LIFESPAN };
 }
 
-/** The body for POST /api/life-dates, or null when no row changed. Rows with a more exact date on file are never sent. */
+/** The body for POST /api/life-dates, or null when no row changed. Locked rows (a more exact or shared date on file) are never sent. */
 export function buildBody(handle, draft, current, { confirm = false } = {}) {
   const body = { target: `Person:${handle}` };
   const by = checkYear(draft.birth.year, new Date(9999, 0, 1)).year;
   const cb = current.birth;
-  if (by && !(cb && cb.precise) && (!cb || cb.year !== by || Boolean(cb.about) !== draft.birth.about)) body.birth = { year: by, ...(draft.birth.about ? { about: true } : {}) };
+  if (by && !(cb && cb.locked) && (!cb || cb.year !== by || Boolean(cb.about) !== draft.birth.about)) body.birth = { year: by, ...(draft.birth.about ? { about: true } : {}) };
   const cd = current.death;
-  if (!(cd && cd.precise)) {
+  if (!(cd && cd.locked)) {
     if (draft.death.unknown) {
       if (!(cd && cd.unknown)) body.death = { unknown: true };
     } else {
@@ -167,7 +204,7 @@ export function errorText(err) {
 export function withPending(current, pending) {
   if (!pending) return current;
   return {
-    birth: pending.birth ? { year: pending.birth.year, about: pending.birth.about === true, precise: false } : current.birth,
-    death: pending.death ? { year: pending.death.year || null, about: pending.death.about === true, precise: false, unknown: pending.death.unknown === true } : current.death
+    birth: pending.birth ? { year: pending.birth.year, about: pending.birth.about === true, locked: false } : current.birth,
+    death: pending.death ? { year: pending.death.year || null, about: pending.death.about === true, locked: false, unknown: pending.death.unknown === true } : current.death
   };
 }
