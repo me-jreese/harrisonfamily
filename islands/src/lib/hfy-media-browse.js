@@ -2,7 +2,7 @@
 // GET /api/media and `getMedia` over GET /api/media/:id, returning the kit DTOs (MediaPage, MediaDetail). A sibling of hfy-media-source.js so the tag
 // ports there stay untouched. `fetch` is injected so the unit tests run without a network.
 //
-//   listMedia({section, filter, cursor, limit}) -> {cards, nextCursor, counts}                      (the API reply already has the kit shape; cards are cleaned)
+//   listMedia({section, filter, cursor, limit, person?}) -> {cards, nextCursor, counts}            (the API reply already has the kit shape; cards are cleaned; `person` is a gramps_id: only the photos that person is tagged in, HFY-TSK-408)
 //   getMedia(id, {section, filter})             -> {card, imageUrl, description?, origin, originRef?, originName?, neighbors?, tags, version}
 //                                                  plus the extras the page uses: handle (the Gramps handle, for the shipped tag editor), commentsSubject.
 // The API says `previousId` (the next newer item) and `nextId` (the next older one), `originBy.displayName` and, on a tag, `person: {displayName}`.
@@ -13,6 +13,7 @@ import { MediaError } from "@io-kit/media";
 
 const SECTIONS = new Set(["all", "media", "posts"]);
 const FILTERS = new Set(["all", "needs_tags", "of_me"]);
+const PERSON_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$/;
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const str = (v) => (typeof v === "string" && v !== "" ? v : undefined);
 
@@ -72,7 +73,7 @@ export function createHfyMediaBrowse({ fetch: fetchImpl = (...a) => globalThis.f
     async listMedia(q) {
       const section = SECTIONS.has(q?.section) ? q.section : "media";
       const filter = FILTERS.has(q?.filter) ? q.filter : "all";
-      const r = await get(`/media${query({ section, filter, cursor: q?.cursor, limit: q?.limit })}`);
+      const r = await get(`/media${query({ section, filter, cursor: q?.cursor, limit: q?.limit, person: typeof q?.person === "string" && PERSON_ID.test(q.person) ? q.person : undefined })}`);
       return {
         cards: (Array.isArray(r.cards) ? r.cards : []).map(toCard), nextCursor: str(r.nextCursor) ?? null,
         counts: { media: isNum(r.counts?.media) ? r.counts.media : 0, posts: isNum(r.counts?.posts) ? r.counts.posts : 0 },

@@ -72,11 +72,11 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "6c6eedeb",
+        "js": "780d948a",
         "css": "fbd55387"
       },
       "media-carousel": {
-        "js": "d7381324",
+        "js": "14dd6531",
         "css": "c64b6ba7"
       },
       "moderation-queue": {
@@ -100,7 +100,7 @@
         "css": "bd2a5788"
       },
       "person-add-photo": {
-        "js": "f9070a00",
+        "js": "1abaeed3",
         "css": "5ff12110"
       },
       "person-links": {
@@ -108,11 +108,11 @@
         "css": "fcacbc39"
       },
       "person-portrait": {
-        "js": "e20ae08d",
-        "css": "af2df384"
+        "js": "86bfa238",
+        "css": "c1478e55"
       },
       "photo-tag-edit": {
-        "js": "d1c88f17",
+        "js": "a5638ccc",
         "css": "c936efa8"
       },
       "photo-tags": {

@@ -148,17 +148,21 @@ export function buildCatalog({ heads, index, posts, hidden, viewer, base }) {
 }
 
 const inSection = (item, section) => section === "all" || item.card.section === section;
-const matchesFilter = (cat, item, filter) =>
-  filter === "all" ? true
+const GRAMPS_ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}$/;
+const tagGid = (t) => t.person.gramps_id ?? t.person.obj.gramps_id;
+/** `person` (HFY-TSK-408, GET /api/media?person=<gramps_id>): only the photos that person is tagged in, on top of the filter; post attachments never match. */
+const matchesFilter = (cat, item, filter, person) =>
+  person !== undefined && !(item.kind === "media" && item.tags.some((t) => tagGid(t) === person)) ? false
+  : filter === "all" ? true
     : item.kind !== "media" ? false
       : filter === "needs_tags" ? item.tags.length === 0
         : cat.viewerGid !== undefined && item.tags.some((t) => (t.person.gramps_id ?? t.person.obj.gramps_id) === cat.viewerGid);
 
-const cursorTag = (section, filter) => sha(`${section}|${filter}`).slice(0, 8);
-const encodeCursor = (item, section, filter) => `c1.${Buffer.from(JSON.stringify([item.at, item.id])).toString("base64url")}.${cursorTag(section, filter)}`;
-function decodeCursor(c, section, filter) {
+const cursorTag = (section, filter, person) => sha(`${section}|${filter}${person === undefined ? "" : `|${person}`}`).slice(0, 8);
+const encodeCursor = (item, section, filter, person) => `c1.${Buffer.from(JSON.stringify([item.at, item.id])).toString("base64url")}.${cursorTag(section, filter, person)}`;
+function decodeCursor(c, section, filter, person) {
   const m = /^c1\.([A-Za-z0-9_-]{1,200})\.([0-9a-f]{8})$/.exec(c);
-  if (!m || m[2] !== cursorTag(section, filter)) throw invalid("cursor", "cursor does not belong to this listing");
+  if (!m || m[2] !== cursorTag(section, filter, person)) throw invalid("cursor", "cursor does not belong to this listing");
   try {
     const [at, id] = JSON.parse(Buffer.from(m[1], "base64url").toString("utf8"));
     if (Number.isFinite(at) && typeof id === "string") return { at, id };
@@ -176,22 +180,24 @@ function parseQuery(q = {}, { forDetail = false } = {}) {
     limit = Number(q.limit);
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) throw invalid("limit", `limit must be an integer from 1 to ${MAX_LIMIT}`);
   }
-  return { section, filter, limit, cursor: q.cursor === undefined || q.cursor === "" ? undefined : String(q.cursor) };
+  const person = q.person === undefined || q.person === "" ? undefined : String(q.person);
+  if (person !== undefined && !GRAMPS_ID_RE.test(person)) throw invalid("person", "person is a person's gramps_id");
+  return { section, filter, person, limit, cursor: q.cursor === undefined || q.cursor === "" ? undefined : String(q.cursor) };
 }
 
 export function pageOf(cat, query) {
-  const { section, filter, limit, cursor } = parseQuery(query);
+  const { section, filter, person, limit, cursor } = parseQuery(query);
   const counts = { media: 0, posts: 0 };
-  for (const it of cat.items) if (matchesFilter(cat, it, filter)) counts[it.card.section] += 1;
-  const list = cat.items.filter((it) => inSection(it, section) && matchesFilter(cat, it, filter));
+  for (const it of cat.items) if (matchesFilter(cat, it, filter, person)) counts[it.card.section] += 1;
+  const list = cat.items.filter((it) => inSection(it, section) && matchesFilter(cat, it, filter, person));
   let from = 0;
   if (cursor !== undefined) {
-    const c = decodeCursor(cursor, section, filter);
+    const c = decodeCursor(cursor, section, filter, person);
     from = list.findIndex((it) => it.at < c.at || (it.at === c.at && it.id < c.id));
     if (from < 0) from = list.length;
   }
   const page = list.slice(from, from + limit);
-  return { cards: page.map((it) => it.card), nextCursor: from + limit < list.length ? encodeCursor(page[page.length - 1], section, filter) : null, counts };
+  return { cards: page.map((it) => it.card), nextCursor: from + limit < list.length ? encodeCursor(page[page.length - 1], section, filter, person) : null, counts };
 }
 
 export function detailOf(cat, id, query) {
