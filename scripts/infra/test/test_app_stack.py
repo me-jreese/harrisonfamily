@@ -199,11 +199,13 @@ class AppStack(unittest.TestCase):
     # HFY-TSK-149 (review PS-11): the site CSP policies and the /join/ function are written once in scripts/cloudfront/site-csp.json.
     def test_site_csp_policies_hold_the_one_written_down_policy(self):
         csp = json.loads((ROOT / "scripts" / "cloudfront" / "site-csp.json").read_text())
+        # HFY-TSK-407: "base" holds the presigned-upload origin as the expression ${MediaBucket}.s3.${AWS::Region}, so both policies are a !Sub of it
+        self.assertIn("https://${MediaBucket}.s3.${AWS::Region}.amazonaws.com", csp["base"])
         ro = self.r["SiteCspReportOnlyPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
-        self.assertEqual(ro["CustomHeadersConfig"]["Items"], [{"Header": "Content-Security-Policy-Report-Only", "Value": csp["base"], "Override": False}])
+        self.assertEqual(ro["CustomHeadersConfig"]["Items"], [{"Header": "Content-Security-Policy-Report-Only", "Value": {"Fn::Sub": csp["base"]}, "Override": False}])
         self.assertNotIn("SecurityHeadersConfig", ro, "report-only must not also enforce")
         en = self.r["SiteCspPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
-        self.assertEqual(en["SecurityHeadersConfig"]["ContentSecurityPolicy"], {"ContentSecurityPolicy": csp["base"], "Override": False})
+        self.assertEqual(en["SecurityHeadersConfig"]["ContentSecurityPolicy"], {"ContentSecurityPolicy": {"Fn::Sub": csp["base"]}, "Override": False})
         self.assertNotIn("CustomHeadersConfig", en)
         for name in ("SiteCspReportOnlyPolicy", "SiteCspPolicy"):
             self.assertEqual(self.r[name]["Type"], "AWS::CloudFront::ResponseHeadersPolicy")
@@ -263,6 +265,8 @@ def resolve_text(template, value, where):
         return value
     if isinstance(value, dict) and set(value) == {"Fn::Sub"} and isinstance(value["Fn::Sub"], str):
         def fill(match):
+            if match.group(1) == "AWS::Region":
+                return "ap-southeast-4"  # the longest region name: a limit that holds for it holds for every region (HFY-TSK-407)
             param = template["Parameters"].get(match.group(1))
             if param is None or "Default" not in param:
                 raise AssertionError(f"{where}: cannot resolve ${{{match.group(1)}}} offline; use a literal or a parameter with a Default")
@@ -289,6 +293,7 @@ def create_time_limit_violations(template):
                 bad.append(f"{name}: {len(items)} custom headers, CloudFront allows {CUSTOM_HEADERS_MAX}")
             total = 0
             for item in items:
+                item = {**item, "Value": resolve_text(template, item["Value"], f"{name} {item['Header']}")}
                 total += len(item["Header"]) + len(item["Value"])
                 if len(item["Header"]) > HEADER_NAME_MAX:
                     bad.append(f"{name}: header name {item['Header'][:40]}... is {len(item['Header'])} characters, CloudFront allows {HEADER_NAME_MAX}")
@@ -296,7 +301,7 @@ def create_time_limit_violations(template):
                     bad.append(f"{name}: value of {item['Header']} is {len(item['Value'])} characters, CloudFront allows {HEADER_VALUE_MAX}")
             if total > CUSTOM_HEADERS_TOTAL_MAX:
                 bad.append(f"{name}: custom header names and values total {total} characters, CloudFront allows {CUSTOM_HEADERS_TOTAL_MAX}")
-            csp = cfg.get("SecurityHeadersConfig", {}).get("ContentSecurityPolicy", {}).get("ContentSecurityPolicy", "")
+            csp = resolve_text(template, cfg.get("SecurityHeadersConfig", {}).get("ContentSecurityPolicy", {}).get("ContentSecurityPolicy", ""), f"{name} Content-Security-Policy")
             if len(csp) > HEADER_VALUE_MAX:
                 bad.append(f"{name}: Content-Security-Policy is {len(csp)} characters, CloudFront allows {HEADER_VALUE_MAX}")
         elif res["Type"] == "AWS::CloudFront::Function":

@@ -329,7 +329,8 @@ Resources:
   # Two policies, one per rollout stage; scripts/infra/add-csp-headers.sh attaches exactly one to the DEFAULT cache behavior (the
   # HTML pages) and detaches it to roll back. Report-only first: the browser reports what the enforced policy would block and
   # blocks nothing. Override:false so a response that already carries its own CSP (none does today) keeps it. The strings are
-  # scripts/cloudfront/site-csp.json "base" (pinned by test_app_stack.py). The /uploads/* sandbox CSP above is a separate policy
+  # scripts/cloudfront/site-csp.json "base" (pinned by test_app_stack.py); connect-src also names the site bucket's presigned-upload host, composed
+  # here from MediaBucket and the stack region (HFY-TSK-407). The /uploads/* sandbox CSP above is a separate policy
   # on a separate behavior and is unchanged. CloudFront refuses a Comment over 128 characters only when it creates the policy, so
   # template validation and cfn-lint pass it and the change set fails mid-execute (HFY-TSK-361); test_app_stack.py checks the limits.
   SiteCspReportOnlyPolicy:
@@ -341,7 +342,7 @@ Resources:
         CustomHeadersConfig:
           Items:
             - Header: Content-Security-Policy-Report-Only
-              Value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'"
+              Value: !Sub "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://${MediaBucket}.s3.${AWS::Region}.amazonaws.com; worker-src 'self'; frame-ancestors 'none'"
               Override: false
   SiteCspPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
@@ -351,7 +352,7 @@ Resources:
         Comment: "harrisonfamily HTML pages: enforced Content-Security-Policy; JoinCspFunction swaps in the Turnstile variant under /join/"
         SecurityHeadersConfig:
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'"
+            ContentSecurityPolicy: !Sub "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://${MediaBucket}.s3.${AWS::Region}.amazonaws.com; worker-src 'self'; frame-ancestors 'none'"
             Override: false
   # The /join/ variant (Turnstile loads there and nowhere else) without a new cache behavior: a viewer-response function on the
   # default behavior swaps the policy's header for requests under /join/. Source: scripts/cloudfront/join-csp.js (pinned equal).
