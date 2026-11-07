@@ -72,8 +72,8 @@
         "css": "a475a3dd"
       },
       "media-browser": {
-        "js": "796f6920",
-        "css": "8a72419a"
+        "js": "6c6eedeb",
+        "css": "fbd55387"
       },
       "media-carousel": {
         "js": "d7381324",
@@ -112,8 +112,8 @@
         "css": "af2df384"
       },
       "photo-tag-edit": {
-        "js": "a6eea071",
-        "css": "912a7ff2"
+        "js": "d1c88f17",
+        "css": "c936efa8"
       },
       "photo-tags": {
         "js": "5993b868",
