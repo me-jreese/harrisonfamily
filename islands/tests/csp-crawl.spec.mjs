@@ -32,7 +32,9 @@ function pages() {
   return [...new Set(out)].sort();
 }
 const PAGES = pages();
-const policyFor = (pathname) => (pathname === "/join" || pathname.startsWith("/join/") ? CSP.join : CSP.base);
+// HFY-TSK-407: "base" names the upload host as the CloudFormation expression ${MediaBucket}.s3.${AWS::Region}; the crawl resolves it to a placeholder host.
+const BASE = CSP.base.replaceAll("${MediaBucket}", "upload-bucket").replaceAll("${AWS::Region}", "us-west-2");
+const policyFor = (pathname) => (pathname === "/join" || pathname.startsWith("/join/") ? CSP.join : BASE);
 
 const SIGNED_IN = { authenticated: true, sub: "I9001", grampsId: "I9001", label: "Sam Example" };
 
