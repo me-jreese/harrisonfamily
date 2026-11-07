@@ -1341,11 +1341,18 @@
     bindLightboxSwipe(body || modalEl);
   }
 
+  // While the tag editor is open (the islands editor puts photo-tag-edit-on on the modal) the body scrolls and the stage is dragged: no swipe closes the
+  // lightbox or steps the photo, or scrolling back up to the "done" button would close it unsaved.
+  function lightboxIsEditing() {
+    const modalEl = lightboxState.elements && lightboxState.elements.modalEl;
+    return Boolean(modalEl && modalEl.classList && modalEl.classList.contains("photo-tag-edit-on"));
+  }
+
   // Below 688px there are no side arrows: swipe left/right steps, swipe down closes (threshold 80px).
   function bindLightboxSwipe(surface) {
     let start = null;
     surface.addEventListener("touchstart", (event) => {
-      start = event.touches.length === 1 ? { x: event.touches[0].clientX, y: event.touches[0].clientY } : null;
+      start = event.touches.length === 1 && !lightboxIsEditing() ? { x: event.touches[0].clientX, y: event.touches[0].clientY } : null;
     }, { passive: true });
     surface.addEventListener("touchend", (event) => {
       if (!start || !event.changedTouches.length) {
@@ -1355,6 +1362,9 @@
       const dx = event.changedTouches[0].clientX - start.x;
       const dy = event.changedTouches[0].clientY - start.y;
       start = null;
+      if (lightboxIsEditing()) {
+        return;
+      }
       if (Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > Math.abs(dy)) {
         stepLightbox(dx < 0 ? 1 : -1);
       } else if (dy >= SWIPE_MIN && dy > Math.abs(dx) && lightboxState.modal) {

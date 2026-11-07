@@ -22,7 +22,16 @@
 /* WCAG 2.4.11 (focus not obscured): the kit keeps the box being named in view with scrollIntoView, but its scroll padding sits on the editor, which does not scroll. Here the
    scroller is the page (media detail) or the lightbox body (person page), so the padding for the bottom-anchored person sheet goes on whichever holds an editor. */
 html:has(.io-media-tags),
-.modal-body:has(.io-media-tags) { scroll-padding-block-end: 50dvh; }
+.modal-body:has(.io-media-tags) { scroll-padding-block-end: 50dvh; scroll-padding-block-start: calc(var(--io-control-tap-min) + var(--io-space-4)); }
+
+/* Person-page lightbox: the editor is taller than the modal body (min-height 100dvh), so its header, with "done", scrolls away. It stays at the top of the body while the
+   editor scrolls. Scoped to the lightbox host: the media detail page and /all-media/ keep the kit's plain header. The scroll padding above keeps a scrolled-to box clear of it. */
+#mediaLightbox .photo-tag-edit-host .io-media-head {
+  position: sticky; top: 0; z-index: 4; flex-wrap: wrap; box-sizing: border-box;
+  margin-inline: calc(-1 * var(--io-space-3)); padding: var(--io-space-2) var(--io-space-3);
+  background: var(--io-color-semantic-surface); border-bottom: thin solid var(--io-color-semantic-border); box-shadow: var(--io-elevation-1);
+}
+#mediaLightbox .photo-tag-edit-host .io-media-title { min-width: 0; overflow-wrap: anywhere; }
 
 /* The kit's .io-media-chip sets display, which beats the hidden attribute of the idle save chip (tags.css, .io-media-chip), leaving an empty pill in the layout. */
 .io-media-save[hidden] { display: none; }
