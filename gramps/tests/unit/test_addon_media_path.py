@@ -12,6 +12,7 @@ website's path, and a Media made on the desktop still goes up as before. The web
 """
 import copy
 import hashlib
+import json
 import os
 import sys
 import unittest
@@ -246,6 +247,66 @@ class MergeLevel(unittest.TestCase):
         res = self.run_merge(base, copy.deepcopy(base), desc="Edited")
         self.assertEqual(res.push["obj"], self.site(path="", desc="Edited"))
         self.assertEqual(self.run_merge(base, copy.deepcopy(base)).action, "unchanged")
+
+    def test_a_cloud_object_without_the_path_key_pushes_no_blank_path(self):
+        """A sparse website Media (no `path` key at all): the desktop's blank is no edit, and there is no website path for a push to erase."""
+        base = self.site()
+        del base["path"]
+        cloud = copy.deepcopy(base)
+        res = self.run_merge(base, cloud)
+        self.assertEqual((res.action, res.push, res.conflicts), ("unchanged", None, []))
+        res = self.run_merge(base, cloud, desc="Edited")
+        self.assertEqual(res.action, "update")
+        self.assertEqual(res.conflicts, [])
+        self.assertEqual(res.push["obj"].get("desc"), "Edited")
+        # the projection's blank over a key the website never had loses nothing (no website path exists to erase)
+        self.assertEqual(res.push["obj"].get("path", ""), "")
+        self.assertEqual(cloud, base, "the inputs are untouched")
+
+    def test_an_object_level_conflict_shows_the_websites_path_not_the_parked_blank(self):
+        """delete_edit: the website deleted the Media, the desktop edited it. The conflict's base holds the website's path as it was."""
+        base = self.site()
+        local = self.site(path="/Users/example/pictures/web.jpg", desc="Edited")
+        projected = PR.project_tree([local])[0][WEB]
+        res = M.merge_object(base, local, projected, M.TOMBSTONE, cloud_version=3,
+                             project_fn=lambda o: PR.project_tree([o])[0][WEB])
+        self.assertEqual(res.action, "conflict")
+        (c,) = res.conflicts
+        self.assertEqual(c["path"], "")
+        self.assertEqual(c["base"]["path"], WEB_PATH)
+        self.assertEqual(json.loads(c["base_json"])["path"], WEB_PATH)
+        self.assertIs(res.base_after, base)
+        # no common base: the cloud copy in the conflict is the website's, path included
+        cloud = self.site(desc="Website")
+        res = M.merge_object(None, local, projected, cloud, cloud_version=3, project_fn=lambda o: PR.project_tree([o])[0][WEB])
+        self.assertEqual(res.action, "conflict")
+        (c,) = res.conflicts
+        self.assertEqual(c["cloud"]["path"], WEB_PATH)
+        self.assertEqual(json.loads(c["cloud_json"])["path"], WEB_PATH)
+
+    def test_a_downloaded_file_whose_md5_differs_from_the_stored_checksum_is_the_checksum_derive_rule(self):
+        """The projection derives `checksum` from the file on disk (media.checksum.derive): a stored checksum that is not the file's md5 is
+        corrected by one update, which carries the website's path and sends the md5 once; it is then at rest."""
+        base = self.site()
+        cloud = copy.deepcopy(base)
+        local = self.site(path="/Users/example/pictures/web.jpg")
+        files = {WEB: {"exif_gps": False, "md5": hashlib.md5(JPEG).hexdigest(), "readable": True}}
+        projected = PR.project_tree([local], files=files)[0][WEB]
+        self.assertEqual(projected["checksum"], hashlib.md5(JPEG).hexdigest())
+        self.assertNotEqual(projected["checksum"], cloud["checksum"])
+        fn = lambda o: PR.project_tree([o], files=files)[0][WEB]  # noqa: E731
+        res = M.merge_object(base, local, projected, cloud, cloud_version=3, project_fn=fn)
+        self.assertEqual(res.conflicts, [])
+        self.assertEqual(res.action, "update")
+        self.assertEqual(res.push["obj"]["path"], WEB_PATH, "never blanked by the checksum change")
+        self.assertEqual(res.push["obj"]["checksum"], hashlib.md5(JPEG).hexdigest())
+        # once the website holds that checksum nothing is planned
+        site2 = self.site()
+        site2["checksum"] = hashlib.md5(JPEG).hexdigest()
+        local2 = dict(local, checksum=site2["checksum"])
+        proj2 = PR.project_tree([local2], files=files)[0][WEB]
+        res = M.merge_object(site2, local2, proj2, copy.deepcopy(site2), cloud_version=4, project_fn=fn)
+        self.assertEqual((res.action, res.push), ("unchanged", None))
 
     def test_other_classes_and_other_keys_are_compared_as_they_were(self):
         note = {"_class": "Note", "handle": "n" * 28, "gramps_id": "N1", "path": "x", "format": 0, "private": False, "tag_list": []}

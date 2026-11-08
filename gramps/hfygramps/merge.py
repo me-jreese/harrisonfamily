@@ -695,6 +695,18 @@ def _restore_local_only(push, cloud):
             push["obj"][k] = copy.deepcopy(cloud[k])
 
 
+def _unpark_conflicts(conflicts, base_pair, cloud_pair):
+    """An object-level conflict (path ``""``) holds whole objects: show the ones that were passed in (after the sparse reconcile), not the
+    copies parked for comparison, so a conflict never shows the website's own ``path`` as blank. ``*_pair`` is (parked, shown)."""
+    for c in conflicts:
+        if c.get("path") != "":
+            continue
+        for key, (parked, shown) in (("base", base_pair), ("cloud", cloud_pair)):
+            if parked is not shown and c.get(key) is parked:
+                c[key] = shown
+                c[key + "_json"] = _dump(shown)
+
+
 def merge_object(base, local, local_proj, cloud, **kw):
     """Merge one object (see ``_merge_object``), after ``reconcile_sparse``. The base and cloud objects the result hands back for the
     sidecar (``base_after``) are the ones that were passed in, never the reconciled copies.
@@ -707,6 +719,7 @@ def merge_object(base, local, local_proj, cloud, **kw):
     if isinstance(local, dict) and isinstance(local_proj, dict):
         pb, pc = _park_local_only(nb), _park_local_only(nc)
     res = _merge_object(pb, local, local_proj, pc, **kw)
+    _unpark_conflicts(res.conflicts, (pb, nb), (pc, nc))
     if res.base_after is not None:
         if pc is not cloud and res.base_after is pc:
             res.base_after = cloud
