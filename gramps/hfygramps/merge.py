@@ -86,6 +86,7 @@ import hashlib
 import json
 import re
 
+from . import blank
 from . import projection as PR
 from . import rules as R
 
@@ -560,8 +561,130 @@ def _object_conflict(cls, handle, gid, kind, reason, base, cloud, local, **extra
 # One object: the object-level table (6.4) and the field-level rules (6.3).
 
 
-def merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_fn=None, pins=(), mode="cli",
-                 allow_deletes=False, ctx=None):
+# --------------------------------------------------------------------------------------------------------------------
+# Sparse objects (HFY-TSK-409). The desktop's object is always complete (Gramps serialises every key); the website's can be sparse
+# (an Event its editor created before the website stored creates complete holds six keys). The rule is that a MISSING key is "no
+# information", never "empty": ``reconcile_sparse`` returns the base and the cloud object as the three-way rule should compare
+# them, and it only ever ADDS keys to those copies, one by one, by these two cases and no other (the lists in the code paths of the
+# task report are exactly these):
+#
+#   the cloud lacks key k and the base has it       the cloud takes the BASE value: "unchanged on the website". A desktop edit of k
+#                                                    stays a desktop edit (taken, pushed); a desktop value is never replaced by a blank.
+#   the cloud (or the base) lacks key k and the     the blank value stands in for the absence on the side(s) that lack it, so
+#   desktop holds exactly the blank of k            "missing" and "blank" compare equal and nothing is pushed or conflicted.
+#
+# In every other case a missing key stays missing. A desktop value that is not the blank of its key is therefore never touched by
+# this step, and a website value is never changed by it. The originals still go to the base rows: ``merge_object`` hands back
+# ``base_after`` as it received it.
+
+
+def _value_class(node):
+    return blank.is_value_class(node.get("_class")) if isinstance(node, dict) else False
+
+
+def _fill_from_blank(l, key, name):
+    """The blank of `key` of class `name` when the desktop holds exactly that, else MISSING."""
+    ok, value = blank.blank_value(name, key)
+    return value if ok and key in l and _eq(l[key], value) else MISSING
+
+
+def _reconcile_elements(bl, ll, cl, name):
+    """Lists of objects: an element of the base or the cloud that is only a cut-down copy of a desktop element (completing it with
+    its blanks gives exactly that element) becomes that element; the matched elements of a keyed list are then reconciled field by field."""
+    for side in (bl, cl):
+        if side is None:
+            continue
+        used = set()
+        for i, e in enumerate(side):
+            if not isinstance(e, dict) or not isinstance(e.get("_class"), str):
+                continue
+            full = blank.complete(e)
+            for j, x in enumerate(ll):
+                if j not in used and isinstance(x, dict) and _eq(x, full):
+                    used.add(j)
+                    side[i] = copy.deepcopy(x)
+                    break
+    if name not in KEYED or bl is None:
+        return
+
+    def by_ref(items):
+        seen, out = {}, {}
+        for e in items:
+            if isinstance(e, dict) and "ref" in e and isinstance(e["ref"], str):
+                n = seen.get(e["ref"], 0)
+                seen[e["ref"]] = n + 1
+                out[(e["ref"], n)] = e
+        return out
+
+    b_by, l_by = by_ref(bl), by_ref(ll)
+    for key, ce in by_ref(cl).items():
+        be, le = b_by.get(key), l_by.get(key)
+        if be is not None and le is not None:
+            _reconcile_dict(be, le, ce)
+
+
+def _reconcile_dict(b, l, c):
+    """Reconcile the cloud object `c` (and the base `b`, None when there is none) with the desktop's `l`, in place on the copies."""
+    name = c.get("_class") if isinstance(c.get("_class"), str) else l.get("_class")
+    value_class = blank.is_value_class(name)
+    for key in dict.fromkeys(list(c) + list(b or ()) + blank.blank_keys(name)):
+        in_c, in_b, in_l = key in c, b is not None and key in b, key in l
+        if in_c and in_b:
+            bv, lv, cv = b[key], l.get(key), c[key]
+            if isinstance(bv, dict) and isinstance(lv, dict) and isinstance(cv, dict):
+                _reconcile_dict(bv, lv, cv)
+            elif isinstance(bv, list) and isinstance(lv, list) and isinstance(cv, list):
+                _reconcile_elements(bv, lv, cv, key)
+            continue
+        want = _fill_from_blank(l, key, name) if in_l else MISSING
+        if in_c:
+            # the website holds k, the base does not: a desktop blank is the same as the base not having it
+            if b is not None and want is not MISSING:
+                b[key] = copy.deepcopy(want)
+            continue
+        if in_b and (not value_class or blank.agrees(c, b)) and blank.is_class_key(name, key):
+            # a Gramps key absent on the website: unchanged, never blank. A value (Date...) is a cut-down copy of the base's when every
+            # key it holds equals the base's; one that differs is a new value, replaced whole (blank.agrees)
+            c[key] = copy.deepcopy(b[key])
+        elif in_b and blank.is_class_key(name, key):
+            ok, value = blank.blank_value(name, key)
+            if ok and _eq(b[key], value):
+                c[key] = copy.deepcopy(value)
+        elif want is not MISSING:
+            c[key] = copy.deepcopy(want)
+            if b is not None:
+                b[key] = copy.deepcopy(want)
+
+
+def reconcile_sparse(base, local, cloud):
+    """``(base', cloud')``: copies of the base and cloud objects in which a key the cloud left out no longer reads as a change (see above).
+
+    Anything that is not three plain objects (a tombstone, no base, no local) is returned as it is. `local` is the desktop's object as
+    the merge compares it (its projection)."""
+    if not isinstance(cloud, dict) or not isinstance(local, dict) or not (base is None or isinstance(base, dict)):
+        return base, cloud
+    b = copy.deepcopy(base) if base is not None else None
+    c = copy.deepcopy(cloud)
+    _reconcile_dict(b, local, c)
+    return b, c
+
+
+def merge_object(base, local, local_proj, cloud, **kw):
+    """Merge one object (see ``_merge_object``), after ``reconcile_sparse``. The base and cloud objects the result hands back for the
+    sidecar (``base_after``) are the ones that were passed in, never the reconciled copies."""
+    ref = local_proj if isinstance(local_proj, dict) else local
+    nb, nc = reconcile_sparse(base, ref, cloud)
+    res = _merge_object(nb, local, local_proj, nc, **kw)
+    if res.base_after is not None:
+        if nc is not cloud and res.base_after is nc:
+            res.base_after = cloud
+        elif nb is not base and res.base_after is nb:
+            res.base_after = base
+    return res
+
+
+def _merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_fn=None, pins=(), mode="cli",
+                  allow_deletes=False, ctx=None):
     """Merge one object.
 
     base         B, the projected object at the last sync, or None
@@ -588,8 +711,8 @@ def merge_object(base, local, local_proj, cloud, *, cloud_version=None, project_
         # cause stands the run finds the same object-level conflict (same id, kind and reason, derived and not stored); when it is
         # gone (the cloud went back to the base, the target of a reference exists again) the pin is reported in ``closed``. An
         # integrity freeze is re-checked by ``merge_tree`` on the result, which freezes the object again if the violation stands.
-        res = merge_object(base, local, local_proj, cloud, cloud_version=cloud_version, project_fn=project_fn,
-                           pins=[p for p in pins if p["path"] != ""], mode=mode, allow_deletes=allow_deletes, ctx=ctx)
+        res = _merge_object(base, local, local_proj, cloud, cloud_version=cloud_version, project_fn=project_fn,
+                            pins=[p for p in pins if p["path"] != ""], mode=mode, allow_deletes=allow_deletes, ctx=ctx)
         if not any(c["path"] == "" for c in res.conflicts):
             res.closed = [""] + list(res.closed)
         return res

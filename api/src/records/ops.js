@@ -601,13 +601,81 @@ function splitKey(key) {
   return [key.slice(0, i), key.slice(i + 1)];
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Class defaults of a created object (HFY-TSK-409)
+// ---------------------------------------------------------------------------------------------------------------
+// The editor sends a sparse value on create (an Event holds six keys). Gramps' own code reads every key of an object it loads, so a
+// website-created object is stored COMPLETE: every key of the class, with the value a blank Gramps object holds. The key lists are the
+// class schemas in ./schemas/*.schema.json plus the keys Gramps serialises that the editor never shows (Place.alt_loc,
+// Repository.address_list, the same ones relationships.js writes); test/records/ops.node-test.js checks this table against both.
+// A key whose Gramps default would be a guess is left absent, never invented: Event.type (Gramps' blank event is a Birth, which is
+// birth-like) and Repository.type, Citation.source_handle. The desktop add-on completes an object it loads from Gramps' own blank
+// (gramps/hfy_sync/hfy_sync_tool.py), so an absent key never reaches Gramps unfilled.
+
+const typedBlank = (cls, value) => ({ _class: cls, string: "", value });
+/** A blank Gramps Date, the shape Gramps 6.0.6 serialises (the editor's emptyDate omits `format` and `sortval`; both are filled here). */
+export const blankDate = () => ({ _class: "Date", calendar: 0, dateval: [0, 0, 0, false], format: null, modifier: 0, newyear: 0, quality: 0, sortval: 0, text: "" });
+const blankPlaceName = () => ({ _class: "PlaceName", date: blankDate(), lang: "", value: "" });
+const blankStyledText = () => ({ _class: "StyledText", string: "", tags: [] });
+
+/** class -> function returning a fresh { key: default } map. The classes the editor and the website can create. */
+export const CREATE_DEFAULTS = Object.freeze({
+  Citation: () => ({ attribute_list: [], change: 0, confidence: 2, date: blankDate(), gramps_id: "", media_list: [], note_list: [], page: "", private: false, tag_list: [] }),
+  Event: () => ({ attribute_list: [], change: 0, citation_list: [], date: blankDate(), description: "", gramps_id: "", media_list: [], note_list: [], place: "", private: false, tag_list: [] }),
+  Media: () => ({ attribute_list: [], change: 0, checksum: "", citation_list: [], date: blankDate(), desc: "", gramps_id: "", mime: "", note_list: [], path: "", private: false, tag_list: [], thumb: null }),
+  Note: () => ({ change: 0, format: 0, gramps_id: "", private: false, tag_list: [], text: blankStyledText(), type: typedBlank("NoteType", 1) }),
+  Place: () => ({ alt_loc: [], alt_names: [], change: 0, citation_list: [], code: "", gramps_id: "", lat: "", long: "", media_list: [], name: blankPlaceName(), note_list: [], place_type: typedBlank("PlaceType", -1), placeref_list: [], private: false, tag_list: [], title: "", urls: [] }),
+  Repository: () => ({ address_list: [], change: 0, gramps_id: "", name: "", note_list: [], private: false, tag_list: [], urls: [] }),
+  Source: () => ({ abbrev: "", attribute_list: [], author: "", change: 0, gramps_id: "", media_list: [], note_list: [], private: false, pubinfo: "", reporef_list: [], tag_list: [], title: "" }),
+});
+
+// Nested objects with a fixed shape the editor sends cut down (a Date without `sortval`, a PlaceName without `date`, a type without `string`).
+const NESTED_DEFAULTS = Object.freeze({
+  Date: blankDate,
+  PlaceName: blankPlaceName,
+  StyledText: blankStyledText,
+});
+
+function fillNested(node) {
+  if (Array.isArray(node)) {
+    node.forEach(fillNested);
+    return;
+  }
+  if (!isPlain(node)) return;
+  for (const k of Object.keys(node)) fillNested(node[k]);
+  const cls = node._class;
+  const blank = typeof cls === "string" ? (NESTED_DEFAULTS[cls] || (/Type$/.test(cls) ? () => ({ string: "" }) : null)) : null;
+  if (!blank) return;
+  const fill = blank();
+  for (const k of Object.keys(fill)) if (!(k in node)) node[k] = fill[k];
+}
+
+/**
+ * The value of a create, completed with its class defaults: every missing key of the class takes the default of CREATE_DEFAULTS, and the nested
+ * Dates, PlaceNames, StyledTexts and types are completed the same way. Keys that are present are never changed. Pure and deterministic, so a replayed
+ * create completes to the same object. A class outside CREATE_DEFAULTS (a Person, a Family, a Tag) is returned as it is: those are built whole.
+ */
+export function completeCreate(cls, value) {
+  const make = Object.hasOwn(CREATE_DEFAULTS, cls) ? CREATE_DEFAULTS[cls] : null;
+  if (!make || !isPlain(value)) return value;
+  const fill = make();
+  for (const k of Object.keys(fill)) if (!Object.hasOwn(value, k)) value[k] = fill[k];
+  fillNested(value);
+  return value;
+}
+
 function opCreate(st, op) {
   const [cls, handle] = splitKey(op.obj);
-  const value = deepClone(op.value);
-  if (!isPlain(value)) throw new OpsError(REASONS.invalidOp, "create needs an object value");
-  value.handle = handle;
-  value._class = cls;
-  if (st.objs.has(op.obj)) return deepEqual(st.objs.get(op.obj), value) ? noop() : conflict(REASONS.objectExists, { current: st.objs.get(op.obj) });
+  const raw = deepClone(op.value);
+  if (!isPlain(raw)) throw new OpsError(REASONS.invalidOp, "create needs an object value");
+  raw.handle = handle;
+  raw._class = cls;
+  const value = completeCreate(cls, deepClone(raw));
+  if (st.objs.has(op.obj)) {
+    // identical to what a create stores, or to the sparse value an earlier release stored: a replay stays a no-op either way
+    const cur = st.objs.get(op.obj);
+    return deepEqual(cur, value) || deepEqual(cur, raw) ? noop() : conflict(REASONS.objectExists, { current: cur });
+  }
   st.objs.set(op.obj, value);
   register(value, st.reg);
   st.inverse.push({ id: `inv:${op.id}`, op: "delete", obj: op.obj, base: hashObject(value) });

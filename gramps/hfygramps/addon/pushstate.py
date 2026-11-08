@@ -20,7 +20,7 @@ only: the base is the cloud object at the last sync, never a raw Gramps object. 
 import json
 
 from . import consts, sidecar
-from .. import canonical
+from .. import blank, canonical
 
 
 def get_json(con, key, default=None):
@@ -68,11 +68,14 @@ def base_rows(con):
 
 
 def _put_base(con, cls, handle, version, seq, obj):
+    # the row keeps a key the website's object leaves out that the row already held (hfygramps/blank.py `carry`); the hash stays the object's
+    row = con.execute("SELECT obj_json FROM base WHERE class = ? AND handle = ? AND deleted = 0", (cls, handle)).fetchone()
+    stored = obj if row is None or row[0] is None else blank.carry(json.loads(row[0]), obj)
     con.execute(
         "INSERT INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES (?, ?, ?, ?, ?, ?, 0) "
         "ON CONFLICT(class, handle) DO UPDATE SET version = excluded.version, seq = excluded.seq, hash = excluded.hash, "
         "obj_json = excluded.obj_json, deleted = 0",
-        (cls, handle, int(version), int(seq), canonical.object_hash(obj), canonical.object_json(obj)))
+        (cls, handle, int(version), int(seq), canonical.object_hash(obj), canonical.object_json(stored)))
 
 
 def _put_base_deleted(con, cls, handle, version, seq):
