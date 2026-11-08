@@ -28,6 +28,8 @@ from hfygramps import merge as M  # noqa: E402
 from test_addon_pull import by_gid  # noqa: E402
 
 SIX = ("_class", "date", "gramps_id", "handle", "place", "type")
+REAL_DATE = {"_class": "Date", "calendar": 0, "dateval": [0, 0, 1900, False], "format": 3, "modifier": 0, "newyear": 0, "quality": 0,
+             "sortval": 2415000, "text": "about 1900"}
 EDITOR_DATE = {"_class": "Date", "calendar": 0, "dateval": [0, 0, 0, False], "modifier": 0, "newyear": 0, "quality": 0, "text": ""}
 
 
@@ -100,12 +102,48 @@ class Complete(unittest.TestCase):
         ev = blank.complete(sparse_event("e" * 28, "E9001", date={"_class": "Date", "calendar": 0, "dateval": [0, 0, 1850, False],
                                                                   "modifier": 0, "newyear": 0, "quality": 0, "text": ""}))
         held_ev = copy.deepcopy(ev)
-        held_ev["date"] = {"_class": "Date", "calendar": 0, "dateval": [1, 2, 1900, False], "format": 3, "modifier": 0, "newyear": 0,
+        held_ev["date"] = {"_class": "Date", "calendar": 0, "dateval": [0, 0, 1900, False], "format": 3, "modifier": 0, "newyear": 0,
                            "quality": 0, "sortval": 2415000, "text": ""}
         out = blank.complete(drop_keys(ev, SIX), existing=held_ev)
         self.assertEqual(out["date"]["sortval"], 0)
         self.assertEqual(out["date"]["format"], None)
         self.assertEqual(out["date"]["dateval"], [0, 0, 1850, False])
+
+    def test_a_cut_down_value_that_agrees_with_the_trees_value_takes_its_missing_keys_from_it(self):
+        """A Date, StyledText or type object the website sends cut down is the SAME value when every key it holds equals the tree's."""
+        held = blank.complete(sparse_event("e" * 28, "E9001"), existing=None)
+        held["date"] = copy.deepcopy(REAL_DATE)
+        held["description"] = "Held by the tree"
+        for cut in ({"_class": "Date"}, {"_class": "Date", "dateval": [0, 0, 1900, False]},
+                    {"_class": "Date", "dateval": [0, 0, 1900, False], "calendar": 0, "modifier": 0}, {"_class": "Date", "text": "about 1900"}):
+            state = sparse_event("e" * 28, "E9001")
+            state["date"] = cut
+            out = blank.complete(state, existing=held)
+            self.assertEqual(out["date"], REAL_DATE, "a cut-down copy of the tree's own Date loses no key: %r" % (cut,))
+        # a StyledText and a type the same way
+        note = {"_class": "Note", "handle": "n" * 28, "text": {"_class": "StyledText", "string": "Held text", "tags": [{"x": 1}]}}
+        held_note = blank.complete(note)
+        cut_note = {"_class": "Note", "handle": "n" * 28, "text": {"_class": "StyledText", "string": "Held text"}}
+        self.assertEqual(blank.complete(cut_note, existing=held_note)["text"]["tags"], [{"x": 1}])
+
+    def test_a_value_that_differs_from_the_trees_in_any_key_is_a_new_value_replaced_whole(self):
+        """RULING (raised on the record): a Date the website changed is the website's whole new value. Its keys it did not send are the
+        blank, not the old date's, because the old `sortval` and `text` describe a date that no longer stands. No other key is touched."""
+        held = blank.complete(sparse_event("e" * 28, "E9001"))
+        held["date"] = copy.deepcopy(REAL_DATE)
+        held["description"] = "Held by the tree"
+        state = sparse_event("e" * 28, "E9001")
+        state["date"] = {"_class": "Date", "dateval": [0, 0, 1850, False]}
+        out = blank.complete(state, existing=held)
+        self.assertEqual((out["date"]["dateval"], out["date"]["sortval"], out["date"]["text"]), ([0, 0, 1850, False], 0, ""))
+        self.assertEqual(out["description"], "Held by the tree", "the rest of the object is the tree's")
+        self.assertEqual(blank.complete(state)["date"], out["date"], "the same value as for an object new to the tree")
+
+    def test_carry_keeps_the_previous_keys_of_a_cut_down_copy_of_the_same_value_only(self):
+        same = blank.carry({"_class": "Date", "dateval": [0, 0, 1900, False], "sortval": 5, "text": "x"}, {"_class": "Date", "dateval": [0, 0, 1900, False]})
+        self.assertEqual((same["sortval"], same["text"]), (5, "x"))
+        new = blank.carry({"_class": "Date", "dateval": [0, 0, 1900, False], "sortval": 5, "text": "x"}, {"_class": "Date", "dateval": [0, 0, 1850, False]})
+        self.assertNotIn("sortval", new)
 
     def test_a_sparse_reference_of_an_existing_list_takes_the_trees_element_with_the_same_ref(self):
         role = {"_class": "EventRoleType", "value": 2, "string": ""}
@@ -127,6 +165,23 @@ class Complete(unittest.TestCase):
         ref = {"_class": "EventRef", "ref": "e" * 28, "role": {"_class": "EventRoleType", "value": 1, "string": ""}, "private": True}
         out = blank.complete({"_class": "Person", "handle": "p" * 28, "event_ref_list": [ref]})["event_ref_list"][0]
         self.assertEqual((out["private"], out["attribute_list"], out["note_list"], out["citation_list"]), (True, [], [], []))
+
+    def test_the_committed_table_is_the_one_for_the_gramps_version_the_repository_pins(self):
+        """A Gramps upgrade must regenerate hfygramps/blanks.py (gramps/scripts/gen-blanks.py): CI uses the table, the apply asks Gramps."""
+        from hfygramps import blanks, schema_check
+        self.assertEqual("gramps-" + blanks.GRAMPS_VERSION, schema_check.STEM)
+
+    def test_an_event_without_a_type_is_refused_with_a_name_and_no_value(self):
+        ev = sparse_event("e" * 28, "E9001", description="Fictional text that must not be echoed")
+        del ev["type"]
+        with self.assertRaises(blank.SparseObjectRefused) as caught:
+            blank.refuse_invented(blank.complete(ev))
+        self.assertEqual(str(caught.exception), "'Event without type'")
+        self.assertIsInstance(caught.exception, KeyError)
+        blank.refuse_invented(blank.complete(sparse_event("e" * 28, "E9001")))      # with a type: nothing raised
+        # an existing event keeps the type the tree holds, so a sparse copy without one is not refused
+        held = blank.complete(sparse_event("e" * 28, "E9001"))
+        blank.refuse_invented(blank.complete(ev, existing=held))
 
     def test_the_committed_table_matches_the_class_schemas(self):
         for name, blank_obj in blank.BLANKS.items():
@@ -164,6 +219,25 @@ class Reconcile(unittest.TestCase):
         b, c = M.reconcile_sparse(self.sparse(), local, self.sparse())
         self.assertNotIn("description", b)
         self.assertNotIn("description", c)
+
+    def test_a_cut_down_cloud_date_equal_to_the_base_date_reads_as_unchanged(self):
+        base = copy.deepcopy(self.full)
+        base["date"] = copy.deepcopy(REAL_DATE)
+        local = copy.deepcopy(base)
+        cloud = drop_keys(base)
+        cloud["date"] = {"_class": "Date", "dateval": [0, 0, 1900, False]}
+        b, c = M.reconcile_sparse(base, local, cloud)
+        self.assertEqual(c["date"], REAL_DATE)
+        self.assertEqual(b["date"], REAL_DATE)
+
+    def test_a_changed_cloud_date_is_the_websites_whole_new_value(self):
+        base = copy.deepcopy(self.full)
+        base["date"] = copy.deepcopy(REAL_DATE)
+        cloud = drop_keys(base)
+        cloud["date"] = {"_class": "Date", "dateval": [0, 0, 1850, False]}
+        b, c = M.reconcile_sparse(base, copy.deepcopy(base), cloud)
+        self.assertNotIn("sortval", c["date"])
+        self.assertEqual(b["date"], REAL_DATE, "the base is not touched")
 
     def test_the_originals_are_not_modified(self):
         base, cloud = self.sparse(), self.sparse()
@@ -246,6 +320,31 @@ class Decision(unittest.TestCase):
         self.assertEqual(r.base_after, sp)
         self.assertNotIn("description", r.base_after)
 
+    def test_a_desktop_value_back_at_the_blank_where_the_website_has_no_key_is_no_change(self):
+        """DOCUMENTED EDGE: where the base and the cloud lack a key, a desktop value equal to the key's blank is "nothing" on both sides, so
+        it is not pushed (a key the website never had is not created just to hold a blank). A desktop value that is not the blank is pushed."""
+        local = blank.complete(sparse_event("e" * 28, "E9001", place="p" * 28))
+        sparse = drop_keys(local)
+        local["description"] = "Typed on the desktop"
+        self.assertEqual(self.merge(copy.deepcopy(sparse), local, copy.deepcopy(sparse)).action, "update")
+        local["description"] = ""
+        r = self.merge(copy.deepcopy(sparse), local, copy.deepcopy(sparse))
+        self.assertEqual((r.action, r.push, r.local_obj), ("unchanged", None, None))
+
+    def test_a_cut_down_cloud_date_equal_to_the_base_date_is_no_change_and_a_desktop_date_edit_is_pushed(self):
+        base = copy.deepcopy(self.full)
+        base["date"] = copy.deepcopy(REAL_DATE)
+        cloud = drop_keys(base)
+        cloud["date"] = {"_class": "Date", "dateval": [0, 0, 1900, False]}
+        r = self.merge(copy.deepcopy(base), copy.deepcopy(base), copy.deepcopy(cloud))
+        self.assertEqual((r.action, r.push, r.local_obj), ("unchanged", None, None))
+        local = copy.deepcopy(base)
+        local["date"]["text"] = "edited on the desktop"
+        r = self.merge(copy.deepcopy(base), local, copy.deepcopy(cloud))
+        self.assertEqual(r.action, "update")
+        self.assertEqual(r.push["obj"]["date"]["text"], "edited on the desktop")
+        self.assertEqual(r.push["obj"]["date"]["sortval"], 2415000, "the keys the website's cut-down Date lacks are not sent as blank")
+
     def test_a_website_value_for_a_key_the_base_lacked_is_taken_not_a_conflict(self):
         local = blank.complete(sparse_event("e" * 28, "E9001", place="p" * 28))
         cloud = drop_keys(local)
@@ -262,6 +361,41 @@ class Decision(unittest.TestCase):
         r = self.merge(drop_keys(blank.complete(sparse_event("e" * 28, "E9001", place="p" * 28))), local, cloud)
         self.assertEqual([c["path"] for c in r.conflicts], ["/description"])
         self.assertIsNone(r.local_obj, "mode cli keeps the desktop value")
+
+
+class BaseRows(unittest.TestCase):
+    """The base row keeps the website's hash and, as obj_json, the website's object plus the keys it left out that the row held."""
+
+    def test_nothing_rehashes_a_base_rows_object(self):
+        """A row's `hash` is the website's hash of its sparse object, `obj_json` can hold more, so no code may compare the two. The only
+        callers of object_hash outside canonical.py hash the website's own object (the snapshot, the push check, the row's hash)."""
+        root = os.path.join(HERE, "..", "..")
+        callers = set()
+        for base_dir in ("hfygramps", "hfy_sync"):
+            for dirpath, _dirs, files in os.walk(os.path.join(root, base_dir)):
+                for name in files:
+                    if name.endswith(".py") and name not in ("canonical.py", "blanks.py"):
+                        with open(os.path.join(dirpath, name), encoding="utf-8") as fh:
+                            if "object_hash(" in fh.read():
+                                callers.add(name)
+        self.assertEqual(callers, {"pushstate.py", "snapshot.py", "push.py"})
+
+    def test_a_carried_row_keeps_the_websites_hash_and_a_load_of_the_row_matches_the_stored_hash(self):
+        import sqlite3
+        from hfygramps import canonical
+        from hfygramps.addon import pushstate, sidecar
+        full = blank.complete(sparse_event("e" * 28, "E9001", place="p" * 28))
+        full["description"] = "Held by the row"
+        full.pop("change", None)
+        web = drop_keys(full)
+        con = sqlite3.connect(":memory:")
+        con.executescript(sidecar.DDL)
+        pushstate._put_base(con, "Event", "e" * 28, 1, 1, full)
+        pushstate._put_base(con, "Event", "e" * 28, 2, 2, web)
+        (cls, handle, version, seq, hsh, obj_json, deleted), = con.execute("SELECT class, handle, version, seq, hash, obj_json, deleted FROM base")
+        self.assertEqual(hsh, canonical.object_hash(web), "the hash stays the website's")
+        self.assertEqual(json.loads(obj_json)["description"], "Held by the row", "the row keeps the key the website's object left out")
+        self.assertNotEqual(canonical.object_hash(json.loads(obj_json)), hsh, "which is why nothing may rehash obj_json")
 
 
 class FullTree(S.PullCase):
@@ -372,6 +506,15 @@ class FullTree(S.PullCase):
         cloud = self.cloud_objs()
         return [copy.deepcopy(cloud[o["handle"]]) for o in self.plain_events(self.tree())[:n]]
 
+    def year_only_cloud_event(self):
+        """The website's copy of an event no rule treats specially whose desktop date is a bare year (a day and month are a local-only part:
+        a website change over them is a composite conflict by design, and not what these tests are about)."""
+        cloud = self.cloud_objs()
+        for o in self.plain_events(self.tree()):
+            if o["date"]["dateval"][:2] == [0, 0] and len(o["date"]["dateval"]) == 4:
+                return copy.deepcopy(cloud[o["handle"]])
+        raise AssertionError("the fixture holds no year-only event")
+
     def put_full_values(self, ev, **values):
         """The website holds real, non-blank values in keys a sparse copy will lack; one pull brings them to the tree and the base."""
         full = copy.deepcopy(ev)
@@ -404,6 +547,42 @@ class FullTree(S.PullCase):
         self.assertEqual(json.loads(row[5])["description"], "Held on the website", "the base row keeps what the website's sparse copy left out")
         self.assertEqual(self.pulled(e.run("pull", yes=True)), {"create": 0, "update": 0, "delete": 0})
         self.assertEqual(self.tree(), before)
+
+    def test_a_sparse_website_date_that_is_a_cut_down_copy_of_the_trees_date_clears_nothing(self):
+        """AC4 (a) for value classes: a Date with no sortval, format or text, equal to the tree's in every key it holds, keeps them all."""
+        e = self.env
+        ev = self.year_only_cloud_event()
+        self.put_full_values(ev, date=copy.deepcopy(REAL_DATE))
+        self.assertEqual(self.tree()[ev["handle"]]["date"]["sortval"], 2415000)
+        sp = drop_keys(ev)
+        sp["date"] = {"_class": "Date", "dateval": [0, 0, 1900, False]}
+        e.cloud.put(sp)
+        before = self.tree()
+        doc = e.run("pull", yes=True)
+        self.assertEqual((doc["result"], doc["exit_code"]), ("ok", 0), doc)
+        self.assertEqual(self.tree(), before, "the tree's Date keeps its sortval, format and text, byte for byte")
+        self.assertEqual(self.pulled(doc), {"create": 0, "update": 0, "delete": 0})
+        self.assertEqual(self.push_ops(), 0)
+        self.assertEqual(self.pulled(e.run("pull", yes=True)), {"create": 0, "update": 0, "delete": 0})
+        self.assertEqual(self.tree(), before)
+
+    def test_a_sparse_website_date_that_was_really_changed_is_the_websites_whole_new_value(self):
+        """The ruling: a changed Date replaces the Date whole (the old sortval and text describe a date that no longer stands); nothing else changes."""
+        e = self.env
+        ev = self.year_only_cloud_event()
+        self.put_full_values(ev, date=copy.deepcopy(REAL_DATE), description="Held on the website")
+        sp = drop_keys(ev)
+        sp["date"] = {"_class": "Date", "dateval": [0, 0, 1850, False]}
+        e.cloud.put(sp)
+        before = self.tree()
+        doc = e.run("pull", yes=True)
+        self.assertEqual((doc["result"], doc["exit_code"]), ("ok", 0), doc)
+        got = self.tree()[ev["handle"]]
+        self.assertEqual((got["date"]["dateval"], got["date"]["text"]), ([0, 0, 1850, False], ""))
+        want = {k: v for k, v in before[ev["handle"]].items() if k not in ("date", "change")}
+        self.assertEqual({k: v for k, v in got.items() if k not in ("date", "change")}, want)
+        self.assertEqual(changed_handles(before, self.tree()), [ev["handle"]])
+        self.assertEqual(self.push_ops(), 0)
 
     def test_a_sparse_website_copy_with_one_real_change_changes_that_field_only(self):
         e = self.env

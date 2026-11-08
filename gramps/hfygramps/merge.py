@@ -642,8 +642,10 @@ def _reconcile_dict(b, l, c):
             if b is not None and want is not MISSING:
                 b[key] = copy.deepcopy(want)
             continue
-        if in_b and not value_class and blank.is_class_key(name, key):
-            c[key] = copy.deepcopy(b[key])               # a Gramps key absent on the website: unchanged, never blank
+        if in_b and (not value_class or blank.agrees(c, b)) and blank.is_class_key(name, key):
+            # a Gramps key absent on the website: unchanged, never blank. A value (Date...) is a cut-down copy of the base's when every
+            # key it holds equals the base's; one that differs is a new value, replaced whole (blank.agrees)
+            c[key] = copy.deepcopy(b[key])
         elif in_b and blank.is_class_key(name, key):
             ok, value = blank.blank_value(name, key)
             if ok and _eq(b[key], value):

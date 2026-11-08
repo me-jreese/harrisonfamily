@@ -37,6 +37,10 @@ Written by gramps/scripts/gen-blanks.py under the bundled Gramps, which checks i
 """
 import json
 
+#: The Gramps version the table was built from. tests/unit/test_addon_sparse.py fails when this is not the version the repository pins
+#: (hfygramps/schema_check.py STEM), so a Gramps upgrade cannot pass CI with a stale table: regenerate it with this script.
+GRAMPS_VERSION = "%s"
+
 BLANKS = json.loads(r\'\'\'
 %s\'\'\')
 '''
@@ -60,7 +64,7 @@ def build():
     if len(out) != 28:
         raise SystemExit("expected 28 object classes, found %d: %s" % (len(out), sorted(out)))
     body = json.dumps(out, indent=1, sort_keys=True, ensure_ascii=False)
-    return (HEADER % (GRAMPS_VERSION, body + "\n")).encode("utf-8")
+    return (HEADER % (GRAMPS_VERSION, GRAMPS_VERSION, body + "\n")).encode("utf-8")
 
 
 def main(argv):

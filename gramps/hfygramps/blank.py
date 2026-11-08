@@ -13,9 +13,11 @@ objects stored before that, and any future sparse source, are still read). The r
 
   * a key that is present keeps its value, whatever it is (``None``, ``0``, ``''`` and ``[]`` included): nothing is ever replaced;
   * a key that is missing takes, in this order, the value of the same key of ``existing`` (the object as the tree holds it now:
-    only for an object that is already there, and only for the object itself and the plain objects nested in it, never for a Date,
-    a StyledText or a type, which are values and are replaced whole; an element of a list of references takes the values of the
-    tree's element with the same `ref`, any other list element has no identity and takes the blank), and
+    only for an object that is already there, for the object itself and the plain objects nested in it; an element of a list of
+    references takes the values of the tree's element with the same `ref`, any other list element has no identity and takes the
+    blank; a Date, a StyledText or a type is a value: a cut-down copy of the tree's own value, whose every key that is present equals
+    the tree's, is that same value and takes the rest from it, but a value that differs from the tree's in any key is a new value,
+    replaced whole, and its missing keys take the blank, see `agrees`), and
     else the value of the blank object of its class (``blank_for(class name)``);
   * it descends into every nested dict that names a class (a ``PlaceName``, an ``EventRef``, the elements of a list), so the
     nested objects a sparse source cut down are filled too and keep the values they had;
@@ -39,6 +41,29 @@ from .canonical import DERIVED_KEYS
 NEVER_INVENT = frozenset({("Event", "type")})
 
 
+class SparseObjectRefused(KeyError):
+    """An object lacks a key whose blank would be a guess (``NEVER_INVENT``). The pull's one transaction rolls back, nothing is written.
+
+    RULING (raised on the record, HFY-TSK-409): refuse and roll back, rather than skip the object. A skip would apply the rest of the
+    website's snapshot with references (a Person's event reference) that point at an object the tree does not hold. The run log and the
+    status line carry this class name only (``Internal error (SparseObjectRefused)``), never an object's values or ids; `str()` names the
+    Gramps class and the key, which are not data."""
+
+
+def refuse_invented(obj):
+    """Raise SparseObjectRefused when `obj` (a completed state) still lacks a ``NEVER_INVENT`` key of its class, and at any nesting level."""
+    if isinstance(obj, dict):
+        name = obj.get("_class")
+        for cls, key in NEVER_INVENT:
+            if name == cls and key not in obj:
+                raise SparseObjectRefused("%s without %s" % (cls, key))
+        for v in obj.values():
+            refuse_invented(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            refuse_invented(v)
+
+
 def table_blank(name):
     """The blank object of class `name` from the committed table, or None."""
     return BLANKS.get(name)
@@ -47,6 +72,15 @@ def table_blank(name):
 def is_value_class(name):
     """True for the classes that are values, replaced whole when they change: Date, StyledText and every type table."""
     return isinstance(name, str) and (name in ("Date", "StyledText") or name.endswith("Type"))
+
+
+def agrees(sparse, whole):
+    """True when `sparse` (a value class object, perhaps cut down) is a cut-down copy of `whole`: every key it holds is a key of `whole`
+    with an equal value. Such a value says nothing new, so its missing keys are the keys of `whole`; a value that disagrees in any key
+    is a new value (a changed Date has a different `sortval`, so the old one is not carried over) and is replaced whole."""
+    if not isinstance(sparse, dict) or not isinstance(whole, dict) or sparse.get("_class") != whole.get("_class"):
+        return False
+    return all(k in whole and whole[k] == v for k, v in sparse.items() if k not in DERIVED_KEYS)
 
 
 def blank_value(name, key, blank_for=table_blank):
@@ -116,7 +150,9 @@ def _complete(node, blank_for, existing, key=None):
     if not isinstance(node, dict):
         return copy.deepcopy(node)
     name = node.get("_class")
-    ex = existing if isinstance(existing, dict) and not is_value_class(name) and existing.get("_class") == name else None
+    ex = existing if isinstance(existing, dict) and existing.get("_class") == name else None
+    if ex is not None and is_value_class(name) and not agrees(node, ex):
+        ex = None                                        # a new value, not a cut-down copy of the tree's: replaced whole
     out = {k: _complete(v, blank_for, ex.get(k) if ex is not None else None, k) for k, v in node.items()}
     if ex is not None:
         for key, value in ex.items():
@@ -135,10 +171,11 @@ def carry(previous, incoming):
     The base row follows the website, and the website's object can be sparse; a key the website leaves out is "no information", so the
     agreed state keeps what the base row already held for it instead of forgetting it (otherwise the next push would read a desktop
     value the website never removed as a desktop addition). Only keys of the previous row are carried, nothing is invented; the row's
-    hash stays the website's. Value classes (Date, StyledText, types) are replaced whole, and lists are taken as they are."""
+    hash stays the website's. A value class (Date, StyledText, type) is replaced whole unless it is a cut-down copy of the previous one
+    (`agrees`: every key it holds equals the previous one's), which keeps the previous keys; lists are taken as they are."""
     if not isinstance(incoming, dict) or not isinstance(previous, dict):
         return copy.deepcopy(incoming)
-    keep = not is_value_class(incoming.get("_class")) and previous.get("_class") == incoming.get("_class")
+    keep = previous.get("_class") == incoming.get("_class") and (not is_value_class(incoming.get("_class")) or agrees(incoming, previous))
     out = {k: carry(previous.get(k), v) if isinstance(v, dict) else copy.deepcopy(v) for k, v in incoming.items()}
     if keep:
         for key, value in previous.items():

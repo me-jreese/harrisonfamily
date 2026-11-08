@@ -136,6 +136,34 @@ class BlankAgainstGramps(AddonCase):
             self.assertEqual(after[key], held[key], key)
         self.assertEqual({k: v for k, v in after.items() if k not in ("place", "change")}, {k: v for k, v in held.items() if k not in ("place", "change")})
 
+    def test_a_cut_down_date_equal_to_the_trees_keeps_every_key_and_a_changed_one_is_replaced_whole(self):
+        """A Date is a value, but a cut-down copy of the tree's own Date says nothing new: its missing keys are the tree's, never the blank."""
+        before = self.objects()
+        ev = next(o for o in before.values() if o["_class"] == "Event" and o["date"]["sortval"] and o["date"]["dateval"][0])
+        full_date = ev["date"]
+        sparse = {k: copy.deepcopy(v) for k, v in ev.items() if k in SIX}
+        sparse["date"] = {"_class": "Date", "dateval": copy.deepcopy(full_date["dateval"])}
+
+        def run(db, DbTxn):
+            tree = self.tool.GrampsTree(db)
+            tree.apply("Website sync: pull seq 14", {sparse["handle"]: sparse}, [])
+            return tree.objects()
+
+        after = self.edit(run)[ev["handle"]]
+        self.assertEqual(after["date"], full_date, "sortval, format, text and the rest kept")
+        self.assertEqual({k: v for k, v in after.items() if k != "change"}, {k: v for k, v in ev.items() if k != "change"})
+        changed = copy.deepcopy(sparse)
+        changed["date"] = {"_class": "Date", "dateval": [0, 0, 1851, False]}      # RULING: a changed Date is the website's whole new value
+
+        def run2(db, DbTxn):
+            tree = self.tool.GrampsTree(db)
+            tree.apply("Website sync: pull seq 15", {changed["handle"]: changed}, [])
+            return tree.objects()
+
+        got = self.edit(run2)[ev["handle"]]
+        self.assertEqual((got["date"]["dateval"], got["date"]["text"]), ([0, 0, 1851, False], ""))
+        self.assertEqual({k: v for k, v in got.items() if k not in ("date", "change")}, {k: v for k, v in ev.items() if k not in ("date", "change")})
+
     def test_an_event_without_a_type_is_refused_not_made_a_birth(self):
         before = self.objects()
         ev = six_key_event("a1" * 14, "E9101")
@@ -144,8 +172,9 @@ class BlankAgainstGramps(AddonCase):
 
         def run(db, DbTxn):
             tree = self.tool.GrampsTree(db)
-            with self.assertRaises(KeyError):
+            with self.assertRaises(self.blank.SparseObjectRefused) as caught:
                 tree.apply("Website sync: pull seq 13", {ev["handle"]: ev}, [])
+            self.assertEqual(str(caught.exception), "'Event without type'", "names the class and the key, no values or ids")
             return tree.objects()
 
         self.assertEqual(self.edit(run), before)
@@ -199,6 +228,71 @@ class BlankAgainstGramps(AddonCase):
         checked = go("check")
         self.assertEqual(checked["counts"]["pulled"], {"create": 0, "update": 0, "delete": 0}, "nothing to pull")
         self.assertEqual(checked["counts"]["push_pending"], pending_before, "and the pull added nothing to push")
+        self.assertTrue(self.integrity_ok())
+
+    def test_a_mixed_sparse_and_full_snapshot_changes_only_the_intended_objects_byte_for_byte_and_the_push_plan_stays_empty(self):
+        """AC4 (d) and (e) with Gramps' own loader: every Event the website holds comes back as a six-key copy, some with a real change, a
+        Note comes back full and changed, new sparse objects arrive; the tree before and after differ in those and nothing else."""
+        from hfygramps.addon import mediafile
+        import json as _json
+
+        self.bind()
+        before_objects = self.objects()
+        fixtures = os.path.join(HERE, "..", "fixtures")
+        projected = UP.project_all(before_objects, files=mediafile.collect([o for o in before_objects.values() if o["_class"] == "Media"], fixtures))
+        cloud = UP.FakeCloud(self.dbid, UP.heads_of(projected))
+        env = dict(os.environ, HFY_SYNC_PS_CMD="true")
+
+        def go(action, **opt):
+            def run(db, DbTxn):
+                return self.runner.run(self.tool.GrampsTree(db), "cli", self.runner.Options(action, **opt), argv=["gramps"], environ=env,
+                                       services={"cloud": cloud})
+            return self.edit(run)
+
+        first = go("pull", yes=True)
+        self.assertEqual((first["result"], first["exit_code"]), ("ok", 0), first["error"])
+        pending = go("check")["counts"]["push_pending"]
+        settled = self.objects()
+
+        def dump(objs):
+            return {h: _json.dumps(o, sort_keys=True) for h, o in objs.items()}
+
+        events = sorted(h for h, v in cloud.heads.items() if v["class"] == "Event")
+        plain = [h for h in events if cloud.heads[h]["obj"]["type"]["value"] not in (12, 13, 14, 15) and not cloud.heads[h]["obj"].get("private")]
+        self.assertGreaterEqual(len(plain), 4)
+        changed_desc = plain[:2]
+        for h in events:                                   # every Event the website holds, cut down to the six keys the editor made
+            sparse = {k: copy.deepcopy(v) for k, v in cloud.heads[h]["obj"].items() if k in SIX}
+            if h in changed_desc:
+                sparse["description"] = "Changed on the website"
+            cloud.put(sparse)
+        note = next(copy.deepcopy(v["obj"]) for v in cloud.heads.values() if v["class"] == "Note" and v["obj"]["gramps_id"] == "N0004")
+        note["text"]["string"] = "A fictional note edited on the website."
+        cloud.put(note)
+        place = next(v["obj"]["place"] for v in cloud.heads.values() if v["class"] == "Event" and v["obj"]["place"])
+        new = [six_key_event("a1" * 14, "E9101"), six_key_event("a2" * 14, "E9102", place=place),
+               six_key_event("a3" * 14, "E9103", description="Fictional gathering"),
+               six_key_event("a4" * 14, "E9104", place=place, with_date=True, description="Another fictional gathering")]
+        tag = {"_class": "Tag", "handle": "b1" * 14, "name": "Fixture New Tag", "color": "#aa0000", "priority": 2}
+        for o in new + [tag]:
+            cloud.put(o)
+        second = go("pull", yes=True)
+        self.assertEqual((second["result"], second["exit_code"]), ("ok", 0), second["error"])
+        self.assertEqual(second["counts"]["pulled"], {"create": 5, "update": 3, "delete": 0})
+        after = self.objects()
+        intended = sorted(changed_desc + [note["handle"]] + [o["handle"] for o in new + [tag]])
+        d_before, d_after = dump(settled), dump(after)
+        self.assertEqual(sorted(h for h in set(d_before) | set(d_after) if d_before.get(h) != d_after.get(h)), intended)
+        for h in changed_desc:                             # a real change changes that field (and Gramps' own stamp) only
+            want = {k: v for k, v in settled[h].items() if k not in ("description", "change")}
+            self.assertEqual({k: v for k, v in after[h].items() if k not in ("description", "change")}, want)
+            self.assertEqual(after[h]["description"], "Changed on the website")
+        again = go("pull", yes=True)
+        self.assertEqual(again["counts"]["pulled"], {"create": 0, "update": 0, "delete": 0})
+        self.assertEqual(dump(self.objects()), d_after)
+        checked = go("check")
+        self.assertEqual(checked["counts"]["pulled"], {"create": 0, "update": 0, "delete": 0})
+        self.assertEqual(checked["counts"]["push_pending"], pending, "(e) the pull added nothing to push")
         self.assertTrue(self.integrity_ok())
 
 

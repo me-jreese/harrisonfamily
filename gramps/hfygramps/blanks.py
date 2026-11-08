@@ -5,6 +5,10 @@ Written by gramps/scripts/gen-blanks.py under the bundled Gramps, which checks i
 """
 import json
 
+#: The Gramps version the table was built from. tests/unit/test_addon_sparse.py fails when this is not the version the repository pins
+#: (hfygramps/schema_check.py STEM), so a Gramps upgrade cannot pass CI with a stale table: regenerate it with this script.
+GRAMPS_VERSION = "6.0.6"
+
 BLANKS = json.loads(r'''
 {
  "Address": {

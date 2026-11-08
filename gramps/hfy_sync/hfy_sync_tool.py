@@ -147,7 +147,9 @@ class GrampsTree(runner.TreeAccess):
         would then write over the tree's value. So a missing key takes the value the tree holds for that object now, and only an object
         that is new to the tree takes the blank object Gramps itself builds for its class. A key that is present is never changed."""
         existing = self._read(state["_class"], state["handle"]) if state.get("handle") else None
-        return blank.complete(state, _gramps_blank, existing)
+        out = blank.complete(state, _gramps_blank, existing)
+        blank.refuse_invented(out)          # an Event without a type: SparseObjectRefused, the one transaction rolls back (named, no values)
+        return out
 
     def apply(self, label, commits, removals, precheck=None, verify=None, hook=None):
         # ONE non-batch DbTxn: a single Edit > Undo entry in the GUI (sync.md 8.3 step 9); any exception aborts all of it.
