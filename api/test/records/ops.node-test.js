@@ -8,7 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyOps, invertOps, rebaseOps, mintHandle, HANDLE_SHAPE, keyFor, keySegment, canonicalJson, sha256Hex, hashObject, hash12,
-  contentHash, deepClone, mergeReducedDate, validateOps, parsePath, REASONS,
+  contentHash, deepClone, mergeReducedDate, validateOps, parsePath, REASONS, completeCreate, CREATE_DEFAULTS, blankDate,
 } from "../../src/records/ops.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -928,6 +928,155 @@ describe("property: applying ops and then their inverses restores the original o
       assert.equal(Object.keys(res.objects).length, 2);
       assert.deepEqual(applyOps(res.objects, res.inverse).objects, original);
     }
+  });
+});
+
+// ---- create completes the class defaults (HFY-TSK-409) ----------------------------------------------------------
+describe("create stores a complete object", () => {
+  const SCHEMAS = resolve(here, "../../src/records/schemas");
+  const schemaOf = (cls) => JSON.parse(readFileSync(resolve(SCHEMAS, `${cls}.schema.json`), "utf8"));
+  // The keys the defaults leave absent on purpose: Gramps' blank value would be a guess (a blank event is a Birth).
+  const ABSENT = { Event: ["type"], Repository: ["type"], Citation: ["source_handle"] };
+  const HDL = "5a".padEnd(28, "0");
+  const create = (cls, value, obj = `${cls}:${HDL}`) => applyOps({}, [{ id: "c", op: "create", obj, cls, value }]);
+  const typed = (cls, value) => ({ _class: cls, value, string: "" });
+
+  it("covers exactly the classes the website can create", () => {
+    assert.deepEqual(Object.keys(CREATE_DEFAULTS).sort(), ["Citation", "Event", "Media", "Note", "Place", "Repository", "Source"]);
+  });
+
+  for (const cls of Object.keys(CREATE_DEFAULTS)) {
+    it(`${cls}: the defaults are the class schema's keys (plus the dropped ones), typed as the schema says`, () => {
+      const schema = schemaOf(cls);
+      const keys = new Set([...Object.keys(schema.properties), ...schema["x-hfy"].dropped]);
+      const defaults = CREATE_DEFAULTS[cls]();
+      const have = new Set([...Object.keys(defaults), ...(ABSENT[cls] || []), "_class", "handle"]);
+      assert.deepEqual([...have].sort(), [...keys].sort());
+      for (const [k, v] of Object.entries(defaults)) {
+        const prop = schema.properties[k];
+        if (!prop) continue; // a dropped key: Gramps serialises it, the editor never shows it
+        if (prop.$ref) { assert.equal(typeof v, "object", k); continue; }
+        const types = [].concat(prop.type);
+        const t = Array.isArray(v) ? "array" : v === null ? "null" : Number.isInteger(v) ? "integer" : typeof v;
+        assert.ok(types.includes(t), `${cls}.${k} default ${JSON.stringify(v)} is not ${types}`);
+      }
+    });
+    it(`${cls}: an empty create gives every default key, keeps the handle and _class, and hashes the same on a replay`, () => {
+      const r = create(cls, {});
+      assert.equal(r.ok, true, JSON.stringify(r.conflicts));
+      const obj = r.objects[`${cls}:${HDL}`];
+      assert.equal(obj.handle, HDL);
+      assert.equal(obj._class, cls);
+      for (const k of Object.keys(CREATE_DEFAULTS[cls]())) assert.ok(k in obj, `${cls}.${k}`);
+      for (const k of ABSENT[cls] || []) assert.equal(k in obj, false, `${cls}.${k} is not invented`);
+      const again = applyOps(r.objects, [{ id: "c", op: "create", obj: `${cls}:${HDL}`, cls, value: {} }]);
+      assert.equal(again.ok, true);
+      assert.deepEqual(again.results.map((x) => x.status), ["noop"]);
+      assert.equal(hashObject(again.objects[`${cls}:${HDL}`]), hashObject(obj));
+    });
+  }
+
+  it("the editor's sparse Event (six keys at most) becomes a complete Event, with and without date, place and description", () => {
+    const d = { _class: "Date", calendar: 0, modifier: 0, quality: 0, dateval: [0, 0, 1901, false], text: "", newyear: 0 };
+    for (const extra of [{}, { date: d }, { place: "abc" }, { description: "a note" }, { date: d, place: "abc", description: "a note" }]) {
+      const r = create("Event", { _class: "Event", type: typed("EventType", 7), ...extra });
+      const e = r.objects[`Event:${HDL}`];
+      assert.deepEqual(Object.keys(e).sort(), ["_class", "attribute_list", "change", "citation_list", "date", "description", "gramps_id", "handle", "media_list", "note_list", "place", "private", "tag_list", "type"]);
+      assert.deepEqual(e.type, typed("EventType", 7));
+      assert.equal(e.place, extra.place || "");
+      assert.equal(e.description, extra.description || "");
+      if (extra.date) assert.deepEqual({ ...e.date, format: null, sortval: 0 }, { ...extra.date, format: null, sortval: 0 }, "the incoming date is kept");
+      else assert.deepEqual(e.date, blankDate());
+      assert.equal(e.date.format, null);
+      assert.equal(typeof e.date.sortval, "number");
+    }
+  });
+
+  it("the Gramps blank date is the shape relationships.js and the Gramps 6.0.6 serialiser use", () => {
+    assert.deepEqual(blankDate(), { _class: "Date", calendar: 0, dateval: [0, 0, 0, false], format: null, modifier: 0, newyear: 0, quality: 0, sortval: 0, text: "" });
+    assert.notEqual(blankDate(), blankDate(), "a fresh object each time");
+  });
+
+  it("the editor's Place, Note, Source and Citation values complete too, nested PlaceName date and type strings included", () => {
+    const place = create("Place", { _class: "Place", name: { _class: "PlaceName", value: "Sampleville", lang: "" }, place_type: { _class: "PlaceType", value: -1, string: "" } }).objects[`Place:${HDL}`];
+    assert.deepEqual(place.name, { _class: "PlaceName", date: blankDate(), lang: "", value: "Sampleville" });
+    assert.deepEqual(place.alt_loc, []);
+    assert.deepEqual(place.place_type, typed("PlaceType", -1));
+    const note = create("Note", { _class: "Note", type: typed("NoteType", 1), format: 0, text: { _class: "StyledText", string: "hello", tags: [] } }).objects[`Note:${HDL}`];
+    assert.deepEqual(note.text, { _class: "StyledText", string: "hello", tags: [] });
+    assert.deepEqual(note.tag_list, []);
+    assert.equal(note.private, false);
+    const source = create("Source", { _class: "Source", title: "A book" }).objects[`Source:${HDL}`];
+    assert.equal(source.title, "A book");
+    assert.deepEqual([source.abbrev, source.author, source.pubinfo, source.reporef_list, source.media_list], ["", "", "", [], []]);
+    const cit = create("Citation", { _class: "Citation", source_handle: "s1", page: "p. 4", confidence: 3 }).objects[`Citation:${HDL}`];
+    assert.deepEqual([cit.source_handle, cit.page, cit.confidence, cit.gramps_id, cit.change], ["s1", "p. 4", 3, "", 0]);
+    assert.deepEqual(cit.date, blankDate());
+    assert.equal(create("Citation", { source_handle: "s1" }).objects[`Citation:${HDL}`].confidence, 2, "Gramps' own default confidence (Normal), not 0");
+    assert.deepEqual(create("Note", { text: { string: "x" } }).objects[`Note:${HDL}`].text, { string: "x" }, "a text without a class is not touched");
+  });
+
+  it("values that are present are never changed, including falsy ones", () => {
+    const v = { _class: "Event", type: typed("EventType", 7), gramps_id: "E7", private: true, description: "", note_list: ["n1"], change: 1700000000, place: null };
+    const e = create("Event", v).objects[`Event:${HDL}`];
+    assert.equal(e.gramps_id, "E7");
+    assert.equal(e.private, true);
+    assert.deepEqual(e.note_list, ["n1"]);
+    assert.equal(e.change, 1700000000);
+    assert.equal(e.place, null);
+  });
+
+  it("a temporary handle is minted before the completion and the object is the same on a replay", () => {
+    const ops = [{ id: "c", op: "create", obj: "new:1", cls: "Event", value: { type: typed("EventType", 7) } }];
+    const r = applyOps({}, ops);
+    assert.equal(r.ok, true);
+    const [key] = Object.keys(r.objects);
+    assert.match(key, /^Event:/);
+    assert.equal(r.objects[key].handle, key.slice(6));
+    assert.equal(r.objects[key].gramps_id, "");
+  });
+
+  it("a replayed create is a no-op, against the completed object and against a sparse one an earlier release stored", () => {
+    const sparse = { _class: "Event", handle: HDL, type: typed("EventType", 7), date: blankDate(), gramps_id: "", place: "" };
+    const op = { id: "c", op: "create", obj: `Event:${HDL}`, cls: "Event", value: { _class: "Event", type: typed("EventType", 7), date: blankDate(), gramps_id: "", place: "" } };
+    const legacy = rebaseOps([op], { [`Event:${HDL}`]: sparse });
+    assert.deepEqual(legacy.results.map((x) => x.status), ["noop"]);
+    const fresh = applyOps({}, [op]);
+    const replay = rebaseOps([op], fresh.objects);
+    assert.deepEqual(replay.results.map((x) => x.status), ["noop"]);
+    const clash = rebaseOps([{ ...op, value: { ...op.value, description: "other" } }], fresh.objects);
+    assert.equal(clash.conflicts[0].reason, REASONS.objectExists);
+  });
+
+  it("the inverse of a create deletes it by the completed object's hash, and undoing the delete restores the same object", () => {
+    const r = create("Event", { type: typed("EventType", 7) });
+    const key = `Event:${HDL}`;
+    assert.equal(r.inverse[0].op, "delete");
+    assert.equal(r.inverse[0].base, hashObject(r.objects[key]));
+    const gone = applyOps(r.objects, r.inverse);
+    assert.deepEqual(gone.objects, {});
+    assert.deepEqual(applyOps(gone.objects, gone.inverse).objects, r.objects);
+  });
+
+  it("an object that is already complete, and every class the website does not complete, is stored as it is", () => {
+    const full = { _class: "Event", handle: HDL, ...CREATE_DEFAULTS.Event(), type: typed("EventType", 7), gramps_id: "E1" };
+    assert.equal(hashObject(create("Event", deepClone(full)).objects[`Event:${HDL}`]), hashObject(full));
+    for (const cls of ["Person", "Family", "Tag"]) {
+      const v = { gramps_id: "X1", note_list: [] };
+      assert.deepEqual(create(cls, deepClone(v)).objects[`${cls}:${HDL}`], { ...v, handle: HDL, _class: cls });
+    }
+    assert.deepEqual(completeCreate("Person", { a: 1 }), { a: 1 });
+    assert.equal(completeCreate("Event", "not an object"), "not an object");
+    assert.deepEqual(completeCreate("constructor", { a: 1 }), { a: 1 });
+  });
+
+  it("completion never shares state between creates", () => {
+    const a = create("Event", {}).objects[`Event:${HDL}`];
+    a.note_list.push("x");
+    a.date.dateval[0] = 9;
+    const b = create("Event", {}).objects[`Event:${HDL}`];
+    assert.deepEqual(b.note_list, []);
+    assert.deepEqual(b.date, blankDate());
   });
 });
 

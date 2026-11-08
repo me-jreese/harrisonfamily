@@ -19,6 +19,7 @@ import {
 import { createSesMailer, sendEmailInput } from "../src/mailer.js";
 import { allowKeys, createCompositeMemberReader, grantItems, isAllowedNow, readAllowEntry } from "../src/allowlist-store.js";
 import { TEMPLATE_IDS } from "../src/shared/emails.mjs";
+import { completeCreate, hashObject } from "../src/records/ops.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ADMIN = "I0099";
@@ -474,6 +475,19 @@ describe("a 'new' decision files a person.create system proposal (AC3)", () => {
     const [decide] = w.audits(`accessreq:${ID1}`);
     expect(decide).toMatchObject({ op: "accessreq.decide", after: { state: "awaiting_record", decision: "new", proposalId: r.body.proposalId, confirmedOutside: true } });
     expect(w.allow()).toBeUndefined(); // nobody can sign in yet
+  });
+
+  it("the events it builds are already complete: the create completion changes no stored hash (HFY-TSK-409)", () => {
+    const { ops } = opsFromPreview({
+      person: { _class: "Person", gender: 0, gramps_id: "I1", private: true,
+        primary_name: { _class: "Name", first_name: " Sam ", nick: "Sammy", surname_list: [{ surname: " Exampleton " }] }, event_ref_list: [{ ref: "b" }] },
+      events: [{ _class: "Event", hfyKey: "b", type: { value: 12 }, date: { dateval: [3, 4, 1980, false], modifier: 0 }, description: "x" }],
+    }, { nowYear: 2026 });
+    const create = ops.find((o) => o.value._class === "Event");
+    const value = { ...create.value, handle: "5a".padEnd(28, "0") };
+    const done = completeCreate("Event", JSON.parse(JSON.stringify(value)));
+    expect(hashObject(done)).toBe(hashObject(value));
+    expect(Object.keys(done).filter((k) => !(k in value))).toEqual(["change"]); // the derived stamp only, which no hash covers
   });
 
   it("builds the ops from the preview field by field: nothing beyond the Gramps-mapped facts reaches the store, and the server owns the derived members", () => {

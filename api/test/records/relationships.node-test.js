@@ -13,7 +13,7 @@ import {
   ERROR, MAX_CHILDREN, MAX_TXN_ACTIONS, TXN_COST, WARNING, approvalActionCount, assignSlots, compileRelationship,
 } from "../../src/records/relationships.js";
 import { findDuplicates, foldName, summarizePerson, unconfirmedDuplicates } from "../../src/records/duplicates.js";
-import { applyOps, canonicalJson, validateOps } from "../../src/records/ops.js";
+import { applyOps, canonicalJson, completeCreate, CREATE_DEFAULTS, deepClone, hashObject, validateOps } from "../../src/records/ops.js";
 import { checkSemantics } from "../../src/records/semantics.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -804,5 +804,25 @@ describe("review fixes (HFY-TSK-251)", () => {
     // no given name on the stub: the empty given matches only by the surname, and ranks below a named match
     assert.deepEqual(ids({ given: "", surname: "Weber" }), ["p3"]);
     assert.deepEqual(ids({ given: "", surname: "" }), [], "nothing to match on");
+  });
+});
+
+// HFY-TSK-409: a create is completed with the class defaults, and the objects this compiler builds are already complete, so the completion
+// leaves each of them (and its stored hash) exactly as it was.
+describe("create completion leaves the compiler's full objects unchanged", () => {
+  it("every Place and Event the golden scenarios create keeps its canonical JSON and its hash", () => {
+    let seen = 0;
+    for (const sc of GOLDEN.scenarios) {
+      if (sc.tags.includes("already-recorded")) continue;
+      const res = compile(sc.intent);
+      for (const op of res.ops.filter((o) => o.op === "create" && Object.hasOwn(CREATE_DEFAULTS, o.cls))) {
+        const value = { ...deepClone(op.value), handle: H(op.cls, 1), _class: op.cls };
+        const done = completeCreate(op.cls, deepClone(value));
+        assert.equal(canonicalJson(done), canonicalJson(value), `${sc.id} ${op.cls}`);
+        assert.equal(hashObject(done), hashObject(value), `${sc.id} ${op.cls}`);
+        seen += 1;
+      }
+    }
+    assert.ok(seen >= 5, `only ${seen} completable creates were seen`);
   });
 });
