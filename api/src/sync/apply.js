@@ -35,6 +35,7 @@ import {
   getBatchReceipt, getGid, getRecordItem, getSyncHead, gidClaimItem, gidDelete, gidRetiredItem, headItem, headKey, isPermanentIdClass, keyId, logItem, objectJson, parseHead, requestTokenFor, sha256,
 } from "./store.js";
 import { completeAssignments, isAssignment, isWebAssignment, mintIds, policyOf, WEB_ORIGINS } from "./id-policy.js";
+import { keepWebsiteMediaPath } from "./media-path.js";
 import { defaultValidate, isFullValidator } from "./validator.js";
 import { createStoreView } from "./view.js";
 
@@ -378,7 +379,7 @@ export async function applyBatch(ctx, req) {
     checkStoreGate(headItemNow, origin);
 
     // 1b. Mint the ids of web-origin creates (mint mode). Redone on every attempt: the counter is read from this attempt's SYNC#HEAD.
-    const { ops, idNext } = await mintIds({
+    const { ops: minted, idNext } = await mintIds({
       policy, origin, ops: baseOps, head: headItemNow,
       getGid: (cls, id) => getGid(store, cls, id),
       rebuild: (op, obj) => ({ ...op, gramps_id: obj.gramps_id, obj: JSON.parse(objectJson(obj)), objJson: objectJson(obj) }),
@@ -386,7 +387,10 @@ export async function applyBatch(ctx, req) {
 
     // 2. Read the view: the head of every object and the GID item of every id the batch touches.
     const heads = new Map();
-    await Promise.all(ops.filter((o) => o.op !== "marker").map(async (o) => heads.set(`${o.class}#${o.handle}`, await getRecordItem(store, o.class, o.handle))));
+    await Promise.all(minted.filter((o) => o.op !== "marker").map(async (o) => heads.set(`${o.class}#${o.handle}`, await getRecordItem(store, o.class, o.handle))));
+    // A desktop Media update that blanks the path of a Media whose head holds one keeps the stored path (media-path.js, HFY-TSK-410).
+    // Decided here, from the head, before the validators run, so what they check and what is stored is the same object.
+    const ops = keepWebsiteMediaPath(minted, heads, origin);
     const gidWanted = new Map();
     for (const o of ops) {
       if (o.op === "marker" || o.class === "Tag") continue;

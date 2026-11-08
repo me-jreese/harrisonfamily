@@ -688,6 +688,15 @@ describe("media: staging, finalize and the orphaned key (AC4, fake S3)", () => {
     expect(w.row(`REC#Media#${m.handle}`, "HEAD").blob).toEqual(before);
   });
 
+  it("a desktop push of a Media with path '' over a stored non-empty path keeps the stored path, through the route and the full validator (HFY-TSK-410)", async () => {
+    const w = world();
+    const m = media(1, { path: "uploads/web-photo-fictional.jpg", desc: "A" });
+    expect((await w.push([create(m)])).status).toBe(200);
+    const r = await w.push([update({ ...m, path: "", desc: "Edited on the desktop" }, 1)]);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(w.row(`REC#Media#${m.handle}`, "HEAD").obj_json)).toMatchObject({ path: "uploads/web-photo-fictional.jpg", desc: "Edited on the desktop" });
+  });
+
   it("a pending item that expired between a commit whose copy failed and the replay: the replay still copies the staged blob into place", async () => {
     const w = world();
     const m = media(1);

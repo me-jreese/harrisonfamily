@@ -424,6 +424,17 @@ def update_birthlike_sticky(sticky, objects, base=None, released=(), policy=None
     return (set(sticky) - released) | birthlike_sticky_additions(objects, base, policy, released)
 
 
+# The keys a class keeps on the desktop whatever the website holds (rule media.path.local_only: a Media's path is a file on this Mac), with
+# the value the projection sets in their place. The merge treats them as owned by the other side (HFY-TSK-410): a website-created Media has
+# a non-empty `path` of its own in the cloud object and in the base row, and the blank the projection puts there is not a desktop edit.
+LOCAL_ONLY_KEYS = {"Media": {"path": ""}}
+
+
+def local_only_keys(cls):
+    """``{key: blank value}`` of the top-level keys the projection always replaces for a class (a copy; ``{}`` for a class without any)."""
+    return dict(LOCAL_ONLY_KEYS.get(cls, {}))
+
+
 # --------------------------------------------------------------------------------------------------------------------
 # Lift helpers for the two fields whose projection loses precision (the full lift is merge-engine-py's).
 
@@ -699,9 +710,10 @@ class _Run:
         if cls == "Place":
             self._place_fields(obj)
         if cls == "Media":
-            if obj.get("path"):
-                self.fired.add("media.path.local_only")
-            obj["path"] = ""
+            for key, blank_value in local_only_keys(cls).items():
+                if obj.get(key):
+                    self.fired.add("media.path.local_only")
+                obj[key] = blank_value
             f = R._obj(self.files.get(h))
             if f.get("readable") and f.get("md5"):
                 if obj.get("checksum") != f["md5"]:
