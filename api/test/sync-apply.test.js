@@ -1029,3 +1029,65 @@ describe("module surface", () => {
     expect(gidKey("Person", "I0001")).toEqual({ PK: "GID#Person#I0001", SK: "META" });
   });
 });
+
+describe("a desktop push never blanks a Media's stored path (HFY-TSK-410)", () => {
+  const WEB_PATH = "uploads/web-photo-fictional.jpg";
+  const media = (n, extra = {}) => ({ _class: "Media", handle: h(5000 + n), gramps_id: `O${String(8100 + n)}`, change: 1700000000, private: false, path: WEB_PATH, mime: "image/jpeg", desc: "A", ...extra });
+  const stored = (w, m) => JSON.parse(w.row(`REC#Media#${m.handle}`, "HEAD").obj_json);
+  const logged = (w, seq) => JSON.parse(w.row("SYNC#LOG", seqKey(seq)).obj_json);
+
+  it("a desktop update with path '' over a stored non-empty path stores the stored path and the rest of the edit", async () => {
+    const w = world();
+    const m = media(1);
+    await w.apply([create(m)], { origin: "admin" });
+    const r = await w.apply([update({ ...m, path: "", desc: "Edited on the desktop" }, 1)]);
+    expect(r.results[0]).toMatchObject({ version: 2 });
+    expect(stored(w, m)).toMatchObject({ path: WEB_PATH, desc: "Edited on the desktop" });
+    const head = w.row(`REC#Media#${m.handle}`, "HEAD");
+    expect(head.hash).toBe(sha256(head.obj_json));
+    expect(head.obj_json).toBe(objectJson({ ...m, desc: "Edited on the desktop" }));
+    expect(logged(w, 2).path).toBe(WEB_PATH); // the change log holds what the head holds
+  });
+
+  it("a blank-only update (nothing else differs) is a new version that carries the stored object", async () => {
+    const w = world();
+    const m = media(2);
+    await w.apply([create(m)], { origin: "admin" });
+    await w.apply([update({ ...m, path: "" }, 1)]);
+    expect(stored(w, m)).toEqual((({ change, ...rest }) => rest)(m)); // eslint-disable-line no-unused-vars
+  });
+
+  it("a non-empty path in the op is the caller's, a desktop-created Media (stored path '') is stored as sent, and other origins are not touched", async () => {
+    const w = world();
+    const mine = media(3, { path: "" });
+    const web = media(4);
+    await w.apply([create(mine), create(web)]);
+    await w.apply([update({ ...mine, desc: "B" }, 1)]);
+    expect(stored(w, mine).path).toBe("");
+    await w.apply([update({ ...web, path: "uploads/replaced.jpg" }, 1)]);
+    expect(stored(w, web).path).toBe("uploads/replaced.jpg");
+    await w.apply([update({ ...web, path: "" }, 2)], { origin: "admin" });
+    expect(stored(w, web).path).toBe("");
+  });
+
+  it("only a Media update is rewritten: a create over a tombstone, another class with a path-like key and the blob are as sent", async () => {
+    const w = world();
+    const m = media(5);
+    await w.apply([{ ...create(m), blob: { s3_key: "k" } }], { origin: "admin" });
+    await w.apply([update({ ...m, path: "", desc: "B" }, 1)]);
+    expect(w.row(`REC#Media#${m.handle}`, "HEAD")).toMatchObject({ version: 2, blob: { s3_key: "k" } });
+    await w.apply([del("Media", m.handle, 2)]);
+    await w.apply([create({ ...m, path: "" }, { base_version: 3 })]);
+    expect(stored(w, m).path).toBe("");
+  });
+
+  it("a replay of the same batch key answers from the receipt and writes nothing more", async () => {
+    const w = world();
+    const m = media(6);
+    await w.apply([create(m)], { origin: "admin" });
+    const ops = [update({ ...m, path: "", desc: "B" }, 1)];
+    const first = await w.apply(ops, { idempotencyKey: "same" });
+    expect(await w.apply(ops, { idempotencyKey: "same" })).toEqual({ ...first, replayed: true });
+    expect(stored(w, m).path).toBe(WEB_PATH);
+  });
+});

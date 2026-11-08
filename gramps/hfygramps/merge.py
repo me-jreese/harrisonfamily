@@ -669,17 +669,63 @@ def reconcile_sparse(base, local, cloud):
     return b, c
 
 
+def _park_local_only(obj):
+    """The projected form of the base or the cloud object for COMPARISON: every key the projection declares local-only (``Media.path``) at
+    its blank, which is what P(L) holds there. A copy when something changed, the object itself otherwise (the caller maps it back by
+    identity). The website's own value is never compared with the desktop's blank: it is not a desktop edit in either direction."""
+    if not isinstance(obj, dict):
+        return obj
+    keys = PR.local_only_keys(obj.get("_class"))
+    if not any(k in obj and obj[k] != blank_value for k, blank_value in keys.items()):
+        return obj
+    out = dict(obj)
+    for k, blank_value in keys.items():
+        if k in out:
+            out[k] = blank_value
+    return out
+
+
+def _restore_local_only(push, cloud):
+    """The object of a push op carries the cloud's own value for every local-only key the cloud has: the desktop never sends a blank over
+    the website's non-empty ``path`` (its uploaded file), and the base row that follows the push is the website's object."""
+    if not isinstance(push, dict) or push.get("op") != "update" or not isinstance(push.get("obj"), dict) or not isinstance(cloud, dict):
+        return
+    for k in PR.local_only_keys(push.get("class")):
+        if k in cloud:
+            push["obj"][k] = copy.deepcopy(cloud[k])
+
+
+def _unpark_conflicts(conflicts, base_pair, cloud_pair):
+    """An object-level conflict (path ``""``) holds whole objects: show the ones that were passed in (after the sparse reconcile), not the
+    copies parked for comparison, so a conflict never shows the website's own ``path`` as blank. ``*_pair`` is (parked, shown)."""
+    for c in conflicts:
+        if c.get("path") != "":
+            continue
+        for key, (parked, shown) in (("base", base_pair), ("cloud", cloud_pair)):
+            if parked is not shown and c.get(key) is parked:
+                c[key] = shown
+                c[key + "_json"] = _dump(shown)
+
+
 def merge_object(base, local, local_proj, cloud, **kw):
     """Merge one object (see ``_merge_object``), after ``reconcile_sparse``. The base and cloud objects the result hands back for the
-    sidecar (``base_after``) are the ones that were passed in, never the reconciled copies."""
+    sidecar (``base_after``) are the ones that were passed in, never the reconciled copies.
+
+    Where the desktop has the object, a key the projection declares local-only (``Media.path``) is compared at its blank on the base and
+    on the cloud side too, so the projection's blank is no desktop edit; the object that is pushed gets the cloud's own value back."""
     ref = local_proj if isinstance(local_proj, dict) else local
     nb, nc = reconcile_sparse(base, ref, cloud)
-    res = _merge_object(nb, local, local_proj, nc, **kw)
+    pb, pc = nb, nc
+    if isinstance(local, dict) and isinstance(local_proj, dict):
+        pb, pc = _park_local_only(nb), _park_local_only(nc)
+    res = _merge_object(pb, local, local_proj, pc, **kw)
+    _unpark_conflicts(res.conflicts, (pb, nb), (pc, nc))
     if res.base_after is not None:
-        if nc is not cloud and res.base_after is nc:
+        if pc is not cloud and res.base_after is pc:
             res.base_after = cloud
-        elif nb is not base and res.base_after is nb:
+        elif pb is not base and res.base_after is pb:
             res.base_after = base
+    _restore_local_only(res.push, cloud)
     return res
 
 
