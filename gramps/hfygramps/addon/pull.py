@@ -22,6 +22,7 @@ import os
 import shutil
 import urllib.parse
 
+from .. import blank
 from .. import merge as M
 from .. import projection as PR
 from .. import rules as R
@@ -577,8 +578,9 @@ def _update_sidecar(ctx, plan, cloud_tree):
     with side:
         for op, cls, h, head in plan.base_ops:
             if op == "set":
+                # the website's hash, and its object plus the keys it left out that the row already held (hfygramps/blank.py `carry`)
                 side.execute("INSERT OR REPLACE INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES (?, ?, ?, ?, ?, ?, 0)",
-                             (cls, h, head.version, head.seq, head.hash, _obj_json(head.obj)))
+                             (cls, h, head.version, head.seq, head.hash, _obj_json(blank.carry(plan.base_objs.get(h), head.obj))))
             elif op == "deleted":
                 side.execute("INSERT OR REPLACE INTO base (class, handle, version, seq, hash, obj_json, deleted) VALUES (?, ?, ?, ?, ?, NULL, 1)",
                              (cls, h, head.version if head else 0, head.seq if head else 0, head.hash if head and head.hash else ""))

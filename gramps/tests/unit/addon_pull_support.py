@@ -26,6 +26,7 @@ FIXTURE = os.path.join(GRAMPS_DIR, "tests", "fixtures", "synthetic-tree.jsonl")
 if GRAMPS_DIR not in sys.path:
     sys.path.insert(0, GRAMPS_DIR)
 
+from hfygramps import blank  # noqa: E402
 from hfygramps import canonical  # noqa: E402
 from hfygramps import projection as PR  # noqa: E402
 from hfygramps.addon import binding, consts, paths, runner, sidecar, transport  # noqa: E402
@@ -116,7 +117,8 @@ class FakeTree(runner.TreeAccess):
         items = sorted(commits.items())
         half = (len(items) + 1) // 2
         for i, (h, o) in enumerate(items, 1):
-            working[h] = copy.deepcopy(o)
+            # the same completion as hfy_sync_tool.GrampsTree.complete: Gramps' blank (here the table) only for what the tree does not hold
+            working[h] = blank.complete(o, existing=self._objs.get(h))
             if hook is not None and i == half:
                 hook("mid_apply")
         if hook is not None and not items:

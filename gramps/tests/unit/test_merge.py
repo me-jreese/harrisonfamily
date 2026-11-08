@@ -247,11 +247,11 @@ class FieldRules(unittest.TestCase):
         self.assertTrue(a.conflicts[0]["id"].startswith("cf-"))
 
     def test_a_conflict_does_not_drop_unrelated_changes(self):
-        l = ed(self.l0, lambda o: (rename("Zed")(o), o.__setitem__("gender", 2)))
+        l = ed(self.l0, lambda o: (rename("Zed")(o), o.__setitem__("gender", 1)))   # 1, not 2: this person has no `gender` key, and Gramps' blank gender is 2 (a missing key reads as the blank, HFY-TSK-409)
         c = proj1(ed(self.l0, lambda o: (rename("Quill")(o), o["urls"].append(MV.URL("https://example.org/w")))))
         r = mo(self.b, l, c, cloud_version=1)
         self.assertEqual(conflict_paths(r), ["/primary_name/first_name"])
-        self.assertEqual(r.push["obj"]["gender"], 2)                       # the desktop change goes up
+        self.assertEqual(r.push["obj"]["gender"], 1)                       # the desktop change goes up
         self.assertEqual(r.push["obj"]["primary_name"]["first_name"], "Quill")
         self.assertEqual(len(r.local_obj["urls"]), 1)                      # the web change comes down
         self.assertEqual(r.local_obj["primary_name"]["first_name"], "Zed")
@@ -855,10 +855,10 @@ class Pinning(unittest.TestCase):
     def test_the_push_carries_the_cloud_value_at_the_pinned_path_while_other_edits_go_up_and_come_down(self):
         side = Sidecar(self.b, self.theirs, self.mine)
         side.run()
-        side.local = ed(side.local, lambda o: o.__setitem__("gender", 2))
+        side.local = ed(side.local, lambda o: o.__setitem__("gender", 1))
         r = side.run()
         self.assertEqual(r.push["obj"]["primary_name"]["first_name"], "Quill")
-        self.assertEqual(r.push["obj"]["gender"], 2)
+        self.assertEqual(r.push["obj"]["gender"], 1)
         self.assertIsNone(r.local_obj)
         # a later website change elsewhere comes down, and the pinned path keeps the local value
         side.cloud = ed(side.cloud, lambda o: o["urls"].append(MV.URL("https://example.org/w")))

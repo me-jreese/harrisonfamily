@@ -30,7 +30,6 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if not os.path.isdir(os.path.join(_HERE, "hfygramps")):
     sys.path.insert(0, os.path.dirname(_HERE))
 
-import copy  # noqa: E402
 import logging  # noqa: E402
 import time  # noqa: E402
 
@@ -38,11 +37,13 @@ from gramps.gen.const import GRAMPS_LOCALE as glocale  # noqa: E402
 from gramps.gen.const import VERSION, VERSION_TUPLE  # noqa: E402
 from gramps.gen.db import DbTxn  # noqa: E402
 from gramps.gen.errors import HandleError  # noqa: E402
+import gramps.gen.lib as grampslib  # noqa: E402
 from gramps.gen.lib.json_utils import data_to_object, object_to_dict  # noqa: E402
 from gramps.gui.plug import tool  # noqa: E402
 
 import hfy_sync_ui  # noqa: E402
 from gramps.gen.utils.file import media_path  # noqa: E402
+from hfygramps import blank  # noqa: E402
 from hfygramps.addon import consts, mediafile, runner  # noqa: E402
 
 _ = glocale.translation.gettext
@@ -58,6 +59,17 @@ _GETTER = {cls: "get_%s_from_handle" % cls.lower() for cls in consts.CLASSES}
 _RAW_GETTER = {cls: "get_raw_%s_data" % cls.lower() for cls in consts.CLASSES}  # the stored json_data dict, no Gramps object built
 _COMMIT = {cls: "commit_%s" % cls.lower() for cls in consts.CLASSES}
 _REMOVE = {cls: "remove_%s" % cls.lower() for cls in consts.CLASSES}
+
+
+def _gramps_blank(name):
+    """`object_to_dict(Class())` for a Gramps object class (what the committed table hfygramps/blanks.py holds), or None."""
+    cls = getattr(grampslib, name, None) if isinstance(name, str) and not name.endswith("Type") else None
+    if cls is None or not hasattr(cls, "get_schema"):
+        return None
+    try:
+        return object_to_dict(cls())
+    except Exception:  # noqa: BLE001 - a class without a no-argument constructor has no blank; the table answers for it in the tests
+        return None
 
 
 class GrampsTree(runner.TreeAccess):
@@ -128,6 +140,15 @@ class GrampsTree(runner.TreeAccess):
 
         return any(isinstance(item, (EditPrimary, EditSecondary)) for item in list(getattr(gwm, "id2item", {}).values()))
 
+    def complete(self, state):
+        """`state` as Gramps can load it, without ever turning a missing key into a cleared one (HFY-TSK-409, hfygramps/blank.py).
+
+        Gramps raises KeyError for a key an object lacks and, for most classes, silently keeps the constructor's blank, which the commit
+        would then write over the tree's value. So a missing key takes the value the tree holds for that object now, and only an object
+        that is new to the tree takes the blank object Gramps itself builds for its class. A key that is present is never changed."""
+        existing = self._read(state["_class"], state["handle"]) if state.get("handle") else None
+        return blank.complete(state, _gramps_blank, existing)
+
     def apply(self, label, commits, removals, precheck=None, verify=None, hook=None):
         # ONE non-batch DbTxn: a single Edit > Undo entry in the GUI (sync.md 8.3 step 9); any exception aborts all of it.
         items = sorted(commits.items(), key=lambda kv: (consts.CLASSES.index(kv[1]["_class"]), kv[0]))
@@ -136,7 +157,7 @@ class GrampsTree(runner.TreeAccess):
             if precheck is not None:
                 precheck(self._read)
             for i, (handle, state) in enumerate(items, 1):
-                state = copy.deepcopy(state)
+                state = self.complete(state)
                 state.setdefault("change", int(time.time()))
                 getattr(self.db, _COMMIT[state["_class"]])(data_to_object(state), trans)
                 if hook is not None and i == half:
