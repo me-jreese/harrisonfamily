@@ -261,7 +261,7 @@ export const ROUTES = defineRoutes([
   // no MCP tool and no policy row. Dark until mediaBrowserV1 is on (or the caller is uat). Shapes: src/media-browser.js.
   {
     name: "media.list", method: "GET", path: "/media",
-    summary: "The Media Browser list: ?section=media|posts|all (default media), filter=all|needs_tags|of_me (default all), cursor, limit 1-60 (default 24): {cards: [{mediaId, thumbUrl, width, height, section, tagCount, needsTags, title?, year?, grampsId, addedAt, thumb?}], nextCursor, counts: {media, posts}}; newest first",
+    summary: "The Media Browser list: ?section=media|posts|all (default media), filter=all|needs_tags|of_me (default all), person=<gramps_id> (only the photos that person is tagged in, HFY-TSK-408), cursor, limit 1-60 (default 24): {cards: [{mediaId, thumbUrl, width, height, section, tagCount, needsTags, title?, year?, grampsId, addedAt, thumb?}], nextCursor, counts: {media, posts}}; newest first",
     gate: requireFeature("mediaBrowserV1"), handler: async (c) => ok(await c.media.list(c.query)),
   },
   {
@@ -280,7 +280,7 @@ export const ROUTES = defineRoutes([
   },
   {
     name: "mediaUpload.portrait", method: "POST", path: "/media/portrait",
-    summary: "Set a person's portrait {personId, mediaId, crop: [x1, y1, x2, y2] whole percent | null}: one submission that adds the MediaRef with the crop (null for the full frame) and moves it to index 0; the previous portrait stays behind it. Your own page saves now, another person's becomes a proposal: 200 {state: applied|pending-proposal, tags: [{personId, mediaId, rect, index, state}], proposal?}.",
+    summary: "Set a person's portrait {personId, mediaId, crop: [x1, y1, x2, y2] whole percent | null}: one submission that adds the MediaRef with the crop (null for the full frame) and moves it to index 0; the previous portrait stays behind it. Your own page saves now, another person's becomes a proposal: 200 {state: applied|pending-proposal, tags: [{personId, mediaId, rect, index, state}], proposal?}. Tagged-photo variant {person, mediaId, rect: [x1, y1, x2, y2] whole percent | null} (instead of personId and crop) for a photo that already exists: it must be visible to members (404) and that person must be tagged in it (403 not_tagged); an identical MediaRef is moved to index 0 instead of repeated; no Media is created.",
     gate: requireFeature("portraitV1"), handler: async (c) => ok(await c.webUpload.portrait(c, c.body)),
   },
   {

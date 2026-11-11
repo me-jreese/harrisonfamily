@@ -2,7 +2,9 @@
 // photo") on their OWN record and "suggest a photo" on anyone else's; signed out, nothing. The flow is the kit's @io-kit/media pieces: pick, normalizePhotoDetailed in the
 // browser (upright, no location or camera details, long edge <= 2560), SquareCrop on the 1% grid (a full-frame crop stores null), upload through the HFY adapter
 // (lib/hfy-media-source.js) and one set-portrait submission. The previous portrait stays in the gallery. On someone else's page the end is a proposal: the sender alone sees
-// the new photo dashed with "pending review". The hero is rebuilt on every render, so the host (a [data-slot="portrait"] block before the hero actions) is put back on each
+// the new photo dashed with "pending review". Before the file chooser the member picks a source (HFY-TSK-408): "upload a new photo" (the path above, unchanged) or "use a photo
+// I'm tagged in" (this person on someone else's page): a grid of the photos the person is tagged in (GET /api/media?person=), then the same square crop, started on the
+// tag box, and one POST /api/media/portrait {mediaId, rect, person}; no upload. The hero is rebuilt on every render, so the host (a [data-slot="portrait"] block before the hero actions) is put back on each
 // hfy:person-rendered and a finished preview is applied again.
 import "@io-kit/media/media.css";
 import "./person-portrait.css";
@@ -12,9 +14,12 @@ import { PORTRAIT_COPY, ProposalNotice, SquareCrop } from "@io-kit/media/portrai
 import { PHOTO_ACCEPT, PHOTO_COPY, UploadProgress, normalizePhotoDetailed } from "@io-kit/media/upload";
 import { getMe } from "../lib/me.js";
 import { createHfyMediaSource } from "../lib/hfy-media-source.js";
-import { CONTACT, COPY, REVIEWER, savePortrait, viewerMode } from "../lib/person-media-model.js";
+import { createHfyMediaBrowse } from "../lib/hfy-media-browse.js";
+import { ChoosePanel, TaggedCrop, TaggedPicker } from "../lib/portrait-tagged-ui.jsx";
+import { CONTACT, COPY, REVIEWER, savePortrait, savePortraitFromPhoto, viewerMode } from "../lib/person-media-model.js";
 
 const source = createHfyMediaSource();
+const browse = createHfyMediaBrowse();
 let preview = null; // { personId, url, pending }: the photo the member just chose, shown on the hero again after a re-render
 
 function showPreview(p) {
@@ -43,10 +48,11 @@ export function PersonPortrait({ personId, person }) {
   const btn = useRef(null);
   const dlg = useRef(null);
   const back = useRef(false);
+  const listed = useRef(null); // the tagged-photo list, kept while the member is in the crop and comes back
   useEffect(() => { let live = true; getMe().then((m) => { if (live) setMode(viewerMode(m.id, personId)); }); return () => { live = false; }; }, [personId]);
   useEffect(() => { if (stage.k === "done") showPreview(stage); }, [stage]);
   useEffect(() => {
-    if (stage.k === "crop") dlg.current?.querySelector(".io-media-crop")?.focus();
+    if (stage.k === "crop" || stage.k === "tcrop") dlg.current?.querySelector(".io-media-crop")?.focus();
     else if (back.current && btn.current) { back.current = false; btn.current.focus(); }
   }, [stage.k, mode]);
 
@@ -76,6 +82,13 @@ export function PersonPortrait({ personId, person }) {
     setStage({ k: "done", ...preview });
   }
   function cancel() { back.current = true; setStage({ k: "idle" }); }
+  function chooseUpload() { back.current = true; setStage({ k: "idle" }); input.current?.click(); } // the click is the member's own tap: the file chooser opens from it
+  async function saveTagged(photo, rect) {
+    const r = await savePortraitFromPhoto({ personId, mediaId: photo.id, rect }); // a failure stays in the crop with the retry copy
+    preview = { personId, url: photo.url, pending: r.pending };
+    back.current = true;
+    setStage({ k: "done", ...preview });
+  }
   function trap(e) {
     if (e.key === "Escape") { e.preventDefault(); cancel(); return; }
     if (e.key !== "Tab" || !dlg.current) return;
@@ -99,10 +112,11 @@ export function PersonPortrait({ personId, person }) {
       {failedLocation && <p className="io-media-banner io-media-banner-error" role="alert" data-pp="location">{PHOTO_COPY.location}</p>}
       {!saving && (
         <div className="hfy-pp__row">
-          <button ref={btn} type="button" className="io-media-btn hfy-pp__btn" onClick={() => input.current?.click()} data-pp="open">{label}</button>
+          <button ref={btn} type="button" className="io-media-btn hfy-pp__btn" onClick={() => setStage((st) => (st.k === "choose" ? { k: "idle" } : { k: "choose" }))} aria-expanded={stage.k === "choose"} data-pp="open">{label}</button>
           {stage.k === "done" && stage.pending && <span className="io-media-pend" data-pp="pending">{PORTRAIT_COPY.pendingBadge}</span>}
         </div>
       )}
+      {stage.k === "choose" && <ChoosePanel mode={mode} onUpload={chooseUpload} onTagged={() => setStage({ k: "pick" })} onCancel={cancel} />}
       <input ref={input} className="io-media-file" type="file" accept={PHOTO_ACCEPT} tabIndex={-1} aria-hidden="true" data-pp="file"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void pick(f); }} />
       {stage.k === "done" && (mode === "other" && stage.pending
@@ -113,6 +127,13 @@ export function PersonPortrait({ personId, person }) {
         <div ref={dlg} className="hfy-pp-dialog" role="dialog" aria-modal="true" aria-label={COPY.cropTitle} data-pp="crop" onKeyDown={trap}>
           <SquareCrop imageUrl={stage.url} imageWidth={stage.photo.width} imageHeight={stage.photo.height} unit={source.rectUnit}
             onConfirm={(rect) => void save(stage.photo, rect, stage.url)} onCancel={cancel} />
+        </div>
+      )}
+      {(stage.k === "pick" || stage.k === "tcrop") && (
+        <div ref={dlg} className="hfy-pp-dialog" role="dialog" aria-modal="true" aria-label={stage.k === "pick" ? (mode === "other" ? COPY.pickTitleOther : COPY.pickTitleOwn) : COPY.cropTitle} data-pp={stage.k === "pick" ? "pick" : "tagged-crop-dialog"} onKeyDown={trap}>
+          {stage.k === "pick"
+            ? <TaggedPicker personId={personId} mode={mode} browse={browse} cache={listed} onPick={(photo) => setStage({ k: "tcrop", photo })} onBack={() => setStage({ k: "choose" })} onUpload={chooseUpload} />
+            : <TaggedCrop photo={stage.photo} unit={source.rectUnit} onSave={(rect) => saveTagged(stage.photo, rect)} onBack={() => setStage({ k: "pick" })} />}
         </div>
       )}
     </div>

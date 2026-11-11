@@ -6,6 +6,9 @@
 //                                 hfy:source=upload and hfy:added-by=<uploader> (media-origin.js). Purpose item then appends a MediaRef to the subject (D-05).
 //   POST /api/media/portrait     {personId, mediaId, crop}: ONE submission that adds the MediaRef with the crop region (a full-frame crop stores null) and
 //                                 moves it to index 0 (the named portrait op of D-05). The previous portrait keeps its place behind it (D-11).
+//                                 The tagged-photo variant (HFY-TSK-408) {mediaId, rect, person} sets the portrait from a photo the person is already tagged in: the Media exists,
+//                                 so nothing is created; it must be visible to members (media-visible.js) and carry a non-private MediaRef of that person (else 404 | 403
+//                                 not_tagged); the same write as above (a MediaRef with the square rect at index 0, an identical one moved instead of repeated).
 //
 // Own record direct, another person's by proposal (D-09): both MediaRef writes take the POST /api/changes pipeline (planChanges, commit), whose field policy
 // already routes `Person /media_list/**` direct on the member's own record and to review on anyone else's, with the R-18/R-19 guard, the Gramps schema and the
@@ -25,6 +28,7 @@ import { byGrampsId, storeView } from "./records/index.js";
 import { commit, planChanges, readIdem, replayOf, requestHashOf } from "./records/changes.js";
 import { yearDate } from "./records/life-dates.js";
 import { createRecordGuard } from "./records/guard.js";
+import { isMediaPublished } from "./media-visible.js";
 import { validateNewRect } from "./rect.js";
 import { keySegment, mintHandle, validateOps } from "./records/ops.js";
 import { applyBatch, checkStoreGate } from "./sync/apply.js";
@@ -74,10 +78,10 @@ export function parseItem(raw, currentYear = new Date().getUTCFullYear()) {
 }
 
 /** A crop as the HFY rect unit stores it: null for the full frame; else whole percents on the 0..100 grid, ordered, at least 2 x 2 units (validateNewRect, D-07). Anything else is 400 validation carrying the rect code. */
-export function cropToRect(crop) {
+export function cropToRect(crop, field = "crop") {
   if (crop === null) return null;
   const v = validateNewRect(crop);
-  if (!v.ok) throw new HttpError(400, "validation", `the crop is not a usable rectangle (${v.code})`, { fields: [{ field: "crop", code: v.code }] });
+  if (!v.ok) throw new HttpError(400, "validation", `the ${field} is not a usable rectangle (${v.code})`, { fields: [{ field, code: v.code }] });
   return v.rect;
 }
 const sameRect = (a, b) => (a ?? null) === (b ?? null) || (Array.isArray(a) && Array.isArray(b) && a.length === 4 && a.every((v, i) => v === b[i]));
@@ -238,19 +242,32 @@ export function createWebUpload({ ddb, cmds, table, store, s3, bucket = "harriso
       return { items: out };
     },
 
-    /** Sets the portrait: one submission, add the MediaRef with the crop and move it to index 0 (D-05, D-11). Returns {state, tags}. */
+    /**
+     * Sets the portrait: one submission, add the MediaRef with the crop and move it to index 0 (D-05, D-11). Returns {state, tags}. Two body shapes: the upload flow's
+     * {personId, mediaId, crop} (the Media was just graduated), and the tagged-photo variant {person, mediaId, rect} (HFY-TSK-408) for a Media that exists: it must be
+     * visible to members and the person must be tagged in it.
+     */
     async portrait(c, input) {
-      const { personId, mediaId, crop } = input ?? {};
-      if (typeof personId !== "string" || !GRAMPS_ID_RE.test(personId)) throw invalid("personId", "personId is a person's gramps_id");
+      const tagged = isObj(input) && ("person" in input || "rect" in input);
+      if (tagged && ("personId" in input || "crop" in input)) throw invalid("body", "send {person, mediaId, rect} or {personId, mediaId, crop}, not both");
+      const personId = tagged ? input.person : input?.personId;
+      const mediaId = input?.mediaId;
+      const crop = tagged ? input.rect : input?.crop;
+      const cropField = tagged ? "rect" : "crop";
+      if (typeof personId !== "string" || !GRAMPS_ID_RE.test(personId)) throw invalid(tagged ? "person" : "personId", "the person is a person's gramps_id");
       if (typeof mediaId !== "string" || !GRAMPS_ID_RE.test(mediaId)) throw invalid("mediaId", "mediaId is a photo's gramps_id");
-      if (crop === undefined) throw invalid("crop", "crop is required (null for the whole photo)");
-      const rect = cropToRect(crop);
+      if (crop === undefined) throw invalid(cropField, `${cropField} is required (null for the whole photo)`);
+      const rect = cropToRect(crop, cropField);
       const person = await loadPerson(personId);
       const hits = await byGrampsId(store, "Media", mediaId);
       const mhead = hits.length === 1 ? await getRecord(store, "Media", hits[0].handle) : null;
       if (!mhead || mhead.deleted || !mhead.obj || mhead.obj.private === true) throw notFound("photo");
       const handle = mhead.handle;
       const list = Array.isArray(person.obj.media_list) ? person.obj.media_list : [];
+      if (tagged) {
+        if (!(await isMediaPublished(store, mediaId))) throw notFound("photo"); // not shown in any gallery: the same answer as one that does not exist
+        if (!list.some((r) => r?.ref === handle && r.private !== true)) throw new HttpError(403, "not_tagged", "that person is not tagged in this photo");
+      }
       const at = list.findIndex((r) => r?.ref === handle && sameRect(r.rect ?? null, rect));
       const tags = (state) => ({ state, tags: [{ personId, mediaId, rect, index: 0, state: state === "pending-proposal" ? "pending-proposal" : "applied" }] });
       if (at === 0) return tags("applied"); // already the portrait: nothing to write
