@@ -1,4 +1,4 @@
-// HFY-TSK-077 proof: the packaged @io-kit/mcp corpus (MCP-C01..C12) run against THIS repo's implementation.
+// HFY-TSK-077 proof: the packaged @io-kit/mcp corpus (MCP-C01..C13) run against THIS repo's implementation.
 // Edge layer (C01..C09): the production factory createMcpEdge() behind the Lambda adapter, JWKS served from the corpus's TEST-ONLY keys.
 // Core layer (C10..C12): the production createMcpCore() (host assurance/policy settings) over the corpus registry. No expectations are written here (W0.1).
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ function impl() {
       const keys = { current: corpus.jwks[fx.id].initial };
       let offset = 0;
       const state = { fetches: 0, keys, fx, corpus };
-      const now = () => Math.floor(Date.now() / 1000) + offset;
+      const now = () => corpus.registry.clock + offset; // the corpus tokens are minted against its fixture clock (kit 0.1.4), as in the track and mod harnesses
       const fetch = async () => { state.fetches += 1; return { ok: true, status: 200, json: async () => structuredClone(keys.current) }; };
       const as = cfg.authorizationServer;
       const edge = createMcpEdge({
@@ -36,7 +36,7 @@ function impl() {
         endpoints: { authorization: as.authorization_endpoint, token: as.token_endpoint, revocation: as.revocation_endpoint, userinfo: as.userinfo_endpoint },
         ...(cfg.registrationFacade === false ? {} : { registrationFacade: { clientId: fx.client_id, callbackUrls: cfg.callbackUrls } }),
         cors: { tokenPaths: cfg.tokenLegPath ? [cfg.tokenLegPath] : [], revocationPaths: cfg.revocationLegPath ? [cfg.revocationLegPath] : [] },
-      }, { fetch, now });
+      }, { fetch, now, ...(fx.token_use_claim ? { tokenUseClaim: fx.token_use_claim } : {}), ...(fx.claim_profile ? { claimProfile: fx.claim_profile } : {}) });
       Object.assign(state, { run: lambdaAdapter(edge, echo), advance: (n) => { offset += n; } });
       st = state;
     },
@@ -62,14 +62,14 @@ function impl() {
   };
 }
 
-describe("MCP-C01..C12 against the hfy implementation", () => {
+describe("MCP-C01..C13 against the hfy implementation", () => {
   it("passes every step of every check", async () => {
     const results = await runConformance(impl(), loadCorpus());
     const byId = {};
     for (const r of results) (byId[r.file] ??= []).push(r);
     const summary = Object.entries(byId).map(([id, rs]) => `${id} ${rs.filter((r) => r.ok).length}/${rs.length}`).join("  ");
     console.log(`CONFORMANCE ${summary}`);
-    expect(Object.keys(byId).sort()).toEqual(Array.from({ length: 12 }, (_, i) => `MCP-C${String(i + 1).padStart(2, "0")}`));
+    expect(Object.keys(byId).sort()).toEqual(Array.from({ length: 13 }, (_, i) => `MCP-C${String(i + 1).padStart(2, "0")}`));
     expect(results.filter((r) => !r.ok).map((r) => `${r.file} ${r.step}: ${r.failures.join("; ")}`)).toEqual([]);
   });
 });
