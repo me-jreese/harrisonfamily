@@ -1,0 +1,17 @@
+{
+  "fleet_version": "0.3.0",
+  "supported_clients": ["claude.ai", "claude-desktop", "claude-code", "cursor"],
+  "codeartifact": { "domain": "io", "owner": "356364570033", "repository": "io-kit", "region": "us-west-2" },
+  "profiles": {
+    "harrisonfamily": {
+      "provider": "auth-edge",
+      "claim": "cognito",
+      "sign_in_service": "https://harrisonfamily.us/auth",
+      "issuer": "https://harrisonfamily.us/auth",
+      "jwks_uri": "https://harrisonfamily.us/auth/.well-known/jwks.json"
+    }
+  },
+  "connectors": [
+    { "name": "harrisonfamily", "runtime": "ts", "url": "https://harrisonfamily.us", "mount": "/mcp", "profile": "harrisonfamily", "client_ids": ["mcp-harrisonfamily"], "as_metadata_path": "/.well-known/oauth-authorization-server/auth" }
+  ]
+}

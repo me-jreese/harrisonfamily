@@ -533,7 +533,7 @@ The public key is derived from the private key at startup. The JWKS publishes ex
 | Enabled | `MCP_REDIRECT_URIS` | On only when the variable has at least one entry. When it is off, `/auth/authorize`, `/auth/token`, `/auth/register`, `/auth/revoke`, `/auth/userinfo` and both discovery URLs return `404 {"code":"NOT_FOUND"}`. |
 | Issuer | `session.issuer` | `https://<site>/auth` |
 | Client id | `MCP_CLIENT_ID` | `mcp-harrisonfamily` by default. The stack does not set this variable. |
-| Redirect URIs | `MCP_REDIRECT_URIS`, comma-separated | Exact match. The stack default is `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`. |
+| Redirect URIs | `MCP_REDIRECT_URIS`, comma-separated | Exact match, added to the built-in callbacks of Claude (`https://claude.ai/...`, `https://claude.com/...`) and Cursor (`https://www.cursor.com/agents/mcp/oauth/callback`, `cursor://anysphere.cursor-mcp/oauth/callback`), plus any loopback URI (HFY-TSK-413): scheme `http`, host exactly `localhost`, `127.0.0.1` or `[::1]`, any port and path, no userinfo, query or fragment ([RFC 8252 section 7.3](https://www.rfc-editor.org/rfc/rfc8252#section-7.3)). Everything else is refused, at `/authorize` and at `/register`. The stack default is `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`. |
 | Desktop client | `HFY_SYNC_DESKTOP_CLIENT` | Off unless set to `1`. When on, registers `hfy-sync-desktop` (see [Desktop client](#desktop-client-hfy-sync-desktop)). |
 | Resources | `MCP_RESOURCES`, comma-separated | Default `https://<site>/mcp` (`DEFAULT_MCP_RESOURCE` in `oauth.js`, and the `McpResources` stack default; HFY-R59). The first entry is used when a request names no resource. |
 | Key set | `init()` | A local JWKS holding the edge's own public key, used by `/auth/userinfo` |
@@ -543,7 +543,7 @@ The public key is derived from the private key at startup. The JWKS publishes ex
 
 Registered only when `HFY_SYNC_DESKTOP_CLIENT=1` (default off; HFY-TSK-120). It is for the Gramps desktop add-on.
 
-- **Redirect:** `http://127.0.0.1/callback`, matched by scheme, host and path with any port (RFC 8252 section 7.3). A different host (including `localhost`), path or scheme, port 0, userinfo, query or fragment is refused with a 400 and no redirect. The MCP client keeps exact matching.
+- **Redirect:** `http://127.0.0.1/callback`, matched by scheme, host and path with any port (RFC 8252 section 7.3). A different host (including `localhost`), path or scheme, port 0, userinfo, query or fragment is refused with a 400 and no redirect. The MCP client matches its exact list and, separately, any loopback URI (host `localhost`, `127.0.0.1` or `[::1]`).
 - **Resource:** `https://harrisonfamily.us/api/sync`; access tokens carry that `aud`, `client_id` `hfy-sync-desktop` and scope `sync`.
 - **Binding:** codes and refresh tokens belong to the client that received them. The other client's code is refused, and another client's refresh token is refused without being consumed.
 - **Refresh:** rotating, and expiring 30 days after the last use. `auth_time` is never advanced (HFY-R64).

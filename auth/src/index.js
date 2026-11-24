@@ -5,7 +5,7 @@ import { createLocalJWKSet, exportJWK, importPKCS8 } from "jose";
 import { createIdentityService, createPasskeyService, ddbChallengeStore, ddbFromDocumentClient, ddbRefreshStore } from "@io-kit/auth/server";
 import { buildResolver, cognitoLifecycle, cognitoPasswordAuthenticator, loadPasskeyBrowserBundle, parseAllowlist } from "@io-kit/auth/edge/deploy";
 import { createAuthEdge, loadManifest } from "./edge.js";
-import { DEFAULT_CLIENT_ID, DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore, desktopClient } from "./oauth.js";
+import { DEFAULT_CLIENT_ID, DEFAULT_MCP_RESOURCE, createOAuthServer, ddbOAuthStore, desktopClient, mcpClient } from "./oauth.js";
 import { createMembership } from "./membership.js";
 import { createCompositeResolver } from "./allowlist.js";
 import { forbidden, originVerified } from "./origin.js";
@@ -79,7 +79,7 @@ async function init() {
         // HFY-TSK-120: the MCP client keeps its exact-match redirect URIs; the Gramps desktop client (loopback, any port) is registered
         // only when HFY_SYNC_DESKTOP_CLIENT=1 (default off until the sync routes ship).
         clients: [
-          { id: process.env.MCP_CLIENT_ID || DEFAULT_CLIENT_ID, redirectUris, resources: resources.length ? resources : [DEFAULT_MCP_RESOURCE] },
+          mcpClient({ id: process.env.MCP_CLIENT_ID || DEFAULT_CLIENT_ID, redirectUris, resources: resources.length ? resources : [DEFAULT_MCP_RESOURCE] }),
           ...(process.env.HFY_SYNC_DESKTOP_CLIENT === "1" ? [desktopClient()] : []),
         ],
         corsOrigins: csv(process.env.MCP_CORS_ORIGINS),

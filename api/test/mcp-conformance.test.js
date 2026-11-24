@@ -1,8 +1,8 @@
 // HFY-TSK-077 proof: the packaged @io-kit/mcp corpus (MCP-C01..C12) run against THIS repo's implementation.
-// Edge layer (C01..C09): the production factory createMcpEdge() behind the Lambda adapter, JWKS served from the corpus's TEST-ONLY keys.
+// Edge layer (C01..C09, C13, C16, C18): the production factory createMcpEdge() behind the Lambda adapter, JWKS served from the corpus's TEST-ONLY keys.
 // Core layer (C10..C12): the production createMcpCore() (host assurance/policy settings) over the corpus registry. No expectations are written here (W0.1).
 import { describe, expect, it } from "vitest";
-import { loadCorpus, resolveRefs, runConformance } from "@io-kit/mcp";
+import { CLAUDE_ORIGINS, loadCorpus, resolveRefs, runConformance } from "@io-kit/mcp";
 import { lambdaAdapter } from "@io-kit/mcp/edge";
 import { createMcpCore, createMcpEdge } from "../src/mcp.js";
 
@@ -30,13 +30,12 @@ function impl() {
       const state = { fetches: 0, keys, fx, corpus };
       const now = () => Math.floor(Date.now() / 1000) + offset;
       const fetch = async () => { state.fetches += 1; return { ok: true, status: 200, json: async () => structuredClone(keys.current) }; };
-      const as = cfg.authorizationServer;
+      // Kit 0.3 mapping (same as @io-kit/mcp's own test/edge-impl.ts): the connector edge serves no authorization-server metadata,
+      // registration or authorize redirect (those are the auth edge's), so the corpus config reduces to the explicit identity fields.
       const edge = createMcpEdge({
-        resourceUrl: cfg.resource, issuer: fx.iss, asIssuer: as.issuer, jwksUri: fx.jwks_uri, clientIds: [fx.client_id], scopes: cfg.scopes, realm: cfg.realm,
-        endpoints: { authorization: as.authorization_endpoint, token: as.token_endpoint, revocation: as.revocation_endpoint, userinfo: as.userinfo_endpoint },
-        ...(cfg.registrationFacade === false ? {} : { registrationFacade: { clientId: fx.client_id, callbackUrls: cfg.callbackUrls } }),
-        cors: { tokenPaths: cfg.tokenLegPath ? [cfg.tokenLegPath] : [], revocationPaths: cfg.revocationLegPath ? [cfg.revocationLegPath] : [] },
-      }, { fetch, now });
+        resourceUrl: cfg.resource, issuer: fx.iss, signInService: cfg.baseUrl, jwksUri: fx.jwks_uri, clientIds: [fx.client_id], scopes: cfg.scopes, realm: cfg.realm,
+        cors: { origins: CLAUDE_ORIGINS, tokenPaths: [cfg.tokenLegPath ?? "/oauth2/token"], revocationPaths: [cfg.revocationLegPath ?? "/oauth2/revoke"] },
+      }, { fetch, now, tokenUseClaim: fx.token_use_claim, claimProfile: cfg.claimProfile ?? "cognito" });
       Object.assign(state, { run: lambdaAdapter(edge, echo), advance: (n) => { offset += n; } });
       st = state;
     },
@@ -69,7 +68,9 @@ describe("MCP-C01..C12 against the hfy implementation", () => {
     for (const r of results) (byId[r.file] ??= []).push(r);
     const summary = Object.entries(byId).map(([id, rs]) => `${id} ${rs.filter((r) => r.ok).length}/${rs.length}`).join("  ");
     console.log(`CONFORMANCE ${summary}`);
-    expect(Object.keys(byId).sort()).toEqual(Array.from({ length: 12 }, (_, i) => `MCP-C${String(i + 1).padStart(2, "0")}`));
+    // C01..C12 as before; kit 0.2+ adds C13 (no registration facade at the connector), C16 (x-io-kit-mcp) and C18 (401 challenge shape).
+    const want = [...Array.from({ length: 12 }, (_, i) => i + 1), 13, 16, 18].map((n) => `MCP-C${String(n).padStart(2, "0")}`);
+    expect(Object.keys(byId).sort()).toEqual(want);
     expect(results.filter((r) => !r.ok).map((r) => `${r.file} ${r.step}: ${r.failures.join("; ")}`)).toEqual([]);
   });
 });

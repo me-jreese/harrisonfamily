@@ -10,7 +10,7 @@ For why an AI assistant signs in as a member, see [The identity model: Agents as
 | --- | --- | --- |
 | Public URL | `https://<site>/mcp`. A path on the site, not a subdomain (HFY-R59). | [`api/src/routes.js`](../../api/src/routes.js) (`MCP_RESOURCE`) |
 | Lambda | `hfy-api`: the same function and Function URL as `/api/*` ([API: Runtime](api.md#runtime)) | [`api/src/index.js`](../../api/src/index.js) |
-| Dependency | `@io-kit/mcp` 0.1.0, pinned exactly: `@io-kit/mcp/edge` (bearer gate, protected-resource metadata, 401) and `@io-kit/mcp/core` (JSON-RPC `tools/list` and `tools/call` over a registry, evaluated against a policy) | [`api/package.json`](../../api/package.json) |
+| Dependency | `@io-kit/mcp` 0.3.0, pinned exactly (the fleet version): `@io-kit/mcp/edge` (bearer gate, protected-resource metadata, 401) and `@io-kit/mcp/core` (JSON-RPC `tools/list` and `tools/call` over a registry, evaluated against a policy) | [`api/package.json`](../../api/package.json) |
 | Protocol | MCP `2025-06-18`. JSON-RPC over `POST` only: no SSE stream (`GET /mcp` is `405` with `Allow: POST`) and no batches. `initialize` reports `serverInfo` `{name: "hfy-mcp", version: "0.1.0"}` and `tools.listChanged: false`. | `@io-kit/mcp/core`, `createMcpCore` in `mcp.js` |
 | Authorization server | The auth edge, issuer `https://<site>/auth` (HFY-R44). Its metadata and endpoints are served there, not by this mount. See [Identity services: MCP authorization server](identity-services.md#mcp-authorization-server). | [`auth/src/oauth.js`](../../auth/src/oauth.js) |
 | CloudFront | `/mcp*` and `/.well-known/oauth-protected-resource*` behaviors on the `hfy-api-origin` origin, with caching disabled, all viewer headers except `Host` forwarded, all seven methods allowed, and the `hfy-mcp-edge401` Lambda@Edge function on `origin-response` | [`scripts/infra/add-mcp-behavior.sh`](../../scripts/infra/add-mcp-behavior.sh), [`infrastructure/mcp-edge401.us-east-1.yaml`](../../infrastructure/mcp-edge401.us-east-1.yaml) |
@@ -69,7 +69,7 @@ The kit edge can also answer `/.well-known/oauth-authorization-server`, but `isM
 
 ## Configuration
 
-`loadMcpConfig` in [`mcp.js`](../../api/src/mcp.js) and the S3 loaders in [`index.js`](../../api/src/index.js) read these variables. A variable that is set is used as is: the defaults apply only when it is absent.
+`loadMcpConfig` in [`mcp-edge.js`](../../api/src/mcp-edge.js) and the S3 loaders in [`index.js`](../../api/src/index.js) read these variables. A variable that is set is used as is: the defaults apply only when it is absent.
 
 | Variable | Default in code | Set by `app-stack.yaml` | Used for |
 | --- | --- | --- | --- |
@@ -84,6 +84,7 @@ The kit edge can also answer `/.well-known/oauth-authorization-server`, but `isM
 | `GROUPS_KEY` | `config/groups.json` | No | Key of the groups config |
 | `MEDIA_BUCKET` | `<site-bucket>` | Yes, from `MediaBucket` | Person records for [labels](#actor-and-label) (and member uploads) |
 
+- **Manifest form (HFY-TSK-413).** With none of `MCP_RESOURCE_URL`, `MCP_TOKEN_ISSUER` and `MCP_CLIENT_IDS` set, and `SESSION_ISSUER` and `SESSION_JWKS_URL` at their defaults, the edge is built as `createEdge({ connector: "harrisonfamily" })`: the kit 0.3 ships no fleet registry, so [`fleet.js`](../../api/src/fleet.js) supplies this site's own (its profile on the auth edge, its connector) through `setFleet()`. The edge then sends `x-io-kit-mcp: <kit version>` on the metadata and on every 401, which the fleet probe's C16 compares with the fleet version. Any other value makes `loadMcpConfig` return no `connector`, and the edge is built with the explicit options, as before. The kit edge no longer serves authorization-server metadata, registration or an authorize redirect; they are the auth edge's alone.
 - `app-stack.yaml` sets none of the `MCP_*` or `GROUPS_*` variables on `hfy-api`, so the code defaults run. Its `McpResources` parameter sets `MCP_RESOURCES` on `hfy-auth-edge` only: the resources the authorization server will mint an `aud` for, the first being the default. That parameter and `MCP_RESOURCE` must name the same URL, or every token fails the audience check.
 - `SESSION_ISSUER`, `SESSION_JWKS_URL` and `MEDIA_BUCKET` come from stack parameters, the same ones the cookie path uses ([API: Environment](api.md#environment)).
 - The cookie path and the MCP edge keep separate JWKS caches. The kit edge caches the keys for 3600 s, refetches at most once per lookup when a token names an unknown `kid`, and keeps serving the previous keys when a scheduled refresh fails.
