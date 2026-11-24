@@ -449,7 +449,7 @@ Then, if the check in [Before you start](#before-you-start) found `config/groups
 
 ## Verify
 
-Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None prints a secret.
+Checks 1 to 12 and 14 need no session. Check 13 uses your own signed-in browser. None prints a secret.
 
 1. **The stack is complete, runs this build, and kept its Function URLs.**
 
@@ -587,6 +587,14 @@ Checks 1 to 12 need no session. Check 13 uses your own signed-in browser. None p
     ```
 
     It logs `true number <seconds>`, where `<seconds>` is above `0` and at most `3600`, the session's lifetime. Pages use `exp` to refresh the session silently through `/auth/refresh` before it lapses. `true undefined NaN` means `hfy-auth-edge` does not run this build. `false` means the browser is not signed in.
+
+14. **The MCP server passes the fleet probe's checks (HFY-TSK-413).** No session or credentials needed:
+
+    ```sh
+    node scripts/ci/mcp-post-deploy-probe.mjs --base https://<site> --attempts 6 --interval 30
+    ```
+
+    It prints one line per check and exits `0` when C01, C02, C06, C09, C13, C14 and C16 all pass: discovery names `https://<site>/mcp` and the auth edge, the unauthenticated call is a JSON `401` with `resource_metadata`, `/auth/register` refuses a foreign callback, sign-in reaches the login page from claude.ai, claude.com, both Cursor callbacks and loopback (`localhost`, `127.0.0.1`, `[::1]`, any port) while a foreign callback gets `400`, and `x-io-kit-mcp` equals the `@io-kit/mcp` version pinned in `api/package.json`. The same probe runs as the `mcp-probe` job of [`post-deploy-checks.yml`](../../.github/workflows/post-deploy-checks.yml) after each site deploy, and by hand through its `workflow_dispatch` once you have deployed `hfy-api` and `hfy-auth-edge`, which no workflow deploys. The kit's own probe is the authoritative run: `npx mcp-fleet probe --fleet scripts/ci/mcp-fleet.json --connector harrisonfamily --strict`, from a shell with a CodeArtifact token.
 
 If a check fails, see [Diagnose sign-in and API failures](diagnose-sign-in-and-api-failures.md), and for MCP clients, [An MCP client cannot connect](diagnose-sign-in-and-api-failures.md#an-mcp-client-cannot-connect).
 

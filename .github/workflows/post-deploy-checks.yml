@@ -3,6 +3,8 @@
 # failure there redeploys the previous release, which cannot repair the bucket's CORS rule. So this check runs on its own,
 # triggered by the rendered deploy workflow's name (ci.manifest.yaml workflows.deploy, default "io-kit deploy"), and a failure
 # here rolls nothing back. It needs no AWS credentials.
+# HFY-TSK-413: the `mcp-probe` job is the blocking MCP smoke (a red run is the signal). hfy-api and hfy-auth-edge are NOT deployed by any workflow
+# (docs/how-to/deploy-the-app-stack.md), so after an operator deploys them, run this workflow by hand (workflow_dispatch) to probe the live site.
 name: post-deploy checks
 on:
   workflow_run:
@@ -25,3 +27,15 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Site bucket CORS preflights (photo uploads)
         run: bash scripts/infra/check-site-bucket-cors.sh
+  mcp-probe:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: MCP post-deploy probe (C01 C02 C06 C09 C13 C14 C16), retried for 3 minutes
+        run: node scripts/ci/mcp-post-deploy-probe.mjs --base https://harrisonfamily.us --attempts 6 --interval 30

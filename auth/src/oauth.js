@@ -19,6 +19,21 @@ export const desktopClient = (over = {}) => ({
   id: DESKTOP_CLIENT_ID, redirectUris: [DESKTOP_LOOPBACK_REDIRECT], resources: [DESKTOP_SYNC_RESOURCE],
   loopback: true, registrable: false, userinfo: false, defaultScope: "sync", allowedScopes: ["sync"], name: "Harrison Family Gramps sync", refreshTtlS: REFRESH_TTL_S, ...over,
 });
+/**
+ * HFY-TSK-413: the callbacks every supported MCP client uses, exact match: claude.ai and claude.com, and Cursor's hosted callback
+ * (the fleet probe's) and its desktop deep link. Merged with the stack's `McpRedirectUris`, so a stack that still lists only
+ * Claude's callbacks accepts Cursor too. Loopback (any port) is accepted separately, by `anyLoopback`.
+ */
+export const MCP_BUILTIN_REDIRECTS = [
+  "https://claude.ai/api/mcp/auth_callback",
+  "https://claude.com/api/mcp/auth_callback",
+  "https://www.cursor.com/agents/mcp/oauth/callback",
+  "cursor://anysphere.cursor-mcp/oauth/callback",
+];
+/** The MCP client definition for createOAuthServer({ clients }): exact built-in + configured callbacks, plus any loopback URI. */
+export const mcpClient = ({ id = DEFAULT_CLIENT_ID, redirectUris = [], resources, ...over }) => ({
+  id, redirectUris: [...new Set([...MCP_BUILTIN_REDIRECTS, ...redirectUris])], resources, anyLoopback: true, ...over,
+});
 const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 const SCOPE_RE = /^[A-Za-z0-9:._\/ -]{1,200}$/;
@@ -40,6 +55,23 @@ export function loopbackMatches(registered, candidate) {
   if (candidate.includes("/./") || candidate.includes("/../") || candidate.includes("//", 7)) return false;
   if (c.hostname !== r.hostname || c.pathname !== r.pathname) return false;
   return c.port === "" || (PORT_RE.test(c.port) && Number(c.port) >= 1 && Number(c.port) <= 65535);
+}
+
+const ANY_LOOPBACK_RE = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/%-]*)?$/i; // canonical spelling only: no userinfo, query, fragment, backslash or whitespace
+
+/**
+ * HFY-TSK-413, RFC 8252 section 7.3: true for an `http` URI whose host is exactly `localhost`, `127.0.0.1` or `[::1]`, on any port
+ * (1-65535, or none) and with any path. Never matches https, another host, a host that merely starts with one of these, userinfo
+ * (`http://localhost@evil.com`), a query, a fragment or dot segments. Parsed with `new URL()`; the raw-spelling check only narrows it.
+ */
+export function isLoopbackRedirectUri(uri) {
+  if (typeof uri !== "string" || !ANY_LOOPBACK_RE.test(uri)) return false;
+  let u;
+  try { u = new URL(uri); } catch { return false; }
+  if (u.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return false;
+  if (u.username || u.password || u.search || u.hash) return false;
+  if (uri.includes("/./") || uri.includes("/../") || uri.includes("//", 7) || /\/\.\.?$/.test(uri)) return false;
+  return u.port === "" || (PORT_RE.test(u.port) && Number(u.port) >= 1 && Number(u.port) <= 65535);
 }
 
 /**
@@ -90,11 +122,12 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     if (clients.has(c.id)) throw new Error(`duplicate client ${c.id}`);
     if (!c.redirectUris?.length) throw new Error("redirectUris must not be empty");
     if (!c.resources?.length) throw new Error("resources must not be empty");
-    clients.set(c.id, { registrable: true, defaultScope: "mcp", name: "Harrison Family MCP", refreshTtlS: REFRESH_TTL_S, loopback: false, userinfo: true, ...c });
+    clients.set(c.id, { registrable: true, defaultScope: "mcp", name: "Harrison Family MCP", refreshTtlS: REFRESH_TTL_S, loopback: false, anyLoopback: false, userinfo: true, ...c });
   }
   if (!clients.size) throw new Error("at least one client is required");
   const clientOf = (id) => (typeof id === "string" ? clients.get(id) : undefined);
-  const redirectOk = (c, uri) => typeof uri === "string" && (c.loopback ? c.redirectUris.some((r) => loopbackMatches(r, uri)) : c.redirectUris.includes(uri));
+  // `anyLoopback` (HFY-TSK-413): besides its exact-match list, the client accepts any loopback URI (RFC 8252 section 7.3, isLoopbackRedirectUri).
+  const redirectOk = (c, uri) => typeof uri === "string" && (c.loopback ? c.redirectUris.some((r) => loopbackMatches(r, uri)) : c.redirectUris.includes(uri) || (c.anyLoopback === true && isLoopbackRedirectUri(uri)));
   const userinfoResources = [...new Set([...clients.values()].filter((c) => c.userinfo).flatMap((c) => c.resources))];
   const registrationClient = [...clients.values()].find((c) => c.registrable);
   if (corsOrigins.some((o) => !/^https:\/\/[^/*\s]+$/.test(o))) throw new Error("corsOrigins must be exact https origins (no wildcard)");
@@ -247,7 +280,7 @@ export function createOAuthServer({ issuer, clients: clientDefs, redirectUris, r
     const { id: clientId, redirectUris, name: defaultName, defaultScope } = registrationClient;
     const wanted = body?.redirect_uris;
     if (wanted !== undefined && (!Array.isArray(wanted) || wanted.some((u) => typeof u !== "string"))) return err(400, "invalid_client_metadata", "redirect_uris must be an array of strings");
-    if (wanted?.some((u) => !redirectUris.includes(u))) return err(400, "invalid_redirect_uri", "redirect_uri is not on the allowed list");
+    if (wanted?.some((u) => !redirectOk(registrationClient, u))) return err(400, "invalid_redirect_uri", "redirect_uri is not on the allowed list");
     if (body?.token_endpoint_auth_method !== undefined && body.token_endpoint_auth_method !== "none") return err(400, "invalid_client_metadata", "only token_endpoint_auth_method none is supported");
     return json(201, {
       client_id: clientId,
