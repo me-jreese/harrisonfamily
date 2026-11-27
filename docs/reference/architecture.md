@@ -379,6 +379,7 @@ Written by `hfy-api`:
 | Profile links, one per person | `PLINKS#<gramps-id>` | `META` | - | - | [`api/src/links.js`](../../api/src/links.js) |
 | On-this-day index, with its build lease | `OTD#INDEX` | `V1` | - | - | [`api/src/onthisday/store.js`](../../api/src/onthisday/store.js) |
 | On-this-day hidden items | `OTD#HIDDEN` | `META` | - | - | [`api/src/onthisday/service.js`](../../api/src/onthisday/service.js) |
+| Confirmed-living mark (life state, display only) | `LIFECONF#<gramps id>` | `META` | `LIFECONF` | `<gramps id>` | [`api/src/life-state.js`](../../api/src/life-state.js) |
 | Record follow, one per principal and person | `RSUB#<principal>` | `REC#person:<gramps-id>` | `RECSUB#person:<gramps-id>` | `<principal>` | [`api/src/subscriptions.js`](../../api/src/subscriptions.js) |
 | Record fan-out claim, one per outbox pass and person (dedupe key `rec:<seq>:<subject>`; `state` `claimed` then `done`) | `RECFAN#<seq_to, 12 digits>` | `person:<gramps-id>` | - | 35 days after the claim | [`api/src/record-change-fanout.js`](../../api/src/record-change-fanout.js) |
 | Profile links audit entry | `AUDIT#plinks:<gramps-id>` | `<iso-time>#<ulid>` | `AUDIT` / same as SK | - | [`api/src/links.js`](../../api/src/links.js), through `auditItem` |

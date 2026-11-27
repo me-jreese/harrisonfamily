@@ -79,6 +79,7 @@ export const FAMILIES = {
   me: ["me.get"],
   links: ["links.get", "links.put"],
   onthisday: ["onthisday.get", "onthisday.hide", "onthisday.unhide"],
+  lifeState: ["lifeState.get", "lifeState.confirm", "lifeState.unconfirm"],
   contributions: ["contributions.list", "contributions.stats", "contributions.site"],
   subscriptions: ["subscriptions.get", "subscriptions.list", "subscriptions.put", "subscriptions.remove"],
   comments: ["comments.list", "comments.create", "comments.update", "comments.delete", "comments.react", "comments.graduate"],

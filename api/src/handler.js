@@ -16,6 +16,7 @@ import { HttpError, errorResponse, json, logSafeError } from "./http.js";
 import { countPendingAccessRequests } from "./me.js";
 import { createLinks } from "./links.js";
 import { createOnThisDay } from "./onthisday/service.js";
+import { createLifeState } from "./life-state.js";
 import { createSubscriptions } from "./subscriptions.js";
 import { createContribReader } from "./contrib-read.js";
 import { bearerOf, unauthenticated } from "./sync/auth.js";
@@ -47,6 +48,8 @@ export function createHandler(deps) {
   });
   // HFY-TSK-194: the parsed on-this-day index and its in-flight load, shared by every request of this container (a service is built per request).
   const onThisDayCache = {};
+  // HFY-TSK-426: the container-wide life-state evidence (activity per person, 10 minutes), shared by every request like the on-this-day index.
+  const lifeStateCache = {};
   // Persist first (BRD2 D2-15): with an inbox store wired (hfy-inbox-delivery-api) the producers run even without push.
   const notifyActive = pushEnabled || Boolean(deps.inbox);
   const inboxStore = deps.inbox; // the kit NotificationStore (index.js wires DynamoNotificationStore)
@@ -174,11 +177,13 @@ export function createHandler(deps) {
     const links = createLinks({ ...base, store, readIndex: deps.readMediaIndex, publicBase: deps.mediaPublicBase, log });
     // HFY-TSK-387-0E: the Media Browser reads (GET /api/media, /api/media/:id). Thumbnails come from the published media index (deps.readMediaIndex); absent => 503, never an open list.
     const media = createMediaBrowser({ ctx: store, actor, content, readIndex: deps.readMediaIndex, publicBase: deps.mediaPublicBase, log });
-    const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), cache: onThisDayCache, log });
+    // HFY-TSK-426 (lifeStateV1, display only): the activity evidence and the admin's confirmed-living mark; on this day reads them to leave out a birthday line for someone whose status is unknown.
+    const lifeState = createLifeState({ ddb, cmds, table, actor, now, uid, accountIds: store.accountIds, personExists: deps.personExists, cache: lifeStateCache, log });
+    const onThisDay = createOnThisDay({ ddb, cmds, table, actor, now, uid, source: deps.onThisDaySource, daysOn: () => featureOn("onThisDayDays"), lifeOn: () => featureOn("lifeStateV1"), lifeSnapshot: () => lifeState.snapshot(), cache: onThisDayCache, log });
     const subscriptions = createSubscriptions({ ...base, personExists: deps.personExists ?? (async () => { throw new Error("person lookup not configured"); }) });
     const contrib = createContribReader({ ddb, cmds, table, actor, now, log, accountIds: store.accountIds });
     const isOwner = typeof deps.isOwner === "function" ? deps.isOwner : async () => false;
-    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, webUpload, graduatePostPhotos, links, onThisDay, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
+    return { chat, store, isOwner, content, media, comments, moderation, graduation, postGraduation, webUpload, graduatePostPhotos, links, onThisDay, lifeState, subscriptions, contrib, notifier, notifyHandler, uploads, afterPublished, afterPostDeleted, accessRequestCount, accessRequests, featureOn, log };
   }
 
   /**

@@ -14,6 +14,7 @@ import { selectOnThisDay } from "./select.js";
 import { collectSource } from "./source.js";
 import { POLICY_VERSION, createIndexStore, indexOf } from "./store.js";
 import { pastYearPosts } from "./posts.js";
+import { DEFAULTS, LIFE_STATE, lifeState as sharedLifeState } from "../shared/life-state.mjs";
 
 export const CACHE_MS = 5 * 60_000;
 export const TZ_LIMIT = 840;
@@ -37,6 +38,26 @@ export function yearOnly(index) {
   return v;
 }
 export const otdAuditId = (itemId) => `otd:${itemId}`;
+
+/**
+ * HFY-TSK-426 (lifeStateV1, DISPLAY ONLY, P5-R5): the index without the birth lines of people whose shared life state (shared/life-state.mjs) is "unknown": no death
+ * recorded, no activity evidence in the window, and born more than 85 years ago. A birth line says "turns n this year" or "born n years ago", which states or implies a
+ * living person with an age, so it is left out; every other item, and every birth line of a deceased person, is served exactly as before. The index is never changed
+ * (it is shared and cached), the 110 and 100 year cutoffs and the residence rule of build.js and select.js are untouched, and the published isLiving flag is not read.
+ * `evidence(personId)` returns { evidenceAt, confirmedLivingAt } (ms or undefined). It is asked only for a birth item old enough to matter.
+ */
+export function withLifeState(index, { nowMs, evidence }) {
+  const nowYear = new Date(nowMs).getUTCFullYear();
+  const year = Array.isArray(index?.year) ? index.year : [];
+  const old = (it) => it?.kind === "birth" && Number.isInteger(it.year) && it.people?.[0]?.lifeState !== "deceased" && nowYear - it.year > DEFAULTS.thresholdYears;
+  if (!year.some(old)) return index;
+  const keep = year.filter((it) => {
+    if (!old(it)) return true;
+    const ev = evidence(it.people[0].grampsId) ?? {};
+    return sharedLifeState({ hasDeath: false, birthYear: it.year, evidenceAt: ev.evidenceAt, confirmedLivingAt: ev.confirmedLivingAt, now: new Date(nowMs) }) !== LIFE_STATE.unknown;
+  });
+  return keep.length === year.length ? index : { ...index, year: keep };
+}
 
 const unavailable = () => new HttpError(503, "unavailable", "on this day is unavailable, try again later");
 const pad = (n) => String(n).padStart(2, "0");
@@ -64,7 +85,7 @@ export function parseQuery(query) {
  * `daysOn()` says whether the day and week tiers may be served for this request (featureOn('onThisDayDays')); without it they are not.
  * `sleep(ms)` and `leaseWaits` are test seams.
  */
-export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(), uid, source, daysOn = async () => false, cache = {}, log = console, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), leaseWaits = LEASE_WAITS }) {
+export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(), uid, source, daysOn = async () => false, lifeOn = async () => false, lifeSnapshot, cache = {}, log = console, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), leaseWaits = LEASE_WAITS }) {
   const store = createIndexStore({ ddb, cmds, table, now });
   const isoNow = () => new Date(now()).toISOString();
 
@@ -135,6 +156,21 @@ export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(
     return cache.loading;
   }
 
+  /** The index for a lifeStateV1 request: birth lines of "status unknown" people left out. An unreadable evidence source means no evidence (fewer lines, never more). */
+  async function lifeView(view) {
+    const nowMs = now();
+    let snap = { evidence: new Map(), confirmed: new Map() };
+    // The evidence is read only when a birth line is old enough to depend on it (withLifeState asks lazily; the first miss loads it once).
+    const probe = withLifeState(view, { nowMs, evidence: () => undefined });
+    if (probe === view) return view;
+    try {
+      if (typeof lifeSnapshot === "function") snap = await lifeSnapshot();
+    } catch (e) {
+      log.warn?.("onthisday life state evidence unavailable (no evidence used)", logSafeError(e));
+    }
+    return withLifeState(view, { nowMs, evidence: (id) => ({ evidenceAt: snap.evidence.get(id), confirmedLivingAt: snap.confirmed.get(id) }) });
+  }
+
   async function readHidden() {
     return (await ddb.send(new cmds.GetCommand({ TableName: table, Key: hiddenKeys, ConsistentRead: true }))).Item;
   }
@@ -153,7 +189,9 @@ export function createOnThisDay({ ddb, cmds, table, actor, now = () => Date.now(
         log.warn?.("onthisday archive tier unavailable", logSafeError(e));
       }
       const days = await Promise.resolve().then(() => daysOn()).then(Boolean, () => false);
-      return { ...selectOnThisDay(days ? index : yearOnly(index), { date: q.date, posts, hidden }), stale };
+      let view = days ? index : yearOnly(index);
+      if (await Promise.resolve().then(() => lifeOn()).then(Boolean, () => false)) view = await lifeView(view);
+      return { ...selectOnThisDay(view, { date: q.date, posts, hidden }), stale };
     },
 
     /** The hide and unhide rule: an admin, or a member whose own gramps id is among the item's people. 403 `forbidden` otherwise (also for an id the index does not hold). */
