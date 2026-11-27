@@ -6,6 +6,7 @@
 // The choice is remembered on this device (localStorage, in try/catch; the page works without it). When the tree cannot be drawn (the graph is gated, missing
 // or has no entry for this person, or the chunk fails) the switch goes and the page is the one it is with the flag off.
 import { cachedGraph } from "./tree-data.js";
+import { markLifeState } from "./life-state-graph.js";
 
 export const VIEW_KEY = "hfy:person-family-view";
 
@@ -51,7 +52,7 @@ export async function fillHourglass(doc, host, id, { fetcher, cache, links, clas
     drawClassic();
   };
   const mount = async () => {
-    const res = await cachedGraph(cache, fetcher);
+    const res = await cachedGraph(cache, fetcher, markLifeState);
     if (res.state !== "ready") return null;
     return (await import("./tree-hourglass.js")).mountHourglass(wrap.firstChild, { graph: res.graph, id, from: id, links });
   };

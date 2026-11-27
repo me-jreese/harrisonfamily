@@ -28,6 +28,7 @@
 export const MAX_LINES = 40;
 
 import { placeChain } from "./navigator-model.js";
+import { STATUS_UNKNOWN_COPY } from "./life-state-words.js";
 
 const isNum = (n) => typeof n === "number" && Number.isFinite(n);
 
@@ -36,6 +37,8 @@ export function markOf(p, today) {
   const b = isNum(p.birthYear) ? p.birthYear : null;
   const d = p.living ? null : isNum(p.deathYear) ? p.deathYear : null;
   const fuzzy = p.yearApprox === true;
+  // lifeStateV1: a person of unknown status has no open line to today (that would draw an age): a dot at the birth year, or nothing.
+  if (p.lifeUnknown === true) return b === null ? { kind: "none", fuzzy: false } : { kind: "dot", start: b, end: b, ongoing: false, fuzzy };
   if (p.living) {
     if (b === null) return { kind: "none", fuzzy: false };
     // A birth year in the future of `today` (bad data) is a dot rather than a backwards line.
@@ -241,7 +244,7 @@ export function branchesOf(model) {
 }
 
 const born = (p) => (p.birthYear == null ? "unknown" : `${p.yearApprox ? "about " : ""}${p.birthYear}`);
-const died = (p) => (p.living ? "living" : p.deathYear == null ? "unknown" : String(p.deathYear));
+const died = (p) => (p.lifeUnknown === true ? STATUS_UNKNOWN_COPY : p.living ? "living" : p.deathYear == null ? "unknown" : String(p.deathYear));
 
 /**
  * The table equivalent of the lifelines (the screen-reader path): one entry per line row, in the lifelines' own order, so the table lists exactly

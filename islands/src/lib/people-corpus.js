@@ -3,6 +3,8 @@
 import { createLocalEngine } from "@io-kit/search";
 import { cleanText } from "../../../shared/validate.mjs"; // repo-root shared/ (pure ESM, also staged into the api and auth zips)
 import { personPath } from "./person-name.js";
+import { isStatusUnknown } from "./life-state-copy.js";
+import { loadLifeState } from "./life-state-client.js";
 
 const MANIFEST_URL = "/person/index.json";
 const INDEX_URL = "/person/search-index.json";
@@ -47,10 +49,20 @@ function splitName(displayName) {
   return { surname: parts.length > 1 ? parts[parts.length - 1] : name, given: parts.slice(0, -1).join(" ") };
 }
 
+/** True when the published row says living and the shared rule says "status unknown" (the birth year from the row's own field, else its summary). */
+function markUnknown(ls, p) {
+  if (!p || !p.grampsId) return false;
+  return isStatusUnknown(ls, { id: String(p.grampsId), living: p.isLiving === true, birthYear: typeof p.birthYear === "number" ? p.birthYear : birthYearOf(p.lifespanSummary) });
+}
+
 export function mapPerson(raw) {
   if (!raw || !raw.grampsId) return null;
   const { surname, given } = splitName(raw.displayName);
   const years = year(raw.lifespanSummary);
+  // lifeStateV1 (HFY-TSK-427): `lifeUnknown` is set by the seed (below) for a person the published data calls living whom the shared rule reads
+  // as "status unknown". Such a person is not "living" to the filter and the result line, and the published isLiving is not touched
+  // anywhere else: the death year below still follows it exactly as before.
+  const unknown = raw.lifeUnknown === true;
   const living = Boolean(raw.isLiving);
   return {
     id: raw.grampsId,
@@ -61,7 +73,8 @@ export function mapPerson(raw) {
       surname, given,
       birth_year: birthYearOf(raw.lifespanSummary),
       death_year: !living && years.length > 1 ? years[years.length - 1] : null,
-      living,
+      living: living && !unknown,
+      life_unknown: unknown,
       has_photo: Boolean(raw.primaryPhoto),
       has_birth_year: typeof raw.birthYear === "number" || birthYearOf(raw.lifespanSummary) !== null,
       lifespan: raw.lifespanSummary || "",
@@ -97,7 +110,8 @@ export const peopleSource = {
     const [manifest, index] = await Promise.all([getJson(MANIFEST_URL, init), getJson(INDEX_URL, init)]);
     const people = Array.isArray(manifest && manifest.people) ? manifest.people : Array.isArray(manifest) ? manifest : [];
     const text = new Map((Array.isArray(index && index.documents) ? index.documents : []).map((d) => [d.grampsId || d.id, d.searchText || ""]));
-    yield { rows: people.map((p) => ({ ...p, searchText: text.get(p.grampsId) || "" })) };
+    const ls = await loadLifeState().catch(() => null); // {enabled: false} with lifeStateV1 off: no request, nothing marked
+    yield { rows: people.map((p) => ({ ...p, searchText: text.get(p.grampsId) || "", ...(markUnknown(ls, p) ? { lifeUnknown: true } : {}) })) };
   },
   // Local-only: the corpus is a static snapshot, nothing to heal.
   async since(cursors) { return { upserts: [], deletes: [], cursors: cursors || {} }; },
