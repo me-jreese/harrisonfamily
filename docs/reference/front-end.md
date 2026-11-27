@@ -437,6 +437,20 @@ Two design rulings apply to every island.
 
 [`person-name.test.mjs`](../../islands/tests/person-name.test.mjs) checks the rule, the DOM and React helpers, and what `CARD_PROPS` renders through the real kit cards. [`person-names.spec.mjs`](../../islands/tests/person-names.spec.mjs) checks the bylines on `/posts/`, `/posts/?id=` and the home timeline, the comment authors on a post and a person page, and the account sheet's title, at 375 px: each name with a person ID is a link with the right `href`, the plain name's colour and weight, `text-decoration-line: none` while hovered too, the focus ring and a 44 px hit area, a name without one is plain text, and a tap opens the page; it also checks that a caption shows under its photo. [`photo-tags.spec.mjs`](../../islands/tests/photo-tags.spec.mjs) checks the chips (each name a link with the right `href` and no underline, the icon button's label, size and behaviour by mouse, keyboard and touch, and a tap on a name opening the page) and the pinned panel's name link.
 
+### Life state (display)
+
+`shared/life-state.mjs` is the one rule for which of three words a page may use for a person: **deceased**, **living** or **status unknown** (HFY-ISS-031, rulings P5-R3 to P5-R5). It is a pure ES module with no imports. The words themselves are not in the module; the copy belongs to the surfaces that show them.
+
+| Part | Behavior |
+|---|---|
+| `lifeState({ hasDeath, deathYear, birthYear, evidenceAt, confirmedLivingAt, now, thresholdYears, evidenceMonths })` | Returns `LIFE_STATE.deceased` when a death is recorded (`hasDeath` is true or a `deathYear` is present). Otherwise `living` when there is activity evidence inside the window, or the birth year is known and `now`'s year minus `birthYear` is at most `thresholdYears`. Otherwise `unknown`: the person is older than the threshold with no evidence, or has no birth year and no evidence. A death overrides evidence. |
+| `DEFAULTS` | `thresholdYears` 85 (counted from the birth year, P5-R3) and `evidenceMonths` 24 (P5-R4). |
+| `evidenceActive(evidenceAt, confirmedLivingAt, now, months)` | True when a linked member account signed in or contributed (`evidenceAt`), or an admin marked the person "confirmed living" (`confirmedLivingAt`), no more than `months` calendar months before `now`. |
+
+Inputs are forgiving. `birthYear` and `deathYear` are integers or strings of digits, and anything else counts as absent. An evidence date is a `Date`, epoch milliseconds or an ISO string; an invalid date is no evidence, and a date after `now` is ignored as no evidence, so a mistyped or skewed date cannot keep someone living for good.
+
+The rule is display only (P5-R5). The published `isLiving` flag still means "no death recorded", and every protection that reads it keeps its own condition and does not import this module: the graph projection, the renderer, the search index, the edit-bundle hint, access requests and the residence rule of on this day. "Status unknown" never writes a death and never loosens a protection. [`scripts/ci/test/life-state-pins.test.mjs`](../../scripts/ci/test/life-state-pins.test.mjs) pins those expressions by source and fails naming the protection when one changes; [`shared/life-state.test.mjs`](../../shared/life-state.test.mjs) covers the rule, and the pin file runs it too, so the CI `tests` list covers both.
+
 ### Shared libraries
 
 All files are in [`islands/src/lib/`](../../islands/src/lib/).
