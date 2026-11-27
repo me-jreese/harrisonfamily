@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { mountIsland } from "../lib/mount.jsx";
 import { memberSub, useEdgeSession } from "../lib/edge-session.js";
 import { resolveMerged } from "../lib/merged-person.js";
+import { markLifeState } from "../lib/life-state-graph.js";
 import { announce, focusParam, focusUrl, loadGraph, resolveFocus, signInHref, yearsLabel } from "../lib/tree-data.js";
 import { isRelationWord, relationLabel } from "../lib/family-graph.js";
 import { LEVEL_PAGE, focusGroups, outlineModel, placeName } from "../lib/tree-outline.js";
@@ -394,7 +395,7 @@ export function TreeApp() {
     if (!online) return undefined;
     const ctl = new AbortController();
     setResult(null);
-    loadGraph(fetcher, { signal: ctl.signal }).then((r) => { if (!ctl.signal.aborted) setResult(r); });
+    loadGraph(fetcher, { signal: ctl.signal, mark: markLifeState }).then((r) => { if (!ctl.signal.aborted) setResult(r); });
     return () => ctl.abort();
   }, [attempt, online]);
 

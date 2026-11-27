@@ -133,6 +133,8 @@
   font-size: var(--io-typography-size-md);
 }
 .person-living { white-space: nowrap; }
+/* lifeStateV1: the small "help fill in" link after a "status unknown" line (HFY-TSK-427); an underline so it reads as a link inside text. */
+.person-life-help { font-size: var(--io-typography-size-sm); text-decoration: underline; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- empty state (one pattern) */
 .person-empty {

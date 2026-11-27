@@ -9,6 +9,8 @@ import "./life-dates.css";
 import { useEffect, useId, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api } from "../lib/api.js";
+import { loadLifeState } from "../lib/life-state-client.js";
+import { isStatusUnknown } from "../lib/life-state-copy.js";
 import { getMe } from "../lib/me.js";
 import { newIdempotencyKey } from "../lib/editor-save.js";
 import { editHref } from "../lib/editor-model.js";
@@ -22,10 +24,10 @@ function savePending(id, value) {
   try { sessionStorage.setItem(pendingKey(id), JSON.stringify(value)); } catch { /* the line still shows it for this view */ }
 }
 
-export function LifeDatesLine({ shown, pending, children }) {
+export function LifeDatesLine({ shown, pending, unknown = false, children }) {
   return (
     <div className="hfy-ld__lines">
-      <p className="hfy-ld__line" data-ld="line">{lineText(shown)}</p>
+      <p className="hfy-ld__line" data-ld="line">{lineText(shown, { unknown })}</p>
       {pending && <span className="hfy-ld__pend" data-ld="pending">{COPY.pending}</span>}
       {children}
     </div>
@@ -157,6 +159,10 @@ export function LifeDates({ personId, person }) {
     loadLife(personId).then((l) => { if (live) setLife({ status: "ready", ...l }); }, () => { if (live) setLife({ status: "failed" }); });
     return () => { live = false; };
   }, [member, personId]);
+  const [ls, setLs] = useState(null); // lifeStateV1: the evidence, or {enabled: false} (no request) with the flag off
+  useEffect(() => { let live = true; loadLifeState().then((v) => { if (live) setLs(v); }); return () => { live = false; }; }, []);
+  const lp = person && person.lifespan;
+  const unknown = isStatusUnknown(ls, { id: personId, living: person && person.isLiving === true, birthYear: lp && lp.birth && lp.birth.year, deathYear: null });
   const ready = life.status === "ready";
   const current = ready ? rowsFrom(life.classes) : readLife(person);
   const shown = withPending(current, pending);
@@ -174,7 +180,7 @@ export function LifeDates({ personId, person }) {
   }
   return (
     <section className="hfy-ld" aria-label={COPY.label} data-ld="block">
-      <LifeDatesLine shown={shown} pending={Boolean(pending)}>
+      <LifeDatesLine shown={shown} pending={Boolean(pending)} unknown={unknown && !(shown.death && shown.death.year)}>
         {ready && !open && <button ref={btn} type="button" className="hfy-ld__btn" onClick={() => { setNotes([]); setOpen(true); }} data-ld="open">{empty && !pending ? COPY.add : COPY.edit}</button>}
       </LifeDatesLine>
       {ready && open && <LifeDatesEditor personId={personId} handle={life.handle} current={current} onClose={close} onSaved={saved} />}

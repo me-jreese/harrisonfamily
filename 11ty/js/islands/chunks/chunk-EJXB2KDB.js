@@ -1,0 +1,1 @@
+import{a as i,b as n}from"./chunk-OZJMLJZI.js";async function f(r,a=n){let t=null;try{t=await a()}catch{t=null}if(!t||t.enabled!==!0)return r;for(let e of r.people())i(t,{id:e.id,living:e.living===!0,birthYear:e.birthYear,deathYear:e.deathYear})&&(e.lifeUnknown=!0);return r}export{f as a};

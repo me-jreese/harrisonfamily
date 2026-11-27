@@ -3,6 +3,7 @@
 // [data-slot="tree-link"] host in place of the Graphviz frame, which person-page.js no longer draws with the flag on. Names are
 // PersonName links (P2-R46). No framework and no d3: plain DOM, so the person bundle grows only by the lazy chunk that holds this file.
 import { loadGraph, yearsLabel } from "./tree-data.js";
+import { markLifeState } from "./life-state-graph.js";
 import { personNameNode } from "./person-name.js";
 
 /** Most cards in one group before the rest collapse into a "+N more" link to the tree page. */
@@ -107,7 +108,7 @@ export async function fillMini(doc, host, personId, treeHref, fetcher, cache = {
   latest.set(host, mine);
   if (!personId) return false;
   try {
-    if (!cache.promise) cache.promise = loadGraph(fetcher).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; });
+    if (!cache.promise) cache.promise = loadGraph(fetcher, { mark: markLifeState }).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; });
     const res = await cache.promise;
     if (res.state !== "ready" || latest.get(host) !== mine) return false;
     const model = miniModel(res.graph, personId);

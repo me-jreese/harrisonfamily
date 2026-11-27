@@ -16,6 +16,7 @@
   "graduateV1": true,
   "inboxV1": true,
   "lifeDatesV1": true,
+  "lifeStateV1": false,
   "mediaAddV1": true,
   "mediaBrowserV1": true,
   "mediaCommentsV1": true,

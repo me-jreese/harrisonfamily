@@ -1,0 +1,1 @@
+var i="lifeStateV1",r="status unknown",s="birth year unknown";var u=n=>typeof n=="number"&&Number.isInteger(n)&&n>0?n:typeof n=="string"&&/^\d{1,4}$/.test(n.trim())?Number(n):null;function _(n,{about:o=!1,extra:t=[]}={}){let e=u(n);return e===null?[s,...t].join(" \xB7 "):[`born ${o?"about ":""}${e}`,...t,r].join(" \xB7 ")}export{i as a,r as b,s as c,_ as d};

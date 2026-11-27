@@ -26,8 +26,18 @@
     event: "event",
     dateUnknown: "date unknown",
     download: "download",
-    living: "living"
+    living: "living",
+    statusUnknown: "status unknown",
+    helpFillIn: "help fill in"
   };
+  // lifeStateV1 (HFY-TSK-427, HFY-ISS-031, rulings P5-R2 to P5-R5), display only. This classic script cannot import islands/src/lib/life-state-copy.js or
+  // shared/life-state.mjs, so it carries the same two strings, the same rule and the same one-request evidence read, and
+  // tests/client/person-page-life-state.test.mjs pins every copy equal to the originals. It never changes what is hidden for privacy.
+  const NO_BIRTH_YEAR_COPY = "birth year unknown"; // io can switch this to "status unknown" (and life-state-copy.js with it)
+  const HELP_FILL_IN_HREF = "/me/dates/"; // shown only with lifeDatesV1 on
+  const HIDE_STORIES_FOR_UNKNOWN = false; // P5-R2: written stories and Gramps notes STAY for a person of unknown status; io can flip this one constant
+  const LS_THRESHOLD_YEARS = 85;
+  const LS_EVIDENCE_MONTHS = 24;
   // #person-content order (contract with islands/src/islands/person.jsx, which appends #hfy-person-comments last).
   const SECTION_ORDER = [
     ["person-hero-section", null],
@@ -101,6 +111,7 @@
   // HFY-TSK-379: familyVizHourglass (with familyViz) holds the frame back the same way, because the hourglass tree (islands) takes its place; it wins over
   // the mini view. The frame is drawn when the visitor picks "cards" with the mini view off, and when the hourglass cannot be drawn.
   let personMiniOn = false;
+  let lifeStateData = null; // lifeStateV1: {enabled, evidence, confirmed, now, helpLink}; null or {enabled: false} = today's words
   let lastRendered = null;
   // The islands signal (tree-link.js) when the mini view or the hourglass is wanted but not drawn: graph.json missing, gated or without this person,
   // the chunk failing, the two flag reads disagreeing, or (hourglass) the visitor choosing "cards" with no mini view. The frame held back above is
@@ -162,9 +173,11 @@
       }
 
     const miniFlag = miniFlagOn();
+    const lifeStateRead = loadLifeStateData();
     fetchPerson(personId)
         .then(async (person) => {
           personMiniOn = await miniFlag;
+          lifeStateData = await lifeStateRead;
           const merged = redirectIfMerged(person, personId);
           if (merged === "limit") {
             showError(VOICE.error, { loading, error });
@@ -314,7 +327,8 @@
       }
     }
     renderMediaGallery(person);
-    renderStories(person);
+    const hideStories = HIDE_STORIES_FOR_UNKNOWN && lifeIsUnknown(lifeStateData, { id: personId, living: person.isLiving === true, birthYear: person.lifespan && person.lifespan.birth && person.lifespan.birth.year });
+    renderStories(hideStories ? Object.assign({}, person, { notes: [] }) : person);
     toggleSection("person-events-section", hasEvents);
     toggleSection("person-family-section", true);
     toggleSection("person-media-section", true);
@@ -431,11 +445,24 @@
   }
 
   // "1874 – 1951 · Pointe Coupee Parish" in text.dim; living people get the word "living" after it, never a badge.
+  // lifeStateV1: a person whose state is unknown reads "born 1920 · <place> · status unknown", or "birth year unknown" with no birth year,
+  // never "living" and never an age; "help fill in" links to the life dates queue only with lifeDatesV1 on.
   function renderLifespan(person) {
     const life = person.lifespan || {};
     const living = person.isLiving === true;
     const born = yearOf(life.birth);
     const died = living ? null : yearOf(life.death);
+    const place = placeOf(life.birth) || placeOf(life.death);
+    if (lifeIsUnknown(lifeStateData, { id: personIdOf(person), living, birthYear: life.birth && life.birth.year })) {
+      const parts = [born ? `born ${born}` : NO_BIRTH_YEAR_COPY, place].filter(Boolean).map(escapeHtml);
+      if (born) {
+        parts.push(`<span class="person-living">${VOICE.statusUnknown}</span>`);
+      }
+      if (lifeStateData.helpLink === true) {
+        parts.push(`<a class="person-life-help" href="${HELP_FILL_IN_HREF}">${VOICE.helpFillIn}</a>`);
+      }
+      return `<p class="person-lifespan" data-life-state="unknown">${parts.join(" · ")}</p>`;
+    }
     let years = "";
     if (born && died) {
       years = `${born} – ${died}`;
@@ -444,12 +471,101 @@
     } else if (died) {
       years = `– ${died}`;
     }
-    const place = placeOf(life.birth) || placeOf(life.death);
     const parts = [years, place].filter(Boolean).map(escapeHtml);
     if (living) {
       parts.push(`<span class="person-living">${VOICE.living}</span>`);
     }
     return parts.length ? `<p class="person-lifespan">${parts.join(" · ")}</p>` : "";
+  }
+
+  function personIdOf(person) {
+    return (lastRendered && lastRendered.person === person ? lastRendered.personId : null) || person.grampsId || "";
+  }
+
+  // lifeStateV1: the rule of shared/life-state.mjs for a person the published data calls living (a person with a recorded death, or with no
+  // flag at all, is never touched). Unknown = no evidence inside 24 months and either no birth year or one more than 85 years back.
+  function lsYear(v) {
+    if (typeof v === "number") return Number.isInteger(v) && v > 0 ? v : null;
+    if (typeof v === "string" && /^\s*\d{1,4}\s*$/.test(v)) {
+      const n = Number(v);
+      return n > 0 ? n : null;
+    }
+    return null;
+  }
+
+  function lsInWindow(value, now) {
+    const d = value === null || value === undefined || value === "" || typeof value === "boolean" ? null : new Date(value);
+    if (!d || Number.isNaN(d.getTime()) || d.getTime() > now.getTime()) {
+      return false;
+    }
+    const cutoff = new Date(now.getTime());
+    const day = cutoff.getUTCDate();
+    cutoff.setUTCDate(1);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - LS_EVIDENCE_MONTHS);
+    cutoff.setUTCDate(Math.min(day, new Date(Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0)).getUTCDate()));
+    return d.getTime() >= cutoff.getTime();
+  }
+
+  function lifeIsUnknown(ls, who) {
+    if (!ls || ls.enabled !== true || !who || who.living !== true) {
+      return false;
+    }
+    const now = new Date(ls.now || Date.now());
+    const id = who.id;
+    if ((ls.evidence && id && lsInWindow(ls.evidence[id], now)) || (ls.confirmed && id && lsInWindow(ls.confirmed[id], now))) {
+      return false;
+    }
+    const born = lsYear(who.birthYear);
+    return !(born !== null && now.getUTCFullYear() - born <= LS_THRESHOLD_YEARS);
+  }
+
+  // lifeStateV1: the one GET /api/life-state of the page, shared with the islands bundle through window.HFYLifeState (same shape as
+  // lib/life-state-client.js). Flag off: no request. A failed read is "no evidence" (fail closed), never a reason to say "living".
+  function loadLifeStateData() {
+    if (window.HFYLifeState) {
+      return Promise.resolve(window.HFYLifeState).then((v) => withHelpLink(v));
+    }
+    const run = waitForFeatureFlags(2000)
+      .then((ff) => (ff && typeof ff.resolveFlags === "function" ? ff.resolveFlags() : null))
+      .catch(() => null)
+      .then(async (flags) => {
+        if (!flags || flags.lifeStateV1 !== true) {
+          return { enabled: false, helpLink: false };
+        }
+        const base = { enabled: true, evidence: {}, confirmed: {}, now: new Date(), helpLink: flags.lifeDatesV1 === true };
+        try {
+          const res = await dataFetch("/api/life-state", { credentials: "same-origin", headers: { Accept: "application/json" } }, { interactive: false });
+          const body = res && res.ok ? await res.json() : null;
+          const fold = (list) => {
+            const out = {};
+            (Array.isArray(list) ? list : []).forEach((e) => {
+              if (e && typeof e.person === "string" && typeof e.at === "string" && /^\d{4}-\d{2}-\d{2}/.test(e.at) && (!out[e.person] || e.at > out[e.person])) {
+                out[e.person] = e.at;
+              }
+            });
+            return out;
+          };
+          if (body && typeof body === "object" && !Array.isArray(body)) {
+            base.evidence = fold(body.evidence);
+            base.confirmed = fold(body.confirmed);
+          }
+        } catch (err) {
+          // no evidence: people past the threshold read "status unknown"
+        }
+        return base;
+      });
+    window.HFYLifeState = run;
+    return run.then((v) => withHelpLink(v));
+  }
+
+  function withHelpLink(v) {
+    if (!v || v.enabled !== true || v.helpLink !== undefined) {
+      return v;
+    }
+    return waitForFeatureFlags(2000)
+      .then((ff) => (ff && typeof ff.resolveFlags === "function" ? ff.resolveFlags() : null))
+      .catch(() => null)
+      .then((flags) => Object.assign({}, v, { helpLink: Boolean(flags) && flags.lifeDatesV1 === true }));
   }
 
   function yearOf(moment) {
@@ -691,7 +807,12 @@
     const link = relative.grampsId
       ? `<a href="/person/?id=${encodeURIComponent(relative.grampsId)}" class="family-link">${name}</a>`
       : `<span class="family-name">${name}</span>`;
-    const meta = [label, relative.isLiving === true ? VOICE.living : ""].filter(Boolean);
+    let state = relative.isLiving === true ? VOICE.living : "";
+    if (lifeIsUnknown(lifeStateData, { id: relative.grampsId, living: relative.isLiving === true, birthYear: relative.lifespan && relative.lifespan.birth && relative.lifespan.birth.year })) {
+      // lifeStateV1: no birth year and no age here, only the state (a relative's birth year is not shown in this list today)
+      state = lsYear(relative.lifespan && relative.lifespan.birth && relative.lifespan.birth.year) !== null ? VOICE.statusUnknown : NO_BIRTH_YEAR_COPY;
+    }
+    const meta = [label, state].filter(Boolean);
     return `<li class="family-member">${link}${meta.length ? `<span class="family-meta">${meta.join(" · ")}</span>` : ""}</li>`;
   }
 

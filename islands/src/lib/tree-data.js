@@ -2,6 +2,7 @@
 // runs every state in node. The island passes HFYFeatureFlags.dataFetch, which already refreshes the session once on a gate 401 and then
 // retries once (HFY-R66); a 401 that reaches loadGraph is therefore final.
 import { GraphError, parseGraph } from "./family-graph.js";
+import { NO_BIRTH_YEAR_COPY, STATUS_UNKNOWN_COPY } from "./life-state-words.js";
 
 export const GRAPH_URL = "/person/graph.json";
 
@@ -13,7 +14,7 @@ export const GRAPH_URL = "/person/graph.json";
  *   {state: "error", code}      a network failure, another status, a bad body (GRAPH_PARSE) or a bad version (GRAPH_SCHEMA_UNSUPPORTED)
  * Never rejects.
  */
-export async function loadGraph(fetcher, { signal } = {}) {
+export async function loadGraph(fetcher, { signal, mark = null } = {}) {
   let res;
   try {
     res = await fetcher(GRAPH_URL, { credentials: "same-origin", headers: { Accept: "application/json" }, ...(signal ? { signal } : {}) });
@@ -24,7 +25,9 @@ export async function loadGraph(fetcher, { signal } = {}) {
   if (res.status === 403 || res.status === 404) return { state: "prepared" };
   if (!res.ok) return { state: "error", code: "GRAPH_HTTP" };
   try {
-    return { state: "ready", graph: parseGraph(await res.text()) };
+    const graph = parseGraph(await res.text());
+    if (mark) await mark(graph); // lifeStateV1: life-state-graph.js markLifeState, passed by the islands that show years
+    return { state: "ready", graph };
   } catch (e) {
     const code = e instanceof GraphError ? e.code : "GRAPH_PARSE";
     return { state: "error", code };
@@ -35,8 +38,8 @@ export async function loadGraph(fetcher, { signal } = {}) {
  * The graph once per page mount: `cache` ({} per mount) holds the promise, so two features that want the same graph.json fetch it once. A load that
  * is not "ready" is never kept, so a later ask tries again; a rejection is passed on and not kept either.
  */
-export const cachedGraph = (cache, fetcher) =>
-  (cache.promise ||= loadGraph(fetcher).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; }));
+export const cachedGraph = (cache, fetcher, mark = null) =>
+  (cache.promise ||= loadGraph(fetcher, { mark }).then((r) => { if (r.state !== "ready") cache.promise = null; return r; }, (e) => { cache.promise = null; throw e; }));
 
 /** The sign-in link for a visitor the gate refused: the edge sign-in, back to this very page afterwards. */
 export const signInHref = (loc) => `/auth/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`;
@@ -66,6 +69,7 @@ export function focusUrl(loc, id) {
 const yearsOf = (p) => {
   const b = p.birthYear == null ? null : `${p.yearApprox ? "about " : ""}${p.birthYear}`;
   const d = p.deathYear == null ? null : String(p.deathYear);
+  if (p.lifeUnknown === true) return b ? `born ${b} \u00b7 ${STATUS_UNKNOWN_COPY}` : NO_BIRTH_YEAR_COPY; // lifeStateV1: never an age, never "living"
   if (b && d) return `${b} to ${d}`;
   if (b) return p.living ? `born ${b}` : `${b} to unknown`;
   if (d) return `died ${d}`;

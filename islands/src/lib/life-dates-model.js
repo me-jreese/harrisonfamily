@@ -4,6 +4,8 @@
 // (HFY-TSK-387-0F; only a year is ever sent, D-25, L-8) and GET /api/life-dates?target=Person:<handle> (ruling P4-R29), which says, per row, how
 // exact the date on file is: none | year | about | precise, with the year only. The published person JSON carries no day or month (R-19), so the
 // island never guesses precision from it; it reads the classes from the route and treats anything it cannot read as locked.
+import { unknownLine } from "./life-state-words.js";
+
 export const MIN_YEAR = 1600;
 export const MAX_LIFESPAN = 120;
 
@@ -98,7 +100,9 @@ export function rowsFrom(classes) {
 const part = (verb, row) => `${verb} ${row.about ? "about " : ""}${row.year}`;
 
 /** 'born about 1890 · died 1962', 'born 1925 · date of death unknown', 'birth year not recorded · no death recorded'. */
-export function lineText({ birth, death }) {
+export function lineText({ birth, death }, { unknown = false } = {}) {
+  // lifeStateV1 (HFY-TSK-427): a person of unknown status reads "born 1920 · status unknown" or the no-birth-year copy, never "date of death unknown".
+  if (unknown) return unknownLine(birth && birth.year, { about: Boolean(birth && birth.about) });
   const b = birth && birth.year ? part(COPY.born, birth) : birth && birth.locked ? COPY.born : "birth year not recorded";
   let d;
   if (death && death.unknown) d = COPY.unknown;
