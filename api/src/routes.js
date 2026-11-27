@@ -157,6 +157,23 @@ export const ROUTES = defineRoutes([
     gate: requireFeature("onThisDay"),
     handler: async (c) => { await c.onThisDay.unhide(c.params.itemId); return ok(undefined, 204); },
   },
+  // Life state (HFY-TSK-426, HFY-ISS-031; rulings P5-R4 and P5-R5), dark until lifeStateV1 is on (or the caller is uat). DISPLAY ONLY: the activity evidence behind "living" and
+  // "status unknown" and the admin's "confirmed living" mark. Session routes with no MCP tool and no policy row. The remove route is lifeState.unconfirm, never *.delete.
+  {
+    name: "lifeState.get", method: "GET", path: "/life-state", summary: "Who counts as active in the last 24 months, for the life-state display: {asOf, evidence: [{person (Gramps ID), at (YYYY-MM-DD)}], confirmed: [{person, at}]}, in-window entries only; never an email or an account id (no MCP tool)",
+    gate: requireFeature("lifeStateV1"),
+    handler: async (c) => ok(await c.lifeState.get()),
+  },
+  {
+    name: "lifeState.confirm", method: "POST", path: "/life-state/confirm", summary: "Admins only: mark a person confirmed living {person (Gramps ID), at? (a past YYYY-MM-DD or UTC timestamp, default now)}: 200 {person, at}; renews an existing mark; 403 forbidden, 400 validation, 404 not_found (no MCP tool)",
+    gate: requireFeature("lifeStateV1"),
+    handler: async (c) => ok(await c.lifeState.confirm(c.body)),
+  },
+  {
+    name: "lifeState.unconfirm", method: "DELETE", path: "/life-state/confirm/:person", summary: "Admins only: remove a person's confirmed-living mark: 204, idempotent; 403 forbidden (no MCP tool)",
+    gate: requireFeature("lifeStateV1"),
+    handler: async (c) => { await c.lifeState.unconfirm(c.params.person); return ok(undefined, 204); },
+  },
   // The contributions read side (hfy-contrib-read-api; social.md 7.5), dark until contribV1 is on (or the caller is uat). No `mcp` member and
   // no policy row. contributions.stats and contributions.site share a path: `?author=` picks the first, its absence the second.
   {
