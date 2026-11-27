@@ -12,6 +12,7 @@ import "./privacy-guard.test.mjs"; // `node --test shared/` runs only this file 
 import "./legacy-form.test.mjs";
 import "./edit-guard.test.mjs";
 import "./canonical.test.mjs";
+import "./life-state.test.mjs";
 import "./emails.test.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
